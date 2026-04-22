@@ -1,0 +1,6 @@
+enum Dialect {
+  POSTGRES
+  MYSQL
+  SQLITE
+  MSSQL
+}

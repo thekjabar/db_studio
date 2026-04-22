@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.next/
+.turbo/
+
+# Env — never commit secrets
+.env
+.env.local
+.env.*.local
+!*.env.example
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Prisma
+# Keep migrations; ignore the generated client (regenerated on install).
+backend/node_modules/.prisma/
+
+# SQLite files sometimes end up next to the repo
+*.sqlite
+*.sqlite3
+*.db
+
+# Docker
+.docker/
+
+# Claude Code local settings (machine-specific)
+.claude/

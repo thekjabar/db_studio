@@ -1,0 +1,12 @@
+model ConnectionMember {
+  id           String     @id @default(cuid())
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         Role       @default(VIEWER)
+  createdAt    DateTime   @default(now())
+
+  @@unique([connectionId, userId])
+  @@index([userId])
+}

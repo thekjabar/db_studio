@@ -1,0 +1,89 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { AuditAction, Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+
+export interface AuditInput {
+  userId?: string | null;
+  connectionId?: string | null;
+  action: keyof typeof AuditAction | AuditAction;
+  sqlText?: string | null;
+  affectedRows?: number | null;
+  ip?: string | null;
+  userAgent?: string | null;
+  /**
+   * Free-form audit metadata. Prisma's InputJsonValue type is strict about index
+   * signatures — real callsites pass Record<string, unknown>, so widen to unknown
+   * and cast at the Prisma boundary.
+   */
+  metadata?: unknown;
+}
+
+const MAX_SQL = 10_000;
+
+@Injectable()
+export class AuditService {
+  private readonly logger = new Logger(AuditService.name);
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  async log(input: AuditInput): Promise<void> {
+    try {
+      const sql =
+        input.sqlText && input.sqlText.length > MAX_SQL
+          ? input.sqlText.slice(0, MAX_SQL) + '... [truncated]'
+          : input.sqlText ?? null;
+      await this.prisma.auditLog.create({
+        data: {
+          userId: input.userId ?? null,
+          connectionId: input.connectionId ?? null,
+          action: input.action as AuditAction,
+          sqlText: sql,
+          affectedRows: input.affectedRows ?? null,
+          ip: input.ip ?? null,
+          userAgent: input.userAgent ?? null,
+          metadata: (input.metadata ?? undefined) as Prisma.InputJsonValue | undefined,
+        },
+      });
+    } catch (err) {
+      // Never fail a user action because auditing failed; just log.
+      this.logger.error('Audit write failed', err as Error);
+    }
+  }
+
+  async findById(id: string) {
+    return this.prisma.auditLog.findUnique({ where: { id } });
+  }
+
+  async listForConnection(connectionId: string, limit = 100, cursor?: string) {
+    const take = Math.min(Math.max(1, limit), 500);
+    const rows = await this.prisma.auditLog.findMany({
+      where: { connectionId },
+      orderBy: { createdAt: 'desc' },
+      // Fetch one extra to know if there's another page — don't return it.
+      take: take + 1,
+      skip: cursor ? 1 : 0,
+      cursor: cursor ? { id: cursor } : undefined,
+      include: {
+        user: { select: { email: true, displayName: true } },
+      },
+    });
+    const hasMore = rows.length > take;
+    const items = hasMore ? rows.slice(0, take) : rows;
+    return {
+      items: items.map((r) => ({
+        id: r.id,
+        userId: r.userId,
+        user: r.user ? (r.user.displayName || r.user.email) : null,
+        connectionId: r.connectionId,
+        action: r.action,
+        sqlText: r.sqlText,
+        affectedRows: r.affectedRows,
+        ip: r.ip,
+        userAgent: r.userAgent,
+        metadata: r.metadata,
+        createdAt: r.createdAt,
+      })),
+      nextCursor: hasMore ? items[items.length - 1].id : undefined,
+    };
+  }
+}

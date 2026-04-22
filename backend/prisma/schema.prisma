@@ -1,0 +1,15 @@
+// Prisma schema (Prisma 7.7 multi-file layout).
+// Entry file: holds generator + datasource only.
+// Models live in ./models/*.prisma, enums in ./enums/*.prisma.
+// Connection URL is configured in ../prisma.config.ts, not here.
+// Bootstrap:  pnpm prisma bootstrap
+// Generate:   pnpm prisma generate
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+}

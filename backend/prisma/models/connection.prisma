@@ -1,0 +1,18 @@
+model Connection {
+  id               String             @id @default(cuid())
+  name             String
+  dialect          Dialect
+  // AES-256-GCM ciphertext blob. Contains {host,port,user,password,database,sslMode,extra}
+  credentialsCt    String
+  readOnly         Boolean            @default(false)
+  statementTimeoutMs Int              @default(30000)
+  ownerId          String
+  owner            User               @relation("OwnedConnections", fields: [ownerId], references: [id], onDelete: Cascade)
+  members          ConnectionMember[]
+  auditLogs        AuditLog[]
+  savedQueries     SavedQuery[]
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([ownerId])
+}

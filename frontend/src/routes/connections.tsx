@@ -3,7 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowRight, Code2, Database, Loader2, Network, Pencil, Plus, Shield, Table2, Trash2, Zap } from "lucide-react";
-import { api, extractErrorMessage, type Connection, type CreateConnectionInput, type Dialect } from "@/lib/api";
+import { api, extractErrorMessage, type Connection, type CreateConnectionInput, type Dialect, type SshTunnelInput } from "@/lib/api";
+import { SshTunnelFields, defaultSshTunnel } from "@/components/ssh-tunnel-fields";
 import { EditConnectionDialog } from "@/components/edit-connection-dialog";
 import { useModal } from "@/components/modal-provider";
 import { Button } from "@/components/ui/button";
@@ -282,6 +283,8 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [password, setPassword] = useState("");
   const [readOnly, setReadOnly] = useState(false);
   const [sslMode, setSslMode] = useState("");
+  const [sshEnabled, setSshEnabled] = useState(false);
+  const [ssh, setSsh] = useState<SshTunnelInput>(defaultSshTunnel);
   const [submitting, setSubmitting] = useState(false);
 
   const reset = () => {
@@ -293,6 +296,8 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     setPassword("");
     setReadOnly(false);
     setSslMode("");
+    setSshEnabled(false);
+    setSsh(defaultSshTunnel());
     setDialect("POSTGRES");
   };
 
@@ -310,6 +315,7 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         password,
         readOnly,
         sslMode: sslMode || undefined,
+        ssh: sshEnabled ? ssh : undefined,
       };
       const created = await api.createConnection(input);
       toast.success("Connection created");
@@ -364,14 +370,20 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
               </Select>
             </div>
           </div>
-          <div className="grid grid-cols-[1fr_100px] gap-3">
+          <div className="grid grid-cols-[1fr_140px] gap-3">
             <div className="space-y-1.5">
               <Label>Host</Label>
               <Input required value={host} onChange={(e) => setHost(e.target.value)} />
             </div>
             <div className="space-y-1.5">
               <Label>Port</Label>
-              <NumberInput value={String(port)} onChange={(v) => setPort(parseInt(v, 10) || 0)} integer />
+              <NumberInput
+                value={String(port)}
+                onChange={(v) => setPort(parseInt(v, 10) || 0)}
+                integer
+                min={1}
+                max={65535}
+              />
             </div>
           </div>
           <div className="space-y-1.5">
@@ -398,6 +410,12 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
               <label htmlFor="ro" className="text-sm">Read only</label>
             </div>
           </div>
+          <SshTunnelFields
+            enabled={sshEnabled}
+            onEnabledChange={setSshEnabled}
+            value={ssh}
+            onChange={setSsh}
+          />
           <DialogFooter className="pt-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button type="submit" disabled={submitting}>

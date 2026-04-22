@@ -98,6 +98,16 @@ export interface Connection {
   updatedAt?: string;
 }
 
+export interface SshTunnelInput {
+  host: string;
+  port: number;
+  user: string;
+  authType: "password" | "privateKey";
+  password?: string;
+  privateKey?: string;
+  passphrase?: string;
+}
+
 export interface CreateConnectionInput {
   name: string;
   dialect: Dialect;
@@ -109,6 +119,7 @@ export interface CreateConnectionInput {
   sslMode?: string;
   readOnly?: boolean;
   statementTimeoutMs?: number;
+  ssh?: SshTunnelInput | null;
 }
 
 export interface TableInfo {
@@ -327,18 +338,20 @@ export interface SchemaChangeResponse {
 
 // ---- API functions ----
 function toCreatePayload(input: CreateConnectionInput) {
-  const { name, dialect, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode } = input;
+  const { name, dialect, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh } = input;
+  const credentials: Record<string, unknown> = { host, port, database, user, password, sslMode };
+  if (ssh) credentials.ssh = ssh;
   return {
     name,
     dialect,
     readOnly,
     statementTimeoutMs,
-    credentials: { host, port, database, user, password, sslMode },
+    credentials,
   };
 }
 
 function toUpdatePayload(input: Partial<CreateConnectionInput>) {
-  const { name, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode } = input;
+  const { name, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh } = input;
   const credentials: Record<string, unknown> = {};
   if (host !== undefined) credentials.host = host;
   if (port !== undefined) credentials.port = port;
@@ -346,6 +359,7 @@ function toUpdatePayload(input: Partial<CreateConnectionInput>) {
   if (user !== undefined) credentials.user = user;
   if (password !== undefined) credentials.password = password;
   if (sslMode !== undefined) credentials.sslMode = sslMode;
+  if (ssh !== undefined) credentials.ssh = ssh ?? null;
   return {
     ...(name !== undefined && { name }),
     ...(readOnly !== undefined && { readOnly }),

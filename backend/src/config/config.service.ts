@@ -21,13 +21,15 @@ const EnvSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   RATE_LIMIT_LOGIN_MAX: z.coerce.number().int().positive().default(10),
   TOTP_ISSUER: z.string().default('Dbdash'),
-  ANTHROPIC_API_KEY: z.string().optional(),
+  // Empty strings (from `docker compose ${FOO:-}`) are normalized to undefined
+  // so `??` fallbacks kick in downstream.
+  ANTHROPIC_API_KEY: z.string().transform((v) => v || undefined).optional(),
   ANTHROPIC_MODEL: z.string().default('claude-haiku-4-5-20251001'),
-  GOOGLE_CLIENT_ID: z.string().optional(),
-  GOOGLE_CLIENT_SECRET: z.string().optional(),
-  GITHUB_CLIENT_ID: z.string().optional(),
-  GITHUB_CLIENT_SECRET: z.string().optional(),
-  OAUTH_CALLBACK_BASE_URL: z.string().optional(),
+  GOOGLE_CLIENT_ID: z.string().transform((v) => v || undefined).optional(),
+  GOOGLE_CLIENT_SECRET: z.string().transform((v) => v || undefined).optional(),
+  GITHUB_CLIENT_ID: z.string().transform((v) => v || undefined).optional(),
+  GITHUB_CLIENT_SECRET: z.string().transform((v) => v || undefined).optional(),
+  OAUTH_CALLBACK_BASE_URL: z.string().transform((v) => v || undefined).optional(),
   OAUTH_SUCCESS_REDIRECT: z.string().default('/auth/callback'),
 });
 

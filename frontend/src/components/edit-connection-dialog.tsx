@@ -15,7 +15,8 @@ import { Input } from "@/components/ui/input";
 import { NumberInput } from "@/components/ui/number-input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { api, extractErrorMessage, type Connection } from "@/lib/api";
+import { api, extractErrorMessage, type Connection, type SshTunnelInput } from "@/lib/api";
+import { SshTunnelFields, defaultSshTunnel } from "@/components/ssh-tunnel-fields";
 
 interface Props {
   connection: Connection | null;
@@ -39,6 +40,11 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
   const [password, setPassword] = useState("");
   const [sslMode, setSslMode] = useState("");
   const [readOnly, setReadOnly] = useState(false);
+  // Tri-state for SSH: null = "leave unchanged" (default when dialog opens),
+  //                   {…} = "set/update tunnel to this config",
+  //                   {cleared: true} = "remove the tunnel".
+  const [sshMode, setSshMode] = useState<"unchanged" | "set" | "clear">("unchanged");
+  const [ssh, setSsh] = useState<SshTunnelInput>(defaultSshTunnel);
 
   useEffect(() => {
     if (!connection) return;
@@ -51,6 +57,8 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
     setUser("");
     setPassword("");
     setSslMode("");
+    setSshMode("unchanged");
+    setSsh(defaultSshTunnel());
   }, [connection]);
 
   const update = useMutation({
@@ -76,6 +84,8 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
     if (user) patch.user = user;
     if (password) patch.password = password;
     if (sslMode) patch.sslMode = sslMode;
+    if (sshMode === "set") patch.ssh = ssh;
+    else if (sshMode === "clear") patch.ssh = null;
 
     if (Object.keys(patch).length === 0) {
       toast.info("Nothing to update");
@@ -104,7 +114,7 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
             <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
               Credentials
             </div>
-            <div className="grid grid-cols-[1fr_120px] gap-3">
+            <div className="grid grid-cols-[1fr_140px] gap-3">
               <div className="space-y-1.5">
                 <Label>Host</Label>
                 <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="unchanged" />
@@ -157,6 +167,37 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
               </div>
             </div>
           </div>
+
+          <SshTunnelFields
+            enabled={sshMode === "set"}
+            onEnabledChange={(on) => setSshMode(on ? "set" : "unchanged")}
+            value={ssh}
+            onChange={setSsh}
+            keepExisting
+          />
+          {sshMode !== "clear" && (
+            <div className="text-xs text-muted-foreground pl-1">
+              <button
+                type="button"
+                className="underline hover:text-foreground"
+                onClick={() => setSshMode("clear")}
+              >
+                Remove existing SSH tunnel
+              </button>
+            </div>
+          )}
+          {sshMode === "clear" && (
+            <div className="text-xs text-destructive pl-1">
+              SSH tunnel will be removed on save.{" "}
+              <button
+                type="button"
+                className="underline hover:text-foreground"
+                onClick={() => setSshMode("unchanged")}
+              >
+                Undo
+              </button>
+            </div>
+          )}
 
           <DialogFooter className="gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

@@ -446,55 +446,56 @@ export class PostgresDriver implements IDatabaseDriver {
   }
 
   async introspectForER(schema?: string): Promise<ErDiagram> {
-    // Single query for every column of every table in the schema — avoids the
-    // N+1 round-trip loop that dominated the request time for large schemas.
+    // Read columns + PK/unique flags straight from pg_catalog. The previous
+    // information_schema version used two LATERAL joins against
+    // table_constraints/key_column_usage, which Postgres re-evaluates per column
+    // and dominated the latency on remote DBs (9s+ on 120 tables). This catalog
+    // query joins pg_attribute once and resolves PK/unique with a single pass
+    // over pg_index.
     const t0 = Date.now();
     const colsRes = await this.poolQuery(
       `SELECT
-          c.table_schema AS schema,
-          c.table_name   AS table,
-          c.column_name  AS name,
-          c.data_type    AS data_type,
-          (c.is_nullable = 'YES') AS nullable,
-          c.column_default AS default_value,
-          c.character_maximum_length AS char_max,
-          c.numeric_precision AS num_prec,
-          c.numeric_scale    AS num_scale,
-          (c.is_identity = 'YES') AS is_identity,
+          n.nspname       AS schema,
+          cls.relname     AS "table",
+          a.attname       AS name,
+          format_type(a.atttypid, a.atttypmod) AS data_type,
+          NOT a.attnotnull AS nullable,
+          pg_get_expr(ad.adbin, ad.adrelid) AS default_value,
+          CASE
+            WHEN a.atttypid IN (1042, 1043) AND a.atttypmod >= 0 THEN a.atttypmod - 4
+          END AS char_max,
+          information_schema._pg_numeric_precision(a.atttypid, a.atttypmod) AS num_prec,
+          information_schema._pg_numeric_scale(a.atttypid, a.atttypmod) AS num_scale,
+          a.attidentity <> ''     AS is_identity,
           COALESCE(pk.is_pk, false)   AS is_pk,
           COALESCE(uq.is_unique, false) AS is_unique,
-          c.ordinal_position AS ord
-         FROM information_schema.columns c
-         JOIN information_schema.tables t
-           ON t.table_schema = c.table_schema AND t.table_name = c.table_name
-           AND t.table_type IN ('BASE TABLE','VIEW')
+          a.attnum AS ord
+         FROM pg_class cls
+         JOIN pg_namespace n ON n.oid = cls.relnamespace
+         JOIN pg_attribute a ON a.attrelid = cls.oid AND a.attnum > 0 AND NOT a.attisdropped
+    LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
     LEFT JOIN LATERAL (
-         SELECT true AS is_pk
-           FROM information_schema.table_constraints tc
-           JOIN information_schema.key_column_usage kcu
-             ON kcu.constraint_name = tc.constraint_name
-            AND kcu.table_schema = tc.table_schema
-          WHERE tc.constraint_type = 'PRIMARY KEY'
-            AND tc.table_schema = c.table_schema
-            AND tc.table_name = c.table_name
-            AND kcu.column_name = c.column_name
-          LIMIT 1
-    ) pk ON true
+           SELECT true AS is_pk
+             FROM pg_index i
+            WHERE i.indrelid = cls.oid
+              AND i.indisprimary
+              AND a.attnum = ANY(i.indkey)
+            LIMIT 1
+         ) pk ON true
     LEFT JOIN LATERAL (
-         SELECT true AS is_unique
-           FROM information_schema.table_constraints tc
-           JOIN information_schema.key_column_usage kcu
-             ON kcu.constraint_name = tc.constraint_name
-            AND kcu.table_schema = tc.table_schema
-          WHERE tc.constraint_type = 'UNIQUE'
-            AND tc.table_schema = c.table_schema
-            AND tc.table_name = c.table_name
-            AND kcu.column_name = c.column_name
-          LIMIT 1
-    ) uq ON true
-        WHERE c.table_schema NOT IN ('pg_catalog','information_schema')
-          AND ($1::text IS NULL OR c.table_schema = $1)
-        ORDER BY c.table_schema, c.table_name, c.ordinal_position`,
+           SELECT true AS is_unique
+             FROM pg_index i
+            WHERE i.indrelid = cls.oid
+              AND i.indisunique
+              AND NOT i.indisprimary
+              AND a.attnum = ANY(i.indkey)
+              AND array_length(i.indkey::int[], 1) = 1
+            LIMIT 1
+         ) uq ON true
+        WHERE cls.relkind IN ('r','v','m','p')
+          AND n.nspname NOT IN ('pg_catalog','information_schema')
+          AND ($1::text IS NULL OR n.nspname = $1)
+        ORDER BY n.nspname, cls.relname, a.attnum`,
       [schema ?? null],
     );
 
@@ -521,28 +522,41 @@ export class PostgresDriver implements IDatabaseDriver {
     }
     const out: ErDiagram = { tables: Array.from(byTable.values()), foreignKeys: [] };
     const tCols = Date.now();
+    // FKs from pg_constraint — reading pg_catalog directly beats the
+    // information_schema.referential_constraints view on remote DBs.
     const fkRes = await this.poolQuery(
       `SELECT
-          tc.constraint_name AS name,
-          tc.table_schema AS schema,
-          tc.table_name AS table,
-          array_agg(kcu.column_name ORDER BY kcu.ordinal_position) AS columns,
-          ccu.table_schema AS ref_schema,
-          ccu.table_name AS ref_table,
-          array_agg(ccu.column_name ORDER BY kcu.ordinal_position) AS ref_columns,
-          rc.delete_rule AS on_delete,
-          rc.update_rule AS on_update
-         FROM information_schema.table_constraints tc
-         JOIN information_schema.key_column_usage kcu
-           ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
-         JOIN information_schema.constraint_column_usage ccu
-           ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
-         JOIN information_schema.referential_constraints rc
-           ON rc.constraint_name = tc.constraint_name AND rc.constraint_schema = tc.table_schema
-        WHERE tc.constraint_type = 'FOREIGN KEY'
-          AND ($1::text IS NULL OR tc.table_schema = $1)
-        GROUP BY tc.constraint_name, tc.table_schema, tc.table_name,
-                 ccu.table_schema, ccu.table_name, rc.delete_rule, rc.update_rule`,
+          con.conname AS name,
+          n.nspname   AS schema,
+          cls.relname AS "table",
+          (
+            SELECT array_agg(att.attname ORDER BY ord.pos)
+              FROM unnest(con.conkey) WITH ORDINALITY AS ord(col, pos)
+              JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = ord.col
+          ) AS columns,
+          rn.nspname  AS ref_schema,
+          rcls.relname AS ref_table,
+          (
+            SELECT array_agg(att.attname ORDER BY ord.pos)
+              FROM unnest(con.confkey) WITH ORDINALITY AS ord(col, pos)
+              JOIN pg_attribute att ON att.attrelid = con.confrelid AND att.attnum = ord.col
+          ) AS ref_columns,
+          CASE con.confdeltype
+            WHEN 'a' THEN 'NO ACTION' WHEN 'r' THEN 'RESTRICT'
+            WHEN 'c' THEN 'CASCADE'   WHEN 'n' THEN 'SET NULL'
+            WHEN 'd' THEN 'SET DEFAULT' END AS on_delete,
+          CASE con.confupdtype
+            WHEN 'a' THEN 'NO ACTION' WHEN 'r' THEN 'RESTRICT'
+            WHEN 'c' THEN 'CASCADE'   WHEN 'n' THEN 'SET NULL'
+            WHEN 'd' THEN 'SET DEFAULT' END AS on_update
+         FROM pg_constraint con
+         JOIN pg_class cls     ON cls.oid  = con.conrelid
+         JOIN pg_namespace n   ON n.oid    = cls.relnamespace
+         JOIN pg_class rcls    ON rcls.oid = con.confrelid
+         JOIN pg_namespace rn  ON rn.oid   = rcls.relnamespace
+        WHERE con.contype = 'f'
+          AND n.nspname NOT IN ('pg_catalog','information_schema')
+          AND ($1::text IS NULL OR n.nspname = $1)`,
       [schema ?? null],
     );
     const tFks = Date.now();

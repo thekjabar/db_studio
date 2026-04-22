@@ -13,9 +13,12 @@ export interface OAuthProfilePayload {
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   constructor(cfg: AppConfigService) {
+    // Pass dummy values when envs are missing so the passport base class
+    // doesn't throw. The containing module never exposes this instance for
+    // use in that case — registering the class is harmless.
     super({
-      clientID: cfg.googleClientId ?? 'disabled',
-      clientSecret: cfg.googleClientSecret ?? 'disabled',
+      clientID: cfg.googleClientId ?? 'dbdash-sso-disabled',
+      clientSecret: cfg.googleClientSecret ?? 'dbdash-sso-disabled',
       callbackURL: `${cfg.oauthCallbackBaseUrl}/api/auth/oauth/google/callback`,
       scope: ['email', 'profile'],
     });

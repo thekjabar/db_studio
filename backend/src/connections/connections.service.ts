@@ -3,6 +3,7 @@ import { Dialect, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { DriverFactory } from '../drivers/driver.factory';
+import { SshTunnelService, OpenTunnel } from '../drivers/ssh-tunnel.service';
 import { AuditService } from '../audit/audit.service';
 import { ConnectionCredentials, IDatabaseDriver } from '../drivers/driver.interface';
 import { CreateConnectionDto, UpdateConnectionDto } from './connections.dto';
@@ -19,6 +20,8 @@ interface CachedDriver {
   lastUsed: number;
   /** Track in-flight operations so the sweeper never closes an active driver. */
   inUse: number;
+  /** SSH tunnel held open for this driver's lifetime, if any. */
+  tunnel?: OpenTunnel;
 }
 
 /** Wraps a cached driver so callers can still call .close() without evicting it. */
@@ -50,6 +53,7 @@ export class ConnectionsService implements OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     private readonly factory: DriverFactory,
+    private readonly ssh: SshTunnelService,
     private readonly audit: AuditService,
   ) {
     this.sweeper = setInterval(() => this.sweepIdle(), SWEEP_INTERVAL_MS);
@@ -74,6 +78,13 @@ export class ConnectionsService implements OnModuleDestroy {
       await entry.driver.close();
     } catch (err) {
       this.log.warn(`Driver close failed for ${key}: ${(err as Error).message}`);
+    }
+    if (entry.tunnel) {
+      try {
+        await entry.tunnel.close();
+      } catch (err) {
+        this.log.warn(`SSH tunnel close failed for ${key}: ${(err as Error).message}`);
+      }
     }
   }
 
@@ -189,7 +200,11 @@ export class ConnectionsService implements OnModuleDestroy {
     }
     if (dto.credentials) {
       const current = this.crypto.decryptJson<ConnectionCredentials>(existing.credentialsCt, PURPOSE(id));
-      const merged = { ...current, ...dto.credentials };
+      // Start from current, apply provided fields, then strip the tunnel if client sent ssh:null.
+      const merged = { ...current, ...(dto.credentials as ConnectionCredentials) };
+      if ((dto.credentials as { ssh?: unknown }).ssh === null) {
+        delete merged.ssh;
+      }
       data.credentialsCt = this.crypto.encryptJson(merged, PURPOSE(id));
     }
     const updated = await this.prisma.connection.update({ where: { id }, data });
@@ -205,19 +220,49 @@ export class ConnectionsService implements OnModuleDestroy {
     await this.audit.log({ userId, connectionId: id, action: 'CONNECTION_DELETED', ...meta });
   }
 
+  /**
+   * If `creds.ssh` is set, open an SSH tunnel and rewrite host/port to the local
+   * forwarded endpoint so the DB driver connects through it. Returns the effective
+   * credentials + the tunnel handle (caller must close it when the driver is evicted).
+   */
+  private async maybeOpenTunnel(
+    creds: ConnectionCredentials,
+  ): Promise<{ creds: ConnectionCredentials; tunnel?: OpenTunnel }> {
+    if (!creds.ssh) return { creds };
+    if (!creds.host || !creds.port) {
+      throw new Error('SSH tunnel requires a target host and port');
+    }
+    const tunnel = await this.ssh.open(creds.ssh, creds.host, creds.port);
+    const tunneled: ConnectionCredentials = {
+      ...creds,
+      host: tunnel.localHost,
+      port: tunnel.localPort,
+      // Do not forward the ssh block into the driver — it's already consumed.
+      ssh: undefined,
+    };
+    return { creds: tunneled, tunnel };
+  }
+
   async buildDriver(id: string, overrides: { readOnly?: boolean } = {}): Promise<IDatabaseDriver> {
     const c = await this.get(id);
     const readOnly = overrides.readOnly ?? c.readOnly;
     const key = this.cacheKey(id, readOnly);
     let entry = this.driverCache.get(key);
     if (!entry) {
-      const creds = this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
-      const driver = this.factory.create(c.dialect as Dialect, creds, {
-        readOnly,
-        statementTimeoutMs: c.statementTimeoutMs,
-      });
-      entry = { driver, lastUsed: Date.now(), inUse: 0 };
-      this.driverCache.set(key, entry);
+      const raw = this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
+      const { creds, tunnel } = await this.maybeOpenTunnel(raw);
+      try {
+        const driver = this.factory.create(c.dialect as Dialect, creds, {
+          readOnly,
+          statementTimeoutMs: c.statementTimeoutMs,
+        });
+        entry = { driver, lastUsed: Date.now(), inUse: 0, tunnel };
+        this.driverCache.set(key, entry);
+      } catch (err) {
+        // Driver init failed — tear down the tunnel so we don't leak the SSH session.
+        if (tunnel) await tunnel.close().catch(() => {});
+        throw err;
+      }
     }
     entry.inUse++;
     entry.lastUsed = Date.now();
@@ -240,7 +285,8 @@ export class ConnectionsService implements OnModuleDestroy {
     // or recently-updated connection. It also uses a fresh driver so the raw
     // error bubbles up (cached driver's close() is a no-op).
     const c = await this.get(id);
-    const creds = this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
+    const raw = this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
+    const { creds, tunnel } = await this.maybeOpenTunnel(raw);
     const drv = this.factory.create(c.dialect as Dialect, creds, {
       readOnly: c.readOnly,
       statementTimeoutMs: c.statementTimeoutMs,
@@ -251,6 +297,7 @@ export class ConnectionsService implements OnModuleDestroy {
       return r;
     } finally {
       await drv.close().catch(() => {});
+      if (tunnel) await tunnel.close().catch(() => {});
     }
   }
 }

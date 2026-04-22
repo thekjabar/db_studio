@@ -1,9 +1,20 @@
 import {
-  ArrayNotEmpty, IsArray, IsBoolean, IsEnum, IsInt, IsNumber, IsObject, IsOptional, IsString, Length, Max, Min,
-  ValidateNested,
+  ArrayNotEmpty, IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Length, Max, Min,
+  ValidateIf, ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Dialect } from '@prisma/client';
+
+export class SshTunnelDto {
+  @IsString() @Length(1, 253) host!: string;
+  @IsInt() @Min(1) @Max(65535) port!: number;
+  @IsString() @Length(1, 128) user!: string;
+  @IsIn(['password', 'privateKey']) authType!: 'password' | 'privateKey';
+  @IsOptional() @IsString() @Length(0, 1024) password?: string;
+  // PEM-encoded private key body; can be large so upper bound is generous.
+  @IsOptional() @IsString() @Length(0, 32_000) privateKey?: string;
+  @IsOptional() @IsString() @Length(0, 1024) passphrase?: string;
+}
 
 export class CredentialsDto {
   @IsOptional() @IsString() @Length(1, 253) host?: string;
@@ -13,6 +24,11 @@ export class CredentialsDto {
   @IsOptional() @IsString() @Length(1, 128) database?: string;
   @IsOptional() @IsString() @Length(1, 1024) filename?: string;
   @IsOptional() @IsString() sslMode?: 'disable' | 'require' | 'verify-ca' | 'verify-full';
+  // `ssh: null` means "remove the tunnel" on an update; skip nested validation in that case.
+  @ValidateIf((_o, v) => v !== null && v !== undefined)
+  @ValidateNested() @Type(() => SshTunnelDto)
+  @IsOptional()
+  ssh?: SshTunnelDto | null;
 }
 
 export class CreateConnectionDto {

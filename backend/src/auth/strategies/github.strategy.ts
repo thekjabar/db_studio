@@ -16,8 +16,8 @@ type VerifyDone = (err: Error | null, user?: GithubOAuthProfilePayload) => void;
 export class GithubStrategy extends PassportStrategy(Strategy, 'github') {
   constructor(cfg: AppConfigService) {
     super({
-      clientID: cfg.githubClientId ?? 'disabled',
-      clientSecret: cfg.githubClientSecret ?? 'disabled',
+      clientID: cfg.githubClientId ?? 'dbdash-sso-disabled',
+      clientSecret: cfg.githubClientSecret ?? 'dbdash-sso-disabled',
       callbackURL: `${cfg.oauthCallbackBaseUrl}/api/auth/oauth/github/callback`,
       scope: ['user:email'],
     });

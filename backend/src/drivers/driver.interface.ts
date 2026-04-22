@@ -1,5 +1,15 @@
 import { Dialect } from '@prisma/client';
 
+export interface SshTunnelConfig {
+  host: string;
+  port: number;
+  user: string;
+  authType: 'password' | 'privateKey';
+  password?: string;
+  privateKey?: string;
+  passphrase?: string;
+}
+
 export interface ConnectionCredentials {
   host?: string;
   port?: number;
@@ -8,6 +18,7 @@ export interface ConnectionCredentials {
   database?: string;
   filename?: string; // sqlite
   sslMode?: 'disable' | 'require' | 'verify-ca' | 'verify-full';
+  ssh?: SshTunnelConfig;
   extra?: Record<string, unknown>;
 }
 

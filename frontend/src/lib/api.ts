@@ -350,6 +350,9 @@ export const api = {
   logout: () => http.post("/auth/logout").then((r) => r.data),
   refresh: () => http.post<{ accessToken: string }>("/auth/refresh").then((r) => r.data),
   me: () => http.get<AuthUser>("/users/me").then((r) => r.data),
+  oauthProviders: () =>
+    http.get<{ google: boolean; github: boolean }>("/auth/oauth/providers").then((r) => r.data),
+  oauthUrl: (provider: "google" | "github") => `${API_URL}/auth/oauth/${provider}`,
   updateProfile: (patch: { displayName?: string; density?: AuthUser["density"] }) =>
     http.patch<AuthUser>("/users/me", patch).then((r) => r.data),
   enable2fa: () =>

@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState, type FormEvent } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Database, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,15 +7,25 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, extractErrorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth-store";
+import { OAuthButtons } from "@/components/oauth-buttons";
 
 export default function LoginPage() {
   const nav = useNavigate();
   const { setAuth } = useAuth();
+  const [sp, setSp] = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [needsTotp, setNeedsTotp] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (sp.get("error") === "oauth_failed") {
+      toast.error("Sign-in with that provider failed");
+      sp.delete("error");
+      setSp(sp, { replace: true });
+    }
+  }, [sp, setSp]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -89,6 +99,7 @@ export default function LoginPage() {
               Sign in
             </Button>
           </form>
+          <OAuthButtons />
         </div>
         <p className="text-center text-sm text-muted-foreground mt-4">
           No account?{" "}

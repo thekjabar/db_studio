@@ -23,6 +23,12 @@ const EnvSchema = z.object({
   TOTP_ISSUER: z.string().default('Dbdash'),
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default('claude-haiku-4-5-20251001'),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GITHUB_CLIENT_ID: z.string().optional(),
+  GITHUB_CLIENT_SECRET: z.string().optional(),
+  OAUTH_CALLBACK_BASE_URL: z.string().optional(),
+  OAUTH_SUCCESS_REDIRECT: z.string().default('/auth/callback'),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -75,4 +81,18 @@ export class AppConfigService {
   get anthropicApiKey() { return this.env.ANTHROPIC_API_KEY; }
   get anthropicModel() { return this.env.ANTHROPIC_MODEL; }
   get aiEnabled() { return !!this.env.ANTHROPIC_API_KEY; }
+  get googleClientId() { return this.env.GOOGLE_CLIENT_ID; }
+  get googleClientSecret() { return this.env.GOOGLE_CLIENT_SECRET; }
+  get githubClientId() { return this.env.GITHUB_CLIENT_ID; }
+  get githubClientSecret() { return this.env.GITHUB_CLIENT_SECRET; }
+  get oauthCallbackBaseUrl() {
+    return this.env.OAUTH_CALLBACK_BASE_URL ?? `http://localhost:${this.env.PORT}`;
+  }
+  get oauthSuccessRedirect() { return this.env.OAUTH_SUCCESS_REDIRECT; }
+  get googleOAuthEnabled() {
+    return !!(this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET);
+  }
+  get githubOAuthEnabled() {
+    return !!(this.env.GITHUB_CLIENT_ID && this.env.GITHUB_CLIENT_SECRET);
+  }
 }

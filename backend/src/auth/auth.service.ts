@@ -98,7 +98,7 @@ export class AuthService {
       include: { totpSecret: true },
     });
     const dummyHash = '$argon2id$v=19$m=65536,t=3,p=4$abcdefghijklmnop$abcdefghijklmnopabcdefghijklmnopabcdefghijk';
-    const valid = user
+    const valid = user && user.passwordHash
       ? await argon2.verify(user.passwordHash, dto.password).catch(() => false)
       : (await argon2.verify(dummyHash, dto.password).catch(() => false), false);
 
@@ -190,6 +190,7 @@ export class AuthService {
       include: { totpSecret: true },
     });
     if (!user || !user.totpSecret?.enabled) throw new BadRequestException('TOTP not enabled');
+    if (!user.passwordHash) throw new BadRequestException('Account has no password (OAuth-only)');
     const ok = await argon2.verify(user.passwordHash, dto.password).catch(() => false);
     if (!ok) throw new UnauthorizedException('Invalid password');
     const secret = this.crypto.decrypt(user.totpSecret.secretCt, `totp:${userId}`);
@@ -198,5 +199,45 @@ export class AuthService {
     }
     await this.prisma.totpSecret.delete({ where: { userId } });
     await this.audit.log({ userId, action: 'TOTP_DISABLED', ...meta });
+  }
+
+  async loginOrCreateOAuth(
+    profile: { provider: 'google' | 'github'; providerId: string; email: string; displayName?: string },
+    meta: ReqMeta,
+  ): Promise<AuthTokens & { userId: string }> {
+    // 1) Exact match on (provider, providerId).
+    let user = await this.prisma.user.findFirst({
+      where: { oauthProvider: profile.provider, oauthId: profile.providerId },
+    });
+
+    // 2) Fall back to email match — link this OAuth identity to the existing account.
+    if (!user && profile.email) {
+      user = await this.prisma.user.findUnique({ where: { email: profile.email } });
+      if (user) {
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { oauthProvider: profile.provider, oauthId: profile.providerId },
+        });
+      }
+    }
+
+    // 3) Brand-new user.
+    if (!user) {
+      user = await this.prisma.user.create({
+        data: {
+          email: profile.email,
+          passwordHash: null,
+          displayName: profile.displayName,
+          oauthProvider: profile.provider,
+          oauthId: profile.providerId,
+        },
+      });
+      await this.audit.log({ userId: user.id, action: 'SIGNUP', ...meta });
+    }
+
+    await this.workspaces.ensurePersonalWorkspace(user.id).catch(() => null);
+    await this.audit.log({ userId: user.id, action: 'LOGIN', ...meta });
+    const tokens = await this.issueTokens(user.id, user.email, meta);
+    return { userId: user.id, ...tokens };
   }
 }

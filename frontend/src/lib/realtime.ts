@@ -7,23 +7,38 @@ import { useAuth } from "./auth-store";
 const WS_ORIGIN = API_URL.replace(/\/api\/?$/, "");
 
 let socket: Socket | null = null;
+let socketToken: string | null = null;
 
 function getSocket(token: string): Socket {
-  if (socket && socket.connected) {
+  // Same token → reuse, regardless of current state (reconnect in progress counts).
+  if (socket && socketToken === token) {
     return socket;
   }
+  // Different token → clean disconnect and start over.
   if (socket) {
-    // Token may have changed; rebuild.
+    socket.removeAllListeners();
     socket.disconnect();
     socket = null;
   }
+  socketToken = token;
   socket = io(`${WS_ORIGIN}/realtime`, {
     auth: { token },
     transports: ["websocket"],
     reconnection: true,
-    reconnectionAttempts: 5,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1_000,
+    reconnectionDelayMax: 10_000,
   });
   return socket;
+}
+
+function closeSocket() {
+  if (socket) {
+    socket.removeAllListeners();
+    socket.disconnect();
+    socket = null;
+  }
+  socketToken = null;
 }
 
 export type RealtimeStatus = "idle" | "connecting" | "connected" | "error";
@@ -36,10 +51,7 @@ export function useRealtimeStatus(): RealtimeStatus {
   useEffect(() => {
     if (!token) {
       setStatus("idle");
-      if (socket) {
-        socket.disconnect();
-        socket = null;
-      }
+      closeSocket();
       return;
     }
     const s = getSocket(token);

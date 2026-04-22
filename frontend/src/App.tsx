@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth-store";
 import { applyDensity } from "@/lib/density";
 import LoginPage from "@/routes/login";
 import SignupPage from "@/routes/signup";
+import OAuthCallbackPage from "@/routes/oauth-callback";
 import ConnectionsPage from "@/routes/connections";
 import { AppShell } from "@/components/layout/app-shell";
 import TableRoute from "@/routes/connection/table";
@@ -94,6 +95,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
+      <Route path="/auth/callback" element={<OAuthCallbackPage />} />
       <Route
         path="/connections"
         element={

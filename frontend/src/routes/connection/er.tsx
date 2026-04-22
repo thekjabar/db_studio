@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useOutletContext, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -250,6 +250,11 @@ export default function ErRoute() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
+  // Keep a stable handler identity so the memoized `laidOut` doesn't see a new
+  // function every render (which would infinite-loop the setNodes effect below).
+  const handleActionRef = useRef<(a: NodeAction) => void>(() => {});
+  const dispatch = useCallback((a: NodeAction) => handleActionRef.current(a), []);
+
   const handleAction = useCallback(async (a: NodeAction) => {
     switch (a.kind) {
       case "table-add-column":
@@ -347,6 +352,9 @@ export default function ErRoute() {
     }
   }, [alter, drop, fkPending, modal, schema]);
 
+  // Refresh the ref without triggering a render.
+  handleActionRef.current = handleAction;
+
   // Normalize values that may arrive as a Postgres array literal string
   // (e.g. "{id,user_id}") instead of a JS array.
   const toArray = (v: unknown): string[] => {
@@ -395,7 +403,7 @@ export default function ErRoute() {
           columns: n.columns.map((c) => ({ ...c, fk: fkCols.has(c.name) })),
           editMode,
           fkPending,
-          onAction: handleAction,
+          onAction: dispatch,
         } satisfies TableNodeData,
         position: { x: 0, y: 0 }, // dagre overrides
       };
@@ -417,7 +425,7 @@ export default function ErRoute() {
       }));
 
     return { nodes: layoutWithDagre(rfNodes, rfEdges), edges: rfEdges };
-  }, [q.data, filter, onlyRelated, editMode, fkPending, handleAction]);
+  }, [q.data, filter, onlyRelated, editMode, fkPending, dispatch]);
 
   useEffect(() => {
     setNodes(laidOut.nodes);

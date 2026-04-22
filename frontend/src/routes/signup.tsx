@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, extractErrorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth-store";
+import { OAuthButtons } from "@/components/oauth-buttons";
 
 export default function SignupPage() {
   const nav = useNavigate();
@@ -69,6 +70,7 @@ export default function SignupPage() {
               Create account
             </Button>
           </form>
+          <OAuthButtons />
         </div>
         <p className="text-center text-sm text-muted-foreground mt-4">
           Already have an account?{" "}

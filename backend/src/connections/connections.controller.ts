@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Req, UseGuards,
+  Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req, UseGuards,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { ConnectionsService } from './connections.service';
@@ -17,7 +17,9 @@ export class ConnectionsController {
   constructor(private readonly svc: ConnectionsService) {}
 
   @Get()
-  list(@CurrentUser() u: AuthUser) { return this.svc.list(u.id); }
+  list(@CurrentUser() u: AuthUser, @Query('workspaceId') workspaceId?: string) {
+    return this.svc.list(u.id, workspaceId);
+  }
 
   @Post()
   create(@CurrentUser() u: AuthUser, @Body() dto: CreateConnectionDto, @Req() req: Request) {

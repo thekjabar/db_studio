@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Editor from "@monaco-editor/react";
 import { toast } from "sonner";
@@ -15,6 +15,7 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  Share2,
   Trash2,
   X,
 } from "lucide-react";
@@ -81,11 +82,49 @@ export default function TableRoute() {
   const { id, schema, table } = useParams<{ id: string; schema: string; table: string }>();
   const qc = useQueryClient();
   const modal = useModal();
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState<PageSize>(100);
-  const [filters, setFilters] = useState<FilterRow[]>([]);
-  const [sorts, setSorts] = useState<SortRow[]>([]);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Initial state hydrated from URL so links are shareable.
+  const [page, setPage] = useState(() => {
+    const p = Number(searchParams.get("page"));
+    return Number.isFinite(p) && p >= 0 ? p : 0;
+  });
+  const [pageSize, setPageSize] = useState<PageSize>(() => {
+    const n = Number(searchParams.get("size"));
+    return (PAGE_SIZES as readonly number[]).includes(n) ? (n as PageSize) : 100;
+  });
+  const [filters, setFilters] = useState<FilterRow[]>(() => {
+    const raw = searchParams.get("f");
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [sorts, setSorts] = useState<SortRow[]>(() => {
+    const raw = searchParams.get("s");
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
   const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  // Push state to URL as a shareable link. Keep query-string compact.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    if (page > 0) next.set("page", String(page)); else next.delete("page");
+    if (pageSize !== 100) next.set("size", String(pageSize)); else next.delete("size");
+    if (filters.length) next.set("f", JSON.stringify(filters)); else next.delete("f");
+    if (sorts.length) next.set("s", JSON.stringify(sorts)); else next.delete("s");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, pageSize, filters, sorts]);
 
   const filterBtnRef = useRef<HTMLButtonElement | null>(null);
   const sortBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -289,6 +328,19 @@ export default function TableRoute() {
               }}
             >
               <RefreshCw className={cn("h-3.5 w-3.5", dataQ.isFetching && "animate-spin")} /> Refresh
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                navigator.clipboard.writeText(window.location.href).then(
+                  () => toast.success("Link copied"),
+                  () => toast.error("Copy failed"),
+                );
+              }}
+              title="Copy shareable link"
+            >
+              <Share2 className="h-3.5 w-3.5" /> Share
             </Button>
             <Button size="sm" variant="ghost" onClick={exportCsv}>
               <Download className="h-3.5 w-3.5" /> CSV

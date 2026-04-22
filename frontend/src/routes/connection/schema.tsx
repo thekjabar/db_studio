@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useModal } from "@/components/modal-provider";
 import { AddColumnDialog } from "@/components/add-column-dialog";
 import { RetypeColumnDialog } from "@/components/retype-column-dialog";
+import { CommentsPanel } from "@/components/comments-panel";
 
 interface Ctx { schema: string }
 
@@ -162,6 +163,13 @@ export default function SchemaRoute() {
                 </table>
               </div>
             )}
+            <div className="mt-8 max-w-2xl">
+              <CommentsPanel
+                connectionId={id!}
+                target={`table:${schema}.${selectedTable}`}
+                label={`Comments on ${schema}.${selectedTable}`}
+              />
+            </div>
           </>
         )}
       </div>

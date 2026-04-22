@@ -21,6 +21,8 @@ export class CreateConnectionDto {
   @ValidateNested() @Type(() => CredentialsDto) credentials!: CredentialsDto;
   @IsOptional() @IsBoolean() readOnly?: boolean;
   @IsOptional() @IsInt() @Min(1000) @Max(600_000) statementTimeoutMs?: number;
+  /** Workspace to create this connection under. Defaults to caller's personal workspace. */
+  @IsOptional() @IsString() workspaceId?: string;
 }
 
 export class UpdateConnectionDto {
@@ -28,6 +30,7 @@ export class UpdateConnectionDto {
   @IsOptional() @ValidateNested() @Type(() => CredentialsDto) credentials?: CredentialsDto;
   @IsOptional() @IsBoolean() readOnly?: boolean;
   @IsOptional() @IsInt() @Min(1000) @Max(600_000) statementTimeoutMs?: number;
+  @IsOptional() @IsString() workspaceId?: string;
 }
 
 export class TableDataFilterDto {

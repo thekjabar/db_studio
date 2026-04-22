@@ -21,6 +21,8 @@ const EnvSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(100),
   RATE_LIMIT_LOGIN_MAX: z.coerce.number().int().positive().default(10),
   TOTP_ISSUER: z.string().default('Dbdash'),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_MODEL: z.string().default('claude-haiku-4-5-20251001'),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -70,4 +72,7 @@ export class AppConfigService {
   get rateLimitMax() { return this.env.RATE_LIMIT_MAX; }
   get rateLimitLoginMax() { return this.env.RATE_LIMIT_LOGIN_MAX; }
   get totpIssuer() { return this.env.TOTP_ISSUER; }
+  get anthropicApiKey() { return this.env.ANTHROPIC_API_KEY; }
+  get anthropicModel() { return this.env.ANTHROPIC_MODEL; }
+  get aiEnabled() { return !!this.env.ANTHROPIC_API_KEY; }
 }

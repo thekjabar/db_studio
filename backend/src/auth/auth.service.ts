@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AppConfigService } from '../config/config.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { AuditService } from '../audit/audit.service';
+import { WorkspacesService } from '../workspaces/workspaces.service';
 import { SignupDto, LoginDto, EnableTotpDto, DisableTotpDto } from './dto/auth.dto';
 
 export interface AuthTokens {
@@ -34,6 +35,7 @@ export class AuthService {
     private readonly cfg: AppConfigService,
     private readonly crypto: CryptoService,
     private readonly audit: AuditService,
+    private readonly workspaces: WorkspacesService,
   ) {}
 
   private hashRefresh(token: string): string {
@@ -81,6 +83,9 @@ export class AuthService {
       data: { email: dto.email, passwordHash, displayName: dto.displayName },
     });
 
+    // Every user gets a Personal workspace on signup.
+    await this.workspaces.ensurePersonalWorkspace(user.id).catch(() => null);
+
     await this.audit.log({ userId: user.id, action: 'SIGNUP', ...meta });
 
     const tokens = await this.issueTokens(user.id, user.email, meta);
@@ -111,6 +116,9 @@ export class AuthService {
         throw new UnauthorizedException('Invalid TOTP code');
       }
     }
+
+    // Back-compat: users that existed before workspaces shipped still need one.
+    await this.workspaces.ensurePersonalWorkspace(user.id).catch(() => null);
 
     await this.audit.log({ userId: user.id, action: 'LOGIN', ...meta });
     const tokens = await this.issueTokens(user.id, user.email, meta);

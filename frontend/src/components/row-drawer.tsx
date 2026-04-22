@@ -24,8 +24,18 @@ import { DatePicker, DateTimePicker } from "@/components/ui/date-picker";
 import { NumberInput } from "@/components/ui/number-input";
 import { JsonFieldEditor } from "@/components/json-field-editor";
 import { ArrayInput } from "@/components/ui/array-input";
+import { CommentsPanel } from "@/components/comments-panel";
 import { cn } from "@/lib/utils";
 import { api, extractErrorMessage, type ColumnInfo } from "@/lib/api";
+
+/** Build the polymorphic comment target key for a specific row. */
+function buildRowTarget(schema: string, table: string, pk: Record<string, unknown>): string {
+  // Sort PK keys so target is stable regardless of key-insert order.
+  const sortedKeys = Object.keys(pk).sort();
+  const canonical: Record<string, unknown> = {};
+  for (const k of sortedKeys) canonical[k] = pk[k];
+  return `row:${schema}.${table}:${JSON.stringify(canonical)}`;
+}
 
 type Sentinel = "NULL" | "DEFAULT" | "VALUE";
 
@@ -427,6 +437,15 @@ export function RowDrawer({ connectionId, schema, table, columns, row, onClose, 
                 </div>
               </div>
               {optional.map(renderField)}
+            </div>
+          )}
+          {!isInsert && row && (
+            <div className="space-y-3 pt-4 border-t border-border">
+              <CommentsPanel
+                connectionId={connectionId}
+                target={buildRowTarget(schema, table, pkFromRow())}
+                label="Comments on this row"
+              />
             </div>
           )}
         </SheetBody>

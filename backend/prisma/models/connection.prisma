@@ -8,11 +8,15 @@ model Connection {
   statementTimeoutMs Int              @default(30000)
   ownerId          String
   owner            User               @relation("OwnedConnections", fields: [ownerId], references: [id], onDelete: Cascade)
+  workspaceId      String?
+  workspace        Workspace?         @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   members          ConnectionMember[]
   auditLogs        AuditLog[]
   savedQueries     SavedQuery[]
+  comments         Comment[]
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
   @@index([ownerId])
+  @@index([workspaceId])
 }

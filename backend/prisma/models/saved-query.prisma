@@ -2,6 +2,8 @@ model SavedQuery {
   id           String     @id @default(cuid())
   name         String
   sqlText      String     @db.Text
+  /// Chart rendering config — shape: { type, x, y[], stacked?, limit? }. Optional.
+  chartConfig  Json?
   userId       String
   user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   connectionId String

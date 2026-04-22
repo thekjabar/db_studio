@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useOutletContext, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import dagre from "@dagrejs/dagre";
 import {
   ReactFlow,
@@ -14,11 +15,15 @@ import {
   type Node,
   type Edge,
 } from "@xyflow/react";
-import { Key, KeyRound, LayoutGrid } from "lucide-react";
-import { api, extractErrorMessage } from "@/lib/api";
+import { Key, KeyRound, LayoutGrid, MoreVertical, Pencil, Plus, Trash2, Link2 } from "lucide-react";
+import { api, extractErrorMessage, type AlterTableRequest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useModal } from "@/components/modal-provider";
+import { cn } from "@/lib/utils";
+import { AddColumnDialog } from "@/components/add-column-dialog";
+import { RetypeColumnDialog } from "@/components/retype-column-dialog";
 
 interface Ctx { schema: string }
 
@@ -41,25 +46,134 @@ const HIDDEN_HANDLE: CSSProperties = {
   opacity: 0,
 };
 
-function TableNode({ data }: { data: { label: string; columns: TableColumn[] } }) {
+/** Action payload emitted when a user clicks an edit affordance on a table node. */
+export type NodeAction =
+  | { kind: "table-rename"; schema: string; table: string }
+  | { kind: "table-drop"; schema: string; table: string }
+  | { kind: "table-add-column"; schema: string; table: string }
+  | { kind: "column-rename"; schema: string; table: string; column: string }
+  | { kind: "column-retype"; schema: string; table: string; column: string; currentType: string }
+  | { kind: "column-drop"; schema: string; table: string; column: string }
+  | { kind: "fk-pick-source"; schema: string; table: string; column: string }
+  | { kind: "fk-pick-target"; schema: string; table: string; column: string };
+
+interface TableNodeData {
+  label: string;
+  schema: string;
+  table: string;
+  columns: TableColumn[];
+  editMode: boolean;
+  fkPending?: { table: string; column: string } | null;
+  onAction?: (a: NodeAction) => void;
+}
+
+function TableNode({ data }: { data: TableNodeData }) {
+  const { label, schema, table, columns, editMode, fkPending, onAction } = data;
   return (
     <div className="rounded-md border border-border bg-card text-xs shadow-lg min-w-[200px] font-mono relative">
       <Handle type="target" position={Position.Left} style={HIDDEN_HANDLE} />
       <Handle type="source" position={Position.Right} style={HIDDEN_HANDLE} />
-      <div className="px-3 py-1.5 bg-primary/15 border-b border-border font-semibold text-primary">
-        {data.label}
+      <div className="px-3 py-1.5 bg-primary/15 border-b border-border font-semibold text-primary flex items-center gap-1">
+        <span className="flex-1 truncate">{label}</span>
+        {editMode && onAction && (
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button
+              type="button"
+              title="Add column"
+              onClick={(e) => { e.stopPropagation(); onAction({ kind: "table-add-column", schema, table }); }}
+              className="p-0.5 rounded hover:bg-primary/20"
+            >
+              <Plus className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              title="Rename table"
+              onClick={(e) => { e.stopPropagation(); onAction({ kind: "table-rename", schema, table }); }}
+              className="p-0.5 rounded hover:bg-primary/20"
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              title="Drop table"
+              onClick={(e) => { e.stopPropagation(); onAction({ kind: "table-drop", schema, table }); }}
+              className="p-0.5 rounded hover:bg-destructive/20 text-destructive"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
+          </div>
+        )}
       </div>
       <ul>
-        {data.columns.slice(0, 20).map((c) => (
-          <li key={c.name} className="px-3 py-1 flex items-center gap-2 border-b border-border last:border-0">
-            {c.pk ? <Key className="h-3 w-3 text-amber-400" /> : c.fk ? <KeyRound className="h-3 w-3 text-sky-400" /> : <span className="w-3" />}
-            <span className="flex-1">{c.name}</span>
-            <span className="text-muted-foreground text-[10px]">{c.type}</span>
-          </li>
-        ))}
-        {data.columns.length > 20 && (
+        {columns.slice(0, 20).map((c) => {
+          const isPending = fkPending?.table === table && fkPending.column === c.name;
+          return (
+            <li
+              key={c.name}
+              className={cn(
+                "px-3 py-1 flex items-center gap-2 border-b border-border last:border-0 group",
+                isPending && "bg-sky-500/15",
+                editMode && "hover:bg-accent/40",
+              )}
+            >
+              {c.pk ? (
+                <Key className="h-3 w-3 text-amber-500 dark:text-amber-400 shrink-0" />
+              ) : c.fk ? (
+                <KeyRound className="h-3 w-3 text-sky-600 dark:text-sky-400 shrink-0" />
+              ) : (
+                <span className="w-3 shrink-0" />
+              )}
+              <span className="flex-1 truncate">{c.name}</span>
+              <span className="text-muted-foreground text-[10px] shrink-0">{c.type}</span>
+              {editMode && onAction && (
+                <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100">
+                  <button
+                    type="button"
+                    title={fkPending ? (isPending ? "Cancel FK" : "Set as FK target") : "Start FK from this column"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onAction(
+                        fkPending
+                          ? { kind: "fk-pick-target", schema, table, column: c.name }
+                          : { kind: "fk-pick-source", schema, table, column: c.name },
+                      );
+                    }}
+                    className="p-0.5 rounded hover:bg-sky-500/20 text-sky-600 dark:text-sky-400"
+                  >
+                    <Link2 className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Rename column"
+                    onClick={(e) => { e.stopPropagation(); onAction({ kind: "column-rename", schema, table, column: c.name }); }}
+                    className="p-0.5 rounded hover:bg-accent"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Change type"
+                    onClick={(e) => { e.stopPropagation(); onAction({ kind: "column-retype", schema, table, column: c.name, currentType: c.type }); }}
+                    className="p-0.5 rounded hover:bg-accent"
+                  >
+                    <MoreVertical className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Drop column"
+                    onClick={(e) => { e.stopPropagation(); onAction({ kind: "column-drop", schema, table, column: c.name }); }}
+                    className="p-0.5 rounded hover:bg-destructive/20 text-destructive"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+            </li>
+          );
+        })}
+        {columns.length > 20 && (
           <li className="px-3 py-1 text-[10px] text-muted-foreground italic">
-            +{data.columns.length - 20} more columns
+            +{columns.length - 20} more columns
           </li>
         )}
       </ul>
@@ -96,9 +210,15 @@ export default function ErRoute() {
   const { id } = useParams<{ id: string }>();
   const ctx = useOutletContext<Ctx>();
   const schema = ctx?.schema ?? "public";
+  const qc = useQueryClient();
+  const modal = useModal();
 
   const [filter, setFilter] = useState("");
   const [onlyRelated, setOnlyRelated] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [fkPending, setFkPending] = useState<{ table: string; column: string } | null>(null);
+  const [addColumnFor, setAddColumnFor] = useState<{ schema: string; table: string } | null>(null);
+  const [retypeState, setRetypeState] = useState<{ table: string; column: string; currentType: string } | null>(null);
 
   const q = useQuery({
     queryKey: ["er", id, schema],
@@ -106,8 +226,126 @@ export default function ErRoute() {
     enabled: !!id,
   });
 
+  const alter = useMutation({
+    mutationFn: (req: AlterTableRequest) => api.alterTable(id!, req),
+    onSuccess: () => {
+      toast.success("Schema updated");
+      qc.invalidateQueries({ queryKey: ["er", id, schema] });
+      qc.invalidateQueries({ queryKey: ["tables", id, schema] });
+    },
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
+  const drop = useMutation({
+    mutationFn: (vars: { schema: string; table: string }) =>
+      api.dropTable(id!, vars.schema, vars.table, true),
+    onSuccess: () => {
+      toast.success("Table dropped");
+      qc.invalidateQueries({ queryKey: ["er", id, schema] });
+      qc.invalidateQueries({ queryKey: ["tables", id, schema] });
+    },
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  const handleAction = useCallback(async (a: NodeAction) => {
+    switch (a.kind) {
+      case "table-add-column":
+        setAddColumnFor({ schema: a.schema, table: a.table });
+        return;
+      case "table-rename": {
+        const next = await modal.prompt({
+          title: `Rename ${a.schema}.${a.table}`,
+          description: "Enter the new table name.",
+          defaultValue: a.table,
+        });
+        if (!next || next === a.table) return;
+        alter.mutate({ schema: a.schema, name: a.table, renameTo: next, confirm: true });
+        return;
+      }
+      case "table-drop": {
+        const ok = await modal.confirm({
+          title: `Drop ${a.schema}.${a.table}?`,
+          description: "This removes the table and all of its data. Not recoverable without a backup.",
+          confirmLabel: "Drop table",
+          destructive: true,
+        });
+        if (!ok) return;
+        drop.mutate({ schema: a.schema, table: a.table });
+        return;
+      }
+      case "column-rename": {
+        const next = await modal.prompt({
+          title: `Rename column ${a.column}`,
+          description: `In ${a.schema}.${a.table}.`,
+          defaultValue: a.column,
+        });
+        if (!next || next === a.column) return;
+        alter.mutate({
+          schema: a.schema,
+          name: a.table,
+          renameColumns: [{ from: a.column, to: next }],
+          confirm: true,
+        });
+        return;
+      }
+      case "column-retype":
+        setRetypeState({ table: a.table, column: a.column, currentType: a.currentType });
+        return;
+      case "column-drop": {
+        const ok = await modal.confirm({
+          title: `Drop column ${a.column}?`,
+          description: `In ${a.schema}.${a.table}. Data in this column is permanently removed.`,
+          confirmLabel: "Drop column",
+          destructive: true,
+        });
+        if (!ok) return;
+        alter.mutate({
+          schema: a.schema,
+          name: a.table,
+          dropColumns: [a.column],
+          confirm: true,
+        });
+        return;
+      }
+      case "fk-pick-source":
+        setFkPending({ table: a.table, column: a.column });
+        toast.info(`FK source set: ${a.table}.${a.column}. Click the target column now.`);
+        return;
+      case "fk-pick-target": {
+        if (!fkPending) return;
+        if (fkPending.table === a.table && fkPending.column === a.column) {
+          setFkPending(null);
+          toast.info("FK cancelled");
+          return;
+        }
+        const refSchema = a.schema;
+        const preview = `FOREIGN KEY (${fkPending.column}) REFERENCES ${refSchema}.${a.table} (${a.column})`;
+        const ok = await modal.confirm({
+          title: "Add foreign key?",
+          description: `On ${fkPending.table}: ${preview}`,
+          confirmLabel: "Add FK",
+        });
+        if (ok) {
+          alter.mutate({
+            schema,
+            name: fkPending.table,
+            addForeignKeys: [{
+              columns: [fkPending.column],
+              refSchema,
+              refTable: a.table,
+              refColumns: [a.column],
+            }],
+            confirm: true,
+          });
+        }
+        setFkPending(null);
+        return;
+      }
+    }
+  }, [alter, drop, fkPending, modal, schema]);
 
   // Normalize values that may arrive as a Postgres array literal string
   // (e.g. "{id,user_id}") instead of a JS array.
@@ -152,8 +390,13 @@ export default function ErRoute() {
         type: "table",
         data: {
           label: `${n.schema}.${n.name}`,
+          schema: n.schema,
+          table: n.name,
           columns: n.columns.map((c) => ({ ...c, fk: fkCols.has(c.name) })),
-        },
+          editMode,
+          fkPending,
+          onAction: handleAction,
+        } satisfies TableNodeData,
         position: { x: 0, y: 0 }, // dagre overrides
       };
     });
@@ -174,7 +417,7 @@ export default function ErRoute() {
       }));
 
     return { nodes: layoutWithDagre(rfNodes, rfEdges), edges: rfEdges };
-  }, [q.data, filter, onlyRelated]);
+  }, [q.data, filter, onlyRelated, editMode, fkPending, handleAction]);
 
   useEffect(() => {
     setNodes(laidOut.nodes);
@@ -211,10 +454,33 @@ export default function ErRoute() {
         <div className="text-[10px] text-muted-foreground font-mono">
           {nodes.length}/{totalNodes} tables · {edges.length}/{totalEdges} edges
         </div>
-        <Button size="sm" variant="outline" className="ml-auto" onClick={relayout}>
+        <Button
+          size="sm"
+          variant={editMode ? "default" : "outline"}
+          className="ml-auto"
+          onClick={() => {
+            setEditMode((v) => !v);
+            setFkPending(null);
+          }}
+        >
+          <Pencil className="h-3.5 w-3.5" /> {editMode ? "Exit edit" : "Edit schema"}
+        </Button>
+        <Button size="sm" variant="outline" onClick={relayout}>
           <LayoutGrid className="h-3.5 w-3.5" /> Re-layout
         </Button>
       </div>
+      {fkPending && (
+        <div className="absolute top-14 left-3 z-10 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-xs">
+          FK source: <span className="font-mono text-sky-700 dark:text-sky-400">{fkPending.table}.{fkPending.column}</span>
+          <button
+            type="button"
+            onClick={() => setFkPending(null)}
+            className="ml-3 text-muted-foreground hover:text-foreground underline"
+          >
+            cancel
+          </button>
+        </div>
+      )}
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -229,6 +495,37 @@ export default function ErRoute() {
         <Controls />
         <MiniMap pannable zoomable className="!bg-card !border-border" nodeColor="hsl(var(--primary))" />
       </ReactFlow>
+
+      {addColumnFor && (
+        <AddColumnDialog
+          connectionId={id!}
+          schema={addColumnFor.schema}
+          table={addColumnFor.table}
+          open
+          onOpenChange={(v) => !v && setAddColumnFor(null)}
+          onSaved={() => {
+            toast.success("Column added");
+            qc.invalidateQueries({ queryKey: ["er", id, schema] });
+          }}
+        />
+      )}
+
+      <RetypeColumnDialog
+        open={!!retypeState}
+        columnName={retypeState?.column ?? ""}
+        currentType={retypeState?.currentType ?? ""}
+        onOpenChange={(v) => !v && setRetypeState(null)}
+        onConfirm={(newType) => {
+          if (!retypeState) return;
+          alter.mutate({
+            schema,
+            name: retypeState.table,
+            alterColumns: [{ name: retypeState.column, type: newType }],
+            confirm: true,
+          });
+          setRetypeState(null);
+        }}
+      />
     </div>
   );
 }

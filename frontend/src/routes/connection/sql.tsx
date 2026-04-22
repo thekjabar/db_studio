@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { toast } from "sonner";
-import { Download, Loader2, Play, Save, Sparkles, Trash2 } from "lucide-react";
+import { Download, Loader2, Play, Save, Share2, Sparkles, Trash2 } from "lucide-react";
 import { format as formatSql } from "sql-formatter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,8 @@ import { DataGrid } from "@/components/data-grid";
 import { api, extractErrorMessage, type QueryResult } from "@/lib/api";
 import { useModal } from "@/components/modal-provider";
 import { useTheme } from "@/lib/theme-store";
+import { AiQueryDialog } from "@/components/ai-query-dialog";
+import { useOutletContext } from "react-router-dom";
 import {
   Dialog,
   DialogContent,
@@ -41,10 +43,29 @@ export default function SqlRoute() {
   const qc = useQueryClient();
   const modal = useModal();
   const isDark = useTheme((s) => s.theme === "dark");
-  const [sql, setSql] = useState("SELECT 1 AS hello;");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [sql, setSql] = useState(() => {
+    const urlSql = searchParams.get("sql");
+    return urlSql ?? "SELECT 1 AS hello;";
+  });
+
+  // Push SQL to URL so it's shareable — debounced so every keystroke isn't a history event.
+  // Skip anything over ~1.5KB to keep URLs reasonable (long queries should be Saved instead).
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      const next = new URLSearchParams(searchParams);
+      if (sql && sql !== "SELECT 1 AS hello;" && sql.length < 1500) next.set("sql", sql);
+      else next.delete("sql");
+      setSearchParams(next, { replace: true });
+    }, 400);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sql]);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(() => (id ? loadHistory(id) : []));
   const [confirmSql, setConfirmSql] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const ctx = useOutletContext<{ schema?: string } | null>();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
   // Re-load history whenever the connection changes (navigating between connections).
@@ -105,7 +126,7 @@ export default function SqlRoute() {
   });
 
   const saveMut = useMutation({
-    mutationFn: (body: { name: string; sql: string }) => api.createSavedQuery(id!, body),
+    mutationFn: (body: { name: string; sqlText: string }) => api.createSavedQuery(id!, body),
     onSuccess: () => {
       toast.success("Query saved");
       qc.invalidateQueries({ queryKey: ["saved-queries", id] });
@@ -159,7 +180,7 @@ export default function SqlRoute() {
       placeholder: "e.g. Daily active users",
       validate: (v) => (v ? null : "Name is required"),
     });
-    if (name) saveMut.mutate({ name, sql });
+    if (name) saveMut.mutate({ name, sqlText: sql });
   };
 
   const exportCsv = () => {
@@ -199,7 +220,7 @@ export default function SqlRoute() {
           )}
           {savedQ.data?.map((q) => (
             <div key={q.id} className="group flex items-center gap-1 px-2 py-1 rounded hover:bg-accent">
-              <button onClick={() => setSql(q.sql)} className="flex-1 text-left text-xs truncate">
+              <button onClick={() => setSql(q.sqlText)} className="flex-1 text-left text-xs truncate">
                 {q.name}
               </button>
               <button
@@ -253,8 +274,28 @@ export default function SqlRoute() {
             Run
             <kbd className="ml-1 rounded border border-border bg-background/30 px-1 text-[10px]">Ctrl ↵</kbd>
           </Button>
+          <Button size="sm" variant="outline" onClick={() => setAiOpen(true)}>
+            <Sparkles className="h-3.5 w-3.5" /> Ask AI
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => formatRef.current()}>
+            Format
+            <kbd className="ml-1 rounded border border-border bg-background/30 px-1 text-[10px]">Shift ⌥ F</kbd>
+          </Button>
           <Button size="sm" variant="outline" onClick={doSave}>
             <Save className="h-3.5 w-3.5" /> Save
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              navigator.clipboard.writeText(window.location.href).then(
+                () => toast.success("Link copied"),
+                () => toast.error("Copy failed"),
+              );
+            }}
+            title="Copy shareable link (embeds the current SQL if short)"
+          >
+            <Share2 className="h-3.5 w-3.5" /> Share
           </Button>
           <Button size="sm" variant="ghost" onClick={exportCsv} disabled={!result}>
             <Download className="h-3.5 w-3.5" /> CSV
@@ -333,6 +374,14 @@ export default function SqlRoute() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AiQueryDialog
+        open={aiOpen}
+        onOpenChange={setAiOpen}
+        connectionId={id!}
+        schema={ctx?.schema}
+        onAccept={(generatedSql) => setSql(generatedSql)}
+      />
     </div>
   );
 }

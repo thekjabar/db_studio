@@ -101,11 +101,28 @@ export class ConnectionsService implements OnModuleDestroy {
     return {
       id: c.id, name: c.name, dialect: c.dialect,
       readOnly: c.readOnly, statementTimeoutMs: c.statementTimeoutMs,
-      ownerId: c.ownerId, createdAt: c.createdAt, updatedAt: c.updatedAt,
+      ownerId: c.ownerId, workspaceId: c.workspaceId ?? null,
+      createdAt: c.createdAt, updatedAt: c.updatedAt,
     };
   }
 
   async create(userId: string, dto: CreateConnectionDto, meta: { ip?: string; userAgent?: string }) {
+    // Pick a workspace: use the provided one if the user has rights, else default
+    // to the user's personal workspace.
+    let workspaceId: string | null = null;
+    if (dto.workspaceId) {
+      const m = await this.prisma.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId: dto.workspaceId, userId } },
+      });
+      if (!m) throw new Error('You are not a member of that workspace');
+      workspaceId = dto.workspaceId;
+    } else {
+      const personal = await this.prisma.workspace.findFirst({
+        where: { ownerId: userId, isPersonal: true },
+      });
+      workspaceId = personal?.id ?? null;
+    }
+
     const credCt = this.crypto.encryptJson(dto.credentials, 'conn:new');
     const created = await this.prisma.connection.create({
       data: {
@@ -113,6 +130,7 @@ export class ConnectionsService implements OnModuleDestroy {
         readOnly: dto.readOnly ?? false,
         statementTimeoutMs: dto.statementTimeoutMs ?? 30_000,
         ownerId: userId,
+        workspaceId,
       },
     });
     // Re-encrypt with purpose bound to id.
@@ -124,9 +142,21 @@ export class ConnectionsService implements OnModuleDestroy {
     return this.sanitize(final);
   }
 
-  async list(userId: string) {
+  async list(userId: string, workspaceId?: string) {
     const rows = await this.prisma.connection.findMany({
-      where: { OR: [{ ownerId: userId }, { members: { some: { userId } } }] },
+      where: {
+        AND: [
+          workspaceId ? { workspaceId } : {},
+          {
+            OR: [
+              { ownerId: userId },
+              { members: { some: { userId } } },
+              // User is a member of the connection's workspace.
+              { workspace: { members: { some: { userId } } } },
+            ],
+          },
+        ],
+      },
       orderBy: { updatedAt: 'desc' },
     });
     return rows.map((r) => this.sanitize(r));
@@ -149,6 +179,14 @@ export class ConnectionsService implements OnModuleDestroy {
       readOnly: dto.readOnly ?? existing.readOnly,
       statementTimeoutMs: dto.statementTimeoutMs ?? existing.statementTimeoutMs,
     };
+    if (dto.workspaceId !== undefined) {
+      // Verify the caller is a member of the destination workspace.
+      const m = await this.prisma.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId: dto.workspaceId, userId } },
+      });
+      if (!m) throw new Error('You are not a member of the destination workspace');
+      data.workspaceId = dto.workspaceId;
+    }
     if (dto.credentials) {
       const current = this.crypto.decryptJson<ConnectionCredentials>(existing.credentialsCt, PURPOSE(id));
       const merged = { ...current, ...dto.credentials };

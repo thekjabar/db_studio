@@ -12,6 +12,9 @@ model User {
   memberships     ConnectionMember[]
   auditLogs       AuditLog[]
   savedQueries    SavedQuery[]
+  comments        Comment[]
+  ownedWorkspaces Workspace[]       @relation("OwnedWorkspaces")
+  workspaceMembers WorkspaceMember[]
 
   @@index([email])
 }

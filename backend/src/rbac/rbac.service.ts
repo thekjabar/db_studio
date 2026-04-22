@@ -11,15 +11,25 @@ export class RbacService {
   async effectiveRole(userId: string, connectionId: string): Promise<Role | null> {
     const conn = await this.prisma.connection.findUnique({
       where: { id: connectionId },
-      select: { ownerId: true },
+      select: { ownerId: true, workspaceId: true },
     });
     if (!conn) return null;
     if (conn.ownerId === userId) return Role.OWNER;
-    const m = await this.prisma.connectionMember.findUnique({
+    // Direct grant on the connection wins over workspace-level.
+    const direct = await this.prisma.connectionMember.findUnique({
       where: { connectionId_userId: { connectionId, userId } },
       select: { role: true },
     });
-    return m?.role ?? null;
+    if (direct) return direct.role;
+    // Fall back to workspace membership.
+    if (conn.workspaceId) {
+      const ws = await this.prisma.workspaceMember.findUnique({
+        where: { workspaceId_userId: { workspaceId: conn.workspaceId, userId } },
+        select: { role: true },
+      });
+      if (ws) return ws.role;
+    }
+    return null;
   }
 
   async require(userId: string, connectionId: string, min: Role): Promise<Role> {

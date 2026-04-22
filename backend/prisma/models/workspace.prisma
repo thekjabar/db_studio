@@ -1,0 +1,30 @@
+model Workspace {
+  id          String             @id @default(cuid())
+  name        String
+  /// Slug used in URLs. Must be unique.
+  slug        String             @unique
+  /// True for the auto-created personal workspace each user gets on signup.
+  isPersonal  Boolean            @default(false)
+  ownerId     String
+  owner       User               @relation("OwnedWorkspaces", fields: [ownerId], references: [id], onDelete: Cascade)
+  members     WorkspaceMember[]
+  connections Connection[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([ownerId])
+}
+
+model WorkspaceMember {
+  id          String      @id @default(cuid())
+  workspaceId String
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Reuses the connection-level Role enum for simplicity.
+  role        Role        @default(VIEWER)
+  createdAt   DateTime    @default(now())
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}

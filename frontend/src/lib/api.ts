@@ -93,6 +93,7 @@ export interface Connection {
   sslMode?: string;
   readOnly?: boolean;
   statementTimeoutMs?: number;
+  workspaceId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -183,11 +184,53 @@ export interface AuditEntry {
   createdAt: string;
 }
 
+export interface ChartConfig {
+  type: "line" | "bar" | "pie" | "area";
+  x: string;
+  y: string[];
+  stacked?: boolean;
+  limit?: number;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  slug: string;
+  isPersonal: boolean;
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceDetail extends Workspace {
+  myRole: "OWNER" | "EDITOR" | "VIEWER";
+  members: Array<{
+    id: string;
+    userId: string;
+    role: "OWNER" | "EDITOR" | "VIEWER";
+    createdAt: string;
+    user: { id: string; email: string; displayName?: string | null };
+  }>;
+}
+
+export interface Comment {
+  id: string;
+  connectionId: string;
+  userId: string;
+  target: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  user?: { email: string; displayName?: string | null } | null;
+}
+
 export interface SavedQuery {
   id: string;
   name: string;
-  sql: string;
+  sqlText: string;
+  chartConfig?: ChartConfig | null;
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface ErNode {
@@ -314,7 +357,10 @@ export const api = {
   verify2fa: (code: string) => http.post("/auth/2fa/verify", { code }).then((r) => r.data),
   disable2fa: (code: string) => http.post("/auth/2fa/disable", { code }).then((r) => r.data),
 
-  listConnections: () => http.get<Connection[]>("/connections").then((r) => r.data),
+  listConnections: (workspaceId?: string) =>
+    http
+      .get<Connection[]>("/connections", { params: workspaceId ? { workspaceId } : undefined })
+      .then((r) => r.data),
   createConnection: (input: CreateConnectionInput) =>
     http.post<Connection>("/connections", toCreatePayload(input)).then((r) => r.data),
   updateConnection: (id: string, input: Partial<CreateConnectionInput>) =>
@@ -407,6 +453,42 @@ export const api = {
   runQuery: (id: string, body: { sql: string; confirmDestructive?: boolean }) =>
     http.post<QueryResult>(`/connections/${id}/query`, body).then((r) => r.data),
 
+  aiGenerateSql: (id: string, body: { prompt: string; schema?: string }) =>
+    http
+      .post<{ sql: string; explanation: string; tables: string[] }>(`/connections/${id}/ai/generate-sql`, body)
+      .then((r) => r.data),
+
+  listWorkspaces: () => http.get<Workspace[]>("/workspaces").then((r) => r.data),
+  createWorkspace: (body: { name: string }) =>
+    http.post<Workspace>("/workspaces", body).then((r) => r.data),
+  getWorkspace: (id: string) =>
+    http.get<WorkspaceDetail>(`/workspaces/${id}`).then((r) => r.data),
+  renameWorkspace: (id: string, name: string) =>
+    http.patch<Workspace>(`/workspaces/${id}`, { name }).then((r) => r.data),
+  deleteWorkspace: (id: string) =>
+    http.delete(`/workspaces/${id}`).then((r) => r.data),
+  addWorkspaceMember: (id: string, body: { email: string; role: "OWNER" | "EDITOR" | "VIEWER" }) =>
+    http.post(`/workspaces/${id}/members`, body).then((r) => r.data),
+  updateWorkspaceMember: (id: string, memberId: string, role: "OWNER" | "EDITOR" | "VIEWER") =>
+    http.patch(`/workspaces/${id}/members/${memberId}`, { role }).then((r) => r.data),
+  removeWorkspaceMember: (id: string, memberId: string) =>
+    http.delete(`/workspaces/${id}/members/${memberId}`).then((r) => r.data),
+
+  listComments: (id: string, target?: string) =>
+    http
+      .get<Comment[]>(`/connections/${id}/comments`, { params: target ? { target } : undefined })
+      .then((r) => r.data),
+  commentCounts: (id: string) =>
+    http.get<Record<string, number>>(`/connections/${id}/comments/counts`).then((r) => r.data),
+  createComment: (id: string, body: { target: string; body: string }) =>
+    http.post<Comment>(`/connections/${id}/comments`, body).then((r) => r.data),
+  updateComment: (id: string, commentId: string, body: string) =>
+    http
+      .patch<Comment>(`/connections/${id}/comments/${commentId}`, { body })
+      .then((r) => r.data),
+  deleteComment: (id: string, commentId: string) =>
+    http.delete(`/connections/${id}/comments/${commentId}`).then((r) => r.data),
+
   getEr: (id: string, schema: string) =>
     http.get<ErGraph>(`/connections/${id}/er`, { params: { schema } }).then((r) => r.data),
 
@@ -445,8 +527,21 @@ export const api = {
 
   listSavedQueries: (id: string) =>
     http.get<SavedQuery[]>(`/connections/${id}/saved-queries`).then((r) => r.data),
-  createSavedQuery: (id: string, body: { name: string; sql: string }) =>
+  getSavedQuery: (id: string, queryId: string) =>
+    http.get<SavedQuery>(`/connections/${id}/saved-queries/${queryId}`).then((r) => r.data),
+  createSavedQuery: (
+    id: string,
+    body: { name: string; sqlText: string; chartConfig?: ChartConfig | null },
+  ) =>
     http.post<SavedQuery>(`/connections/${id}/saved-queries`, body).then((r) => r.data),
+  updateSavedQuery: (
+    id: string,
+    queryId: string,
+    patch: { name?: string; sqlText?: string; chartConfig?: ChartConfig | null },
+  ) =>
+    http
+      .patch<SavedQuery>(`/connections/${id}/saved-queries/${queryId}`, patch)
+      .then((r) => r.data),
   deleteSavedQuery: (id: string, queryId: string) =>
     http.delete(`/connections/${id}/saved-queries/${queryId}`).then((r) => r.data),
 };

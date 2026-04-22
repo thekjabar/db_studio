@@ -14,6 +14,9 @@ import { SchemaModule } from './schema/schema.module';
 import { AuditModule } from './audit/audit.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { RbacModule } from './rbac/rbac.module';
+import { AiModule } from './ai/ai.module';
+import { CommentsModule } from './comments/comments.module';
+import { WorkspacesModule } from './workspaces/workspaces.module';
 import { HealthController } from './common/health.controller';
 
 @Module({
@@ -41,6 +44,9 @@ import { HealthController } from './common/health.controller';
     AuditModule,
     RealtimeModule,
     RbacModule,
+    AiModule,
+    CommentsModule,
+    WorkspacesModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

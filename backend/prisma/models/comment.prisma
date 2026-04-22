@@ -1,0 +1,18 @@
+model Comment {
+  id           String     @id @default(cuid())
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Polymorphic target identifier. Examples:
+  ///   "table:public.users"
+  ///   "column:public.users.email"
+  ///   "row:public.users:{\"id\":\"abc-123\"}"
+  target       String     @db.Text
+  body         String     @db.Text
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([connectionId, target])
+  @@index([userId])
+}

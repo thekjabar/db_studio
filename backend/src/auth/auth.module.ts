@@ -8,6 +8,7 @@ import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { AuditModule } from '../audit/audit.module';
+import { WorkspacesModule } from '../workspaces/workspaces.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { AuditModule } from '../audit/audit.module';
       }),
     }),
     AuditModule,
+    WorkspacesModule,
   ],
   controllers: [AuthController],
   providers: [

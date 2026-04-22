@@ -39,7 +39,13 @@ export default function ConnectionsPage() {
   const { user, clear } = useAuth();
   const nav = useNavigate();
 
-  const q = useQuery({ queryKey: ["connections"], queryFn: () => api.listConnections() });
+  const [workspaceId, setWorkspaceId] = useState<string>("");
+  const wsQ = useQuery({ queryKey: ["workspaces"], queryFn: () => api.listWorkspaces() });
+
+  const q = useQuery({
+    queryKey: ["connections", workspaceId],
+    queryFn: () => api.listConnections(workspaceId || undefined),
+  });
 
   const del = useMutation({
     mutationFn: (id: string) => api.deleteConnection(id),
@@ -85,14 +91,31 @@ export default function ConnectionsPage() {
       </header>
 
       <div className="max-w-6xl mx-auto px-6 py-10">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-semibold">Connections</h1>
             <p className="text-sm text-muted-foreground">Databases you have access to.</p>
           </div>
-          <Button onClick={() => setDialogOpen(true)}>
-            <Plus className="h-4 w-4" /> New connection
-          </Button>
+          <div className="flex items-center gap-2">
+            {wsQ.data && wsQ.data.length > 0 && (
+              <Select value={workspaceId || "all"} onValueChange={(v) => setWorkspaceId(v === "all" ? "" : v)}>
+                <SelectTrigger className="h-9 w-56">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All my workspaces</SelectItem>
+                  {wsQ.data.map((w) => (
+                    <SelectItem key={w.id} value={w.id}>
+                      {w.name}{w.isPersonal ? " (personal)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Button onClick={() => setDialogOpen(true)}>
+              <Plus className="h-4 w-4" /> New connection
+            </Button>
+          </div>
         </div>
 
         {q.isLoading && (

@@ -5,7 +5,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { ConnectionsService } from './connections.service';
 import { RbacGuard } from '../rbac/rbac.guard';
-import { RequireRole } from '../rbac/rbac.decorator';
+import { RequireRole, RequireTableRole } from '../rbac/rbac.decorator';
 import { TableDataQuery } from '../drivers/driver.interface';
 import { InsertRowDto, UpdateRowDto, DeleteRowDto, BulkDeleteRowsDto, BulkUpdateRowsDto } from './connections.dto';
 import { AuditService } from '../audit/audit.service';
@@ -80,7 +80,7 @@ export class IntrospectionController {
   }
 
   @Throttle({ heavy: { limit: 60, ttl: 60_000 } })
-  @Post('tables/:name/rows') @RequireRole('EDITOR')
+  @Post('tables/:name/rows') @RequireTableRole('EDITOR')
   async insert(
     @Param('id') id: string, @Param('name') name: string,
     @Query('schema') schema: string, @Body() dto: InsertRowDto,
@@ -99,7 +99,7 @@ export class IntrospectionController {
   }
 
   @Throttle({ heavy: { limit: 60, ttl: 60_000 } })
-  @Patch('tables/:name/rows') @RequireRole('EDITOR')
+  @Patch('tables/:name/rows') @RequireTableRole('EDITOR')
   async update(
     @Param('id') id: string, @Param('name') name: string,
     @Query('schema') schema: string, @Body() dto: UpdateRowDto,
@@ -119,7 +119,7 @@ export class IntrospectionController {
   }
 
   @Throttle({ heavy: { limit: 60, ttl: 60_000 } })
-  @Delete('tables/:name/rows') @RequireRole('EDITOR')
+  @Delete('tables/:name/rows') @RequireTableRole('EDITOR')
   async remove(
     @Param('id') id: string, @Param('name') name: string,
     @Query('schema') schema: string, @Body() dto: DeleteRowDto,
@@ -139,7 +139,7 @@ export class IntrospectionController {
   }
 
   @Throttle({ heavy: { limit: 30, ttl: 60_000 } })
-  @Post('tables/:name/rows/bulk-delete') @RequireRole('EDITOR')
+  @Post('tables/:name/rows/bulk-delete') @RequireTableRole('EDITOR')
   async bulkRemove(
     @Param('id') id: string, @Param('name') name: string,
     @Query('schema') schema: string, @Body() dto: BulkDeleteRowsDto,
@@ -164,7 +164,7 @@ export class IntrospectionController {
   }
 
   @Throttle({ heavy: { limit: 30, ttl: 60_000 } })
-  @Post('tables/:name/rows/bulk-update') @RequireRole('EDITOR')
+  @Post('tables/:name/rows/bulk-update') @RequireTableRole('EDITOR')
   async bulkUpdate(
     @Param('id') id: string, @Param('name') name: string,
     @Query('schema') schema: string, @Body() dto: BulkUpdateRowsDto,

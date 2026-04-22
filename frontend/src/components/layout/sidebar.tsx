@@ -14,6 +14,7 @@ import {
   Eye,
   BookOpen,
   Hammer,
+  ShieldCheck,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -162,6 +163,7 @@ export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSche
         <NavItem to={`/c/${connectionId}/schema`} icon={<Hammer className="h-3.5 w-3.5" />} label="Schema" />
         <NavItem to={`/c/${connectionId}/saved`} icon={<BookOpen className="h-3.5 w-3.5" />} label="Saved queries" />
         <NavItem to={`/c/${connectionId}/audit`} icon={<FileClock className="h-3.5 w-3.5" />} label="Audit log" />
+        <NavItem to={`/c/${connectionId}/permissions`} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Permissions" />
       </nav>
     </aside>
   );

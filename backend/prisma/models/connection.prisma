@@ -11,6 +11,7 @@ model Connection {
   workspaceId      String?
   workspace        Workspace?         @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   members          ConnectionMember[]
+  tableGrants      TableGrant[]
   auditLogs        AuditLog[]
   savedQueries     SavedQuery[]
   comments         Comment[]

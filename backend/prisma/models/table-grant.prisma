@@ -1,0 +1,16 @@
+/// Per-table override of a user's effective role on a connection.
+/// If present, this takes precedence over connection/workspace-level roles for that specific table.
+model TableGrant {
+  id           String     @id @default(cuid())
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  schemaName   String
+  tableName    String
+  role         Role
+  createdAt    DateTime   @default(now())
+
+  @@unique([connectionId, userId, schemaName, tableName])
+  @@index([connectionId, userId])
+}

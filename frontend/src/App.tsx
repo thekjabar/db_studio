@@ -14,6 +14,7 @@ import ErRoute from "@/routes/connection/er";
 import SchemaRoute from "@/routes/connection/schema";
 import AuditRoute from "@/routes/connection/audit";
 import SavedRoute from "@/routes/connection/saved";
+import PermissionsRoute from "@/routes/connection/permissions";
 import { Loader2 } from "lucide-react";
 
 function Protected({ children }: { children: React.ReactNode }) {
@@ -120,6 +121,7 @@ export default function App() {
         <Route path="schema" element={<SchemaRoute />} />
         <Route path="audit" element={<AuditRoute />} />
         <Route path="saved" element={<SavedRoute />} />
+        <Route path="permissions" element={<PermissionsRoute />} />
       </Route>
       <Route path="/" element={<Navigate to="/connections" replace />} />
       <Route path="*" element={<Navigate to="/connections" replace />} />

@@ -213,6 +213,28 @@ export interface WorkspaceDetail extends Workspace {
   }>;
 }
 
+export type MemberRole = "OWNER" | "EDITOR" | "VIEWER";
+
+export interface ConnectionMember {
+  id: string;
+  userId: string;
+  email: string;
+  displayName: string | null;
+  role: MemberRole;
+  createdAt: string;
+}
+
+export interface TableGrant {
+  id: string;
+  userId: string;
+  email: string;
+  displayName: string | null;
+  schemaName: string;
+  tableName: string;
+  role: MemberRole;
+  createdAt: string;
+}
+
 export interface Comment {
   id: string;
   connectionId: string;
@@ -476,6 +498,24 @@ export const api = {
     http.patch(`/workspaces/${id}/members/${memberId}`, { role }).then((r) => r.data),
   removeWorkspaceMember: (id: string, memberId: string) =>
     http.delete(`/workspaces/${id}/members/${memberId}`).then((r) => r.data),
+
+  listConnectionMembers: (id: string) =>
+    http.get<ConnectionMember[]>(`/connections/${id}/permissions/members`).then((r) => r.data),
+  addConnectionMember: (id: string, body: { email: string; role: MemberRole }) =>
+    http.post<ConnectionMember>(`/connections/${id}/permissions/members`, body).then((r) => r.data),
+  updateConnectionMember: (id: string, memberId: string, role: MemberRole) =>
+    http.patch<ConnectionMember>(`/connections/${id}/permissions/members/${memberId}`, { role }).then((r) => r.data),
+  removeConnectionMember: (id: string, memberId: string) =>
+    http.delete(`/connections/${id}/permissions/members/${memberId}`).then((r) => r.data),
+
+  listTableGrants: (id: string) =>
+    http.get<TableGrant[]>(`/connections/${id}/permissions/table-grants`).then((r) => r.data),
+  upsertTableGrant: (
+    id: string,
+    body: { email: string; schemaName: string; tableName: string; role: MemberRole },
+  ) => http.post<TableGrant>(`/connections/${id}/permissions/table-grants`, body).then((r) => r.data),
+  removeTableGrant: (id: string, grantId: string) =>
+    http.delete(`/connections/${id}/permissions/table-grants/${grantId}`).then((r) => r.data),
 
   listComments: (id: string, target?: string) =>
     http

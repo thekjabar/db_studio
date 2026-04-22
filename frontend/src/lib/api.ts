@@ -246,6 +246,51 @@ export interface TableGrant {
   createdAt: string;
 }
 
+export type ScheduledRunStatus = "PENDING" | "RUNNING" | "SUCCESS" | "FAILED";
+
+export interface ScheduledQuery {
+  id: string;
+  connectionId: string;
+  connection?: { id: string; name: string; dialect: Dialect };
+  ownerId: string;
+  name: string;
+  cron: string;
+  timezone: string | null;
+  sqlText: string;
+  /** Comma-separated on the wire; UI treats it as a list. */
+  emailTo: string;
+  enabled: boolean;
+  lastRunAt: string | null;
+  lastStatus: ScheduledRunStatus | null;
+  nextRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateScheduleInput {
+  connectionId: string;
+  name: string;
+  cron: string;
+  timezone?: string;
+  sqlText: string;
+  emailTo: string[];
+  enabled?: boolean;
+}
+
+export interface ScheduledQueryRun {
+  id: string;
+  scheduleId: string;
+  startedAt: string;
+  finishedAt: string | null;
+  status: ScheduledRunStatus;
+  rowCount: number | null;
+  durationMs: number | null;
+  errorMessage: string | null;
+  resultPreview: Record<string, unknown>[] | null;
+  emailDelivered: boolean;
+  emailError: string | null;
+}
+
 export interface Comment {
   id: string;
   connectionId: string;
@@ -530,6 +575,21 @@ export const api = {
   ) => http.post<TableGrant>(`/connections/${id}/permissions/table-grants`, body).then((r) => r.data),
   removeTableGrant: (id: string, grantId: string) =>
     http.delete(`/connections/${id}/permissions/table-grants/${grantId}`).then((r) => r.data),
+
+  listSchedules: () => http.get<ScheduledQuery[]>("/schedules").then((r) => r.data),
+  getSchedule: (id: string) =>
+    http.get<ScheduledQuery>(`/schedules/${id}`).then((r) => r.data),
+  createSchedule: (body: CreateScheduleInput) =>
+    http.post<ScheduledQuery>("/schedules", body).then((r) => r.data),
+  updateSchedule: (id: string, body: Partial<CreateScheduleInput>) =>
+    http.patch<ScheduledQuery>(`/schedules/${id}`, body).then((r) => r.data),
+  deleteSchedule: (id: string) => http.delete(`/schedules/${id}`).then((r) => r.data),
+  runScheduleNow: (id: string) =>
+    http.post<{ queued: boolean }>(`/schedules/${id}/run`).then((r) => r.data),
+  listScheduleRuns: (id: string, limit = 50) =>
+    http
+      .get<ScheduledQueryRun[]>(`/schedules/${id}/runs`, { params: { limit } })
+      .then((r) => r.data),
 
   listComments: (id: string, target?: string) =>
     http

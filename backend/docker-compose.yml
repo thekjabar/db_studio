@@ -18,6 +18,22 @@ services:
       retries: 10
     networks: [dbdash]
 
+  redis:
+    image: redis:7-alpine
+    container_name: dbdash-redis
+    restart: unless-stopped
+    # AOF persistence so scheduled-job state survives a restart. Tune per
+    # deployment; `everysec` is bullmq's recommended setting.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [dbdash]
+
   api:
     build:
       context: .
@@ -26,6 +42,8 @@ services:
     restart: unless-stopped
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     environment:
       NODE_ENV: production
@@ -52,6 +70,11 @@ services:
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       OAUTH_CALLBACK_BASE_URL: ${OAUTH_CALLBACK_BASE_URL:-}
       OAUTH_SUCCESS_REDIRECT: ${OAUTH_SUCCESS_REDIRECT:-/auth/callback}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      SCHEDULER_CONCURRENCY: ${SCHEDULER_CONCURRENCY:-4}
+      SCHEDULER_QUERY_TIMEOUT_MS: ${SCHEDULER_QUERY_TIMEOUT_MS:-120000}
+      SMTP_URL: ${SMTP_URL:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     entrypoint: ["/usr/bin/tini", "--", "sh", "-c", "node_modules/.bin/prisma migrate deploy && exec node dist/main.js"]
     ports:
       - "${API_PORT:-3000}:3000"
@@ -59,6 +82,7 @@ services:
 
 volumes:
   db_data:
+  redis_data:
 
 networks:
   dbdash:

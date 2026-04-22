@@ -17,6 +17,7 @@ import { RbacModule } from './rbac/rbac.module';
 import { AiModule } from './ai/ai.module';
 import { CommentsModule } from './comments/comments.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
+import { SchedulerModule } from './scheduler/scheduler.module';
 import { HealthController } from './common/health.controller';
 
 @Module({
@@ -47,6 +48,7 @@ import { HealthController } from './common/health.controller';
     AiModule,
     CommentsModule,
     WorkspacesModule,
+    SchedulerModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

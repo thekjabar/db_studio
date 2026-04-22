@@ -15,6 +15,7 @@ import SchemaRoute from "@/routes/connection/schema";
 import AuditRoute from "@/routes/connection/audit";
 import SavedRoute from "@/routes/connection/saved";
 import PermissionsRoute from "@/routes/connection/permissions";
+import SchedulesRoute from "@/routes/schedules";
 import { Loader2 } from "lucide-react";
 
 function Protected({ children }: { children: React.ReactNode }) {
@@ -102,6 +103,14 @@ export default function App() {
         element={
           <Protected>
             <ConnectionsPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/schedules"
+        element={
+          <Protected>
+            <SchedulesRoute />
           </Protected>
         }
       />

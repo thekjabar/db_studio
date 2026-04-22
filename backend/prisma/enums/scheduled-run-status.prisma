@@ -1,0 +1,6 @@
+enum ScheduledRunStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+}

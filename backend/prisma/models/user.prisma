@@ -18,6 +18,7 @@ model User {
   ownedWorkspaces Workspace[]       @relation("OwnedWorkspaces")
   workspaceMembers WorkspaceMember[]
   tableGrants      TableGrant[]
+  scheduledQueries ScheduledQuery[]
 
   @@unique([oauthProvider, oauthId])
   @@index([email])

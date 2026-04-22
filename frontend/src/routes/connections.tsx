@@ -83,6 +83,9 @@ export default function ConnectionsPage() {
           DB Studio
         </Link>
         <div className="flex items-center gap-2">
+          <Link to="/schedules" className="text-sm text-muted-foreground hover:text-foreground">
+            Schedules
+          </Link>
           <span className="hidden sm:inline text-sm text-muted-foreground mr-2 truncate max-w-50">{user?.email}</span>
           <ThemeToggle />
           <Button variant="ghost" size="sm" onClick={logout}>

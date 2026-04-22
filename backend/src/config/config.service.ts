@@ -31,6 +31,11 @@ const EnvSchema = z.object({
   GITHUB_CLIENT_SECRET: z.string().transform((v) => v || undefined).optional(),
   OAUTH_CALLBACK_BASE_URL: z.string().transform((v) => v || undefined).optional(),
   OAUTH_SUCCESS_REDIRECT: z.string().default('/auth/callback'),
+  REDIS_URL: z.string().transform((v) => v || undefined).optional(),
+  SCHEDULER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+  SCHEDULER_QUERY_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  SMTP_URL: z.string().transform((v) => v || undefined).optional(),
+  SMTP_FROM: z.string().transform((v) => v || undefined).optional(),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -97,4 +102,11 @@ export class AppConfigService {
   get githubOAuthEnabled() {
     return !!(this.env.GITHUB_CLIENT_ID && this.env.GITHUB_CLIENT_SECRET);
   }
+  get redisUrl() { return this.env.REDIS_URL; }
+  get schedulerEnabled() { return !!this.env.REDIS_URL; }
+  get schedulerConcurrency() { return this.env.SCHEDULER_CONCURRENCY; }
+  get schedulerQueryTimeoutMs() { return this.env.SCHEDULER_QUERY_TIMEOUT_MS; }
+  get smtpUrl() { return this.env.SMTP_URL; }
+  get smtpFrom() { return this.env.SMTP_FROM; }
+  get emailEnabled() { return !!(this.env.SMTP_URL && this.env.SMTP_FROM); }
 }

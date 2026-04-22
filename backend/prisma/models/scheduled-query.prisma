@@ -1,0 +1,45 @@
+/// A SQL query that runs on a cron schedule against a specific connection.
+/// Execution lifecycle lives in the bullmq `schedules:exec` queue; the DB row
+/// is the source of truth for the schedule definition and a summary of the
+/// last run.
+model ScheduledQuery {
+  id             String   @id @default(cuid())
+  connectionId   String
+  connection     Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  ownerId        String
+  owner          User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name           String
+  cron           String
+  timezone       String?
+  sqlText        String
+  /// Comma-separated list of recipient email addresses.
+  emailTo        String
+  enabled        Boolean  @default(true)
+  lastRunAt      DateTime?
+  lastStatus     ScheduledRunStatus?
+  nextRunAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  runs           ScheduledQueryRun[]
+
+  @@index([ownerId])
+  @@index([connectionId])
+}
+
+model ScheduledQueryRun {
+  id               String   @id @default(cuid())
+  scheduleId       String
+  schedule         ScheduledQuery @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  startedAt        DateTime @default(now())
+  finishedAt       DateTime?
+  status           ScheduledRunStatus
+  rowCount         Int?
+  durationMs       Int?
+  errorMessage     String?
+  /// First N rows of output as JSON for inline preview in the UI.
+  resultPreview    Json?
+  emailDelivered   Boolean  @default(false)
+  emailError       String?
+
+  @@index([scheduleId, startedAt(sort: Desc)])
+}

@@ -1,0 +1,21 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Baked into the bundle at build time. `/api` routes through nginx to
+        # the api container, no CORS needed. Override for a split origin.
+        VITE_API_URL: ${VITE_API_URL:-/api}
+    container_name: dbdash-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    # Join the network created by backend/docker-compose.yml so nginx can
+    # reach the `api` service by name. The backend stack must be up first.
+    networks: [dbdash]
+
+networks:
+  dbdash:
+    name: dbdash-net
+    external: true

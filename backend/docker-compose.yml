@@ -36,7 +36,7 @@ services:
 
   api:
     build:
-      context: ./backend
+      context: .
       dockerfile: Dockerfile
     container_name: dbdash-api
     restart: unless-stopped
@@ -85,27 +85,14 @@ services:
       - "${API_PORT:-3000}:3000"
     networks: [dbdash]
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        # Baked into the bundle at build time. `/api` routes through nginx to
-        # the api container, no CORS needed. Override for a split origin.
-        VITE_API_URL: ${VITE_API_URL:-/api}
-    container_name: dbdash-frontend
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_started
-    ports:
-      - "${FRONTEND_PORT:-8080}:80"
-    networks: [dbdash]
-
 volumes:
   db_data:
   redis_data:
 
 networks:
+  # Pinned name so the frontend compose file can join the same network
+  # without duplicating its definition. Without `name:` docker would prefix
+  # it with the project name and the frontend wouldn't find it.
   dbdash:
+    name: dbdash-net
     driver: bridge

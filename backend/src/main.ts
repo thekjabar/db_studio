@@ -22,6 +22,15 @@ async function bootstrap() {
     origin: config.frontendOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    // Make custom response headers readable from the browser. Without this,
+    // fetch/xhr silently strip anything outside the CORS-safelisted set —
+    // which breaks the backup progress UI (it reads the estimate + filename
+    // from headers set by the streaming response).
+    exposedHeaders: [
+      'Content-Disposition',
+      'X-Dbdash-Estimate-Bytes',
+      'X-Dbdash-Tables-Total',
+    ],
   });
 
   app.useGlobalPipes(

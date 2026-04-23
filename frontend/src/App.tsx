@@ -17,6 +17,7 @@ import SavedRoute from "@/routes/connection/saved";
 import PermissionsRoute from "@/routes/connection/permissions";
 import BackupRoute from "@/routes/connection/backup";
 import SlowQueriesRoute from "@/routes/connection/slow-queries";
+import MigrationExportRoute from "@/routes/connection/migration-export";
 import SchedulesRoute from "@/routes/schedules";
 import FederatedRoute from "@/routes/federated";
 import { Loader2 } from "lucide-react";
@@ -144,6 +145,7 @@ export default function App() {
         <Route path="permissions" element={<PermissionsRoute />} />
         <Route path="backup" element={<BackupRoute />} />
         <Route path="slow-queries" element={<SlowQueriesRoute />} />
+        <Route path="migration-export" element={<MigrationExportRoute />} />
       </Route>
       <Route path="/" element={<Navigate to="/connections" replace />} />
       <Route path="*" element={<Navigate to="/connections" replace />} />

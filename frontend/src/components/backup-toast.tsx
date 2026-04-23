@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Archive, CheckCircle2, Loader2, X, XCircle } from "lucide-react";
 import { useBackupJob } from "@/components/backup-job-provider";
 import { cn } from "@/lib/utils";
@@ -11,7 +11,14 @@ import { cn } from "@/lib/utils";
 export function BackupToast() {
   const { current, cancel, clear } = useBackupJob();
   const nav = useNavigate();
+  const location = useLocation();
   if (!current) return null;
+
+  // The Backup page renders its own progress card inline, so the floating
+  // toast would be redundant there. Hide when the user is already looking at
+  // the backup page for this same connection.
+  const onOwnBackupPage = location.pathname === `/c/${current.options.connectionId}/backup`;
+  if (onOwnBackupPage) return null;
 
   const isActive = current.status === "starting" || current.status === "streaming";
   const percent = current.estimateBytes

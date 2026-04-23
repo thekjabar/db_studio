@@ -755,6 +755,18 @@ export const api = {
       .post<ExplainResult>(`/connections/${connectionId}/query/explain`, body)
       .then((r) => r.data),
 
+  migrationExport: (
+    connectionId: string,
+    target: "prisma" | "drizzle" | "sql",
+    schema?: string,
+  ) =>
+    http
+      .get<{ target: string; filename: string; content: string }>(
+        `/connections/${connectionId}/migration-export`,
+        { params: { target, ...(schema ? { schema } : {}) } },
+      )
+      .then((r) => r.data),
+
   federatedQuery: (body: {
     sources: { alias: string; connectionId: string }[];
     sql: string;

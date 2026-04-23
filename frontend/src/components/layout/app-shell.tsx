@@ -100,7 +100,14 @@ export function AppShell() {
           crumbs={crumbs}
           onMenuClick={isMobile ? () => setMobileOpen(true) : undefined}
         />
-        <main className="flex-1 overflow-hidden">
+        {/*
+          overflow-y-auto lets static form/list pages (migration export,
+          permissions, backup, etc.) scroll naturally. The fixed-height
+          routes (SQL editor, table view, ER diagram) use `h-full flex` and
+          manage their own internal scroll — they still render within the
+          bounded flex row height here, so this doesn't break them.
+        */}
+        <main className="flex-1 min-h-0 overflow-y-auto">
           <Outlet context={{ schema, setSchema }} />
         </main>
       </div>

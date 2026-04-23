@@ -3,12 +3,13 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { toast } from "sonner";
-import { Download, Loader2, Play, Save, Share2, Sparkles, Trash2 } from "lucide-react";
+import { BarChart3, Download, Loader2, Play, Save, Share2, Sparkles, Trash2 } from "lucide-react";
 import { format as formatSql } from "sql-formatter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataGrid } from "@/components/data-grid";
-import { api, extractErrorMessage, type QueryResult } from "@/lib/api";
+import { ExplainPanel } from "@/components/explain-panel";
+import { api, extractErrorMessage, type ExplainResult, type QueryResult } from "@/lib/api";
 import { useModal } from "@/components/modal-provider";
 import { useTheme } from "@/lib/theme-store";
 import { AiQueryDialog } from "@/components/ai-query-dialog";
@@ -62,6 +63,8 @@ export default function SqlRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sql]);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [explainResult, setExplainResult] = useState<ExplainResult | null>(null);
+  const [resultTab, setResultTab] = useState<"data" | "plan">("data");
   const [history, setHistory] = useState<HistoryEntry[]>(() => (id ? loadHistory(id) : []));
   const [confirmSql, setConfirmSql] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
@@ -123,6 +126,21 @@ export default function SqlRoute() {
         toast.error(extractErrorMessage(err));
       }
     },
+  });
+
+  const explainMut = useMutation({
+    mutationFn: (body: { sql: string; mode: "plan" | "analyze" }) =>
+      api.explain(id!, body),
+    onSuccess: (r) => {
+      setExplainResult(r);
+      setResultTab("plan");
+      toast.success(
+        r.mode === "analyze"
+          ? `Plan + execution analysis (${r.warnings.length} warnings)`
+          : `Plan analysis (${r.warnings.length} warnings)`,
+      );
+    },
+    onError: (e) => toast.error(extractErrorMessage(e)),
   });
 
   const saveMut = useMutation({
@@ -281,6 +299,33 @@ export default function SqlRoute() {
             Format
             <kbd className="ml-1 rounded border border-border bg-background/30 px-1 text-[10px]">Shift ⌥ F</kbd>
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => sql.trim() && explainMut.mutate({ sql, mode: "plan" })}
+            disabled={explainMut.isPending || !sql.trim()}
+            title="Show plan without running"
+          >
+            {explainMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BarChart3 className="h-3.5 w-3.5" />}
+            Explain
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={async () => {
+              const ok = await modal.confirm({
+                title: "Run EXPLAIN ANALYZE?",
+                description:
+                  "This actually executes the query to measure real timings. SELECT is safe; DML runs inside a BEGIN/ROLLBACK so nothing persists.",
+                confirmLabel: "Run analyze",
+              });
+              if (ok) explainMut.mutate({ sql, mode: "analyze" });
+            }}
+            disabled={explainMut.isPending || !sql.trim()}
+            title="Run EXPLAIN ANALYZE (executes the query)"
+          >
+            Analyze
+          </Button>
           <Button size="sm" variant="outline" onClick={doSave}>
             <Save className="h-3.5 w-3.5" /> Save
           </Button>
@@ -336,18 +381,56 @@ export default function SqlRoute() {
           />
         </div>
 
-        <div className="flex-1 min-h-0">
-          {result ? (
-            <DataGrid
-              columns={result.fields.map((c) => ({ name: c.name, type: c.dataType }))}
-              rows={result.rows}
-              emptyMessage="Query returned no rows"
-            />
-          ) : (
-            <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-              Run a query to see results.
+        <div className="flex-1 min-h-0 flex flex-col">
+          {(result || explainResult) && (
+            <div className="flex items-center gap-1 border-b border-border px-2">
+              <button
+                type="button"
+                onClick={() => setResultTab("data")}
+                className={
+                  "px-3 py-1.5 text-xs border-b-2 " +
+                  (resultTab === "data"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground")
+                }
+              >
+                Data {result ? `(${result.rowCount ?? result.rows.length})` : ""}
+              </button>
+              <button
+                type="button"
+                onClick={() => setResultTab("plan")}
+                className={
+                  "px-3 py-1.5 text-xs border-b-2 " +
+                  (resultTab === "plan"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground")
+                }
+                disabled={!explainResult}
+              >
+                Plan
+                {explainResult && explainResult.warnings.length > 0 && (
+                  <span className="ml-1 inline-block rounded-full bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                    {explainResult.warnings.length}
+                  </span>
+                )}
+              </button>
             </div>
           )}
+          <div className="flex-1 min-h-0">
+            {resultTab === "plan" && explainResult ? (
+              <ExplainPanel result={explainResult} />
+            ) : result ? (
+              <DataGrid
+                columns={result.fields.map((c) => ({ name: c.name, type: c.dataType }))}
+                rows={result.rows}
+                emptyMessage="Query returned no rows"
+              />
+            ) : (
+              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                Run a query to see results.
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

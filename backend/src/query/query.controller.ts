@@ -3,19 +3,25 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
-import { IsArray, IsBoolean, IsOptional, IsString, Length } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString, Length } from 'class-validator';
 import { Role } from '@prisma/client';
 import { ConnectionsService } from '../connections/connections.service';
 import { AuditService } from '../audit/audit.service';
 import { RbacGuard } from '../rbac/rbac.guard';
 import { RequireRole } from '../rbac/rbac.decorator';
 import { SqlClassifierService } from './sql-classifier.service';
+import { ExplainService, ExplainMode } from './explain.service';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
 
 class RunQueryDto {
   @IsString() @Length(1, 100_000) sql!: string;
   @IsOptional() @IsArray() params?: unknown[];
   @IsOptional() @IsBoolean() confirmDestructive?: boolean;
+}
+
+class ExplainQueryDto {
+  @IsString() @Length(1, 100_000) sql!: string;
+  @IsOptional() @IsIn(['plan', 'analyze']) mode?: ExplainMode;
 }
 
 function meta(req: Request) { return { ip: req.ip, userAgent: req.get('user-agent') ?? undefined }; }
@@ -27,7 +33,18 @@ export class QueryController {
     private readonly svc: ConnectionsService,
     private readonly audit: AuditService,
     private readonly classifier: SqlClassifierService,
+    private readonly explain: ExplainService,
   ) {}
+
+  @Throttle({ heavy: { limit: 30, ttl: 60_000 } })
+  @Post('explain') @HttpCode(200) @RequireRole('VIEWER')
+  async explainQuery(
+    @Param('id') id: string,
+    @Body() dto: ExplainQueryDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.explain.explain(user.id, id, dto.sql, dto.mode ?? 'plan');
+  }
 
   @Throttle({ heavy: { limit: 30, ttl: 60_000 } })
   @Post() @HttpCode(200) @RequireRole('VIEWER')

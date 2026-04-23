@@ -277,6 +277,42 @@ export interface CreateScheduleInput {
   enabled?: boolean;
 }
 
+export type ExplainMode = "plan" | "analyze";
+export type ExplainWarningSeverity = "info" | "warn" | "error";
+
+export interface ExplainWarning {
+  severity: ExplainWarningSeverity;
+  message: string;
+  nodePath?: string;
+}
+
+export interface ExplainPlanNode {
+  id: string;
+  parentId: string | null;
+  depth: number;
+  label: string;
+  nodeType: string;
+  relation?: string;
+  totalCost?: number;
+  startupCost?: number;
+  planRows?: number;
+  actualRows?: number;
+  actualTotalMs?: number;
+  warnings: ExplainWarning[];
+}
+
+export interface ExplainResult {
+  dialect: Dialect;
+  mode: ExplainMode;
+  raw: unknown;
+  nodes: ExplainPlanNode[];
+  warnings: ExplainWarning[];
+  totalCost?: number;
+  totalTimeMs?: number;
+  planTimeMs?: number;
+  executionTimeMs?: number;
+}
+
 export interface CsvUploadResult {
   sessionId: string;
   filename: string;
@@ -654,6 +690,14 @@ export const api = {
    * Fetch a DB backup as a blob and trigger a browser download. Uses axios so
    * the access token is attached automatically. Server streams pg_dump stdout.
    */
+  explain: (
+    connectionId: string,
+    body: { sql: string; mode?: "plan" | "analyze" },
+  ) =>
+    http
+      .post<ExplainResult>(`/connections/${connectionId}/query/explain`, body)
+      .then((r) => r.data),
+
   downloadBackup: async (
     connectionId: string,
     opts: { format: "sql" | "custom"; schemaOnly?: boolean; schema?: string },

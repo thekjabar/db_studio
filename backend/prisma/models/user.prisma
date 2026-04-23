@@ -4,8 +4,10 @@ model User {
   passwordHash    String?
   displayName     String?
   density         Density           @default(MEDIUM)
+  theme           Theme             @default(SYSTEM)
   oauthProvider   String?
   oauthId         String?
+  emailVerifiedAt DateTime?
   totpSecret      TotpSecret?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
@@ -23,6 +25,9 @@ model User {
   webhooks         Webhook[]
   apiKeys          ApiKey[]
   columnMasks      ColumnMask[]
+  emailVerifications EmailVerification[]
+  passwordResets   PasswordReset[]
+  schemaSnapshots  SchemaSnapshot[]
 
   @@unique([oauthProvider, oauthId])
   @@index([email])

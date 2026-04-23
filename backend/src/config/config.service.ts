@@ -44,6 +44,21 @@ const EnvSchema = z.object({
   MAX_CONNECTIONS_PER_WORKSPACE: z.coerce.number().int().positive().default(50),
   MAX_SCHEDULED_QUERIES_PER_WORKSPACE: z.coerce.number().int().positive().default(50),
   MAX_WEBHOOKS_PER_CONNECTION: z.coerce.number().int().positive().default(20),
+  // Where the user ends up after clicking a verification / password-reset
+  // link. Must be a real browser origin (no trailing slash). Defaults to the
+  // first allowed frontend origin.
+  APP_BASE_URL: z.string().transform((v) => v || undefined).optional(),
+  // When unset AND SMTP is unconfigured, signups auto-verify — otherwise the
+  // operator would be locked out of their own self-hosted instance. Set to
+  // `true` to force verification even without SMTP (useful for preview envs
+  // where an operator will flip the DB flag manually).
+  REQUIRE_EMAIL_VERIFICATION: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
+  // `pretty` is human-friendly for local dev; `json` emits one JSON object
+  // per log line so Logtail/Datadog/Loki can parse without regex wrangling.
+  LOG_FORMAT: z.enum(['pretty', 'json']).default('pretty'),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -126,4 +141,15 @@ export class AppConfigService {
   get maxConnectionsPerWorkspace() { return this.env.MAX_CONNECTIONS_PER_WORKSPACE; }
   get maxScheduledQueriesPerWorkspace() { return this.env.MAX_SCHEDULED_QUERIES_PER_WORKSPACE; }
   get maxWebhooksPerConnection() { return this.env.MAX_WEBHOOKS_PER_CONNECTION; }
+  get appBaseUrl() {
+    // Prefer explicit APP_BASE_URL, otherwise first FRONTEND_ORIGIN.
+    return this.env.APP_BASE_URL ?? this.frontendOrigins[0] ?? 'http://localhost:5173';
+  }
+  get requireEmailVerification() {
+    // If SMTP is configured we always require it; otherwise fall back to
+    // the env flag so self-hosted single-user setups aren't forced to run
+    // an SMTP server just to verify their own email.
+    return this.env.REQUIRE_EMAIL_VERIFICATION || this.emailEnabled;
+  }
+  get logFormat() { return this.env.LOG_FORMAT; }
 }

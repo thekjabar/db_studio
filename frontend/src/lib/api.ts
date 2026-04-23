@@ -1,6 +1,7 @@
 import axios, { AxiosError, type AxiosRequestConfig, type InternalAxiosRequestConfig } from "axios";
 import { useAuth, type AuthUser } from "./auth-store";
 import { applyDensity } from "./density";
+import { applyServerTheme } from "./theme-store";
 
 export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
 
@@ -572,17 +573,38 @@ function toUpdatePayload(input: Partial<CreateConnectionInput>) {
 
 export const api = {
   signup: async (input: { email: string; password: string; displayName?: string }) => {
-    const { data } = await http.post<{ accessToken: string; userId: string }>("/auth/signup", input);
-    useAuth.getState().setAccessToken(data.accessToken);
-    const user = await http.get<AuthUser>("/users/me").then((r) => r.data);
-    if (user.density) applyDensity(user.density);
-    return { accessToken: data.accessToken, user };
+    const { data } = await http.post<
+      | { accessToken: string; userId: string }
+      | { needsVerification: true; userId: string }
+    >("/auth/signup", input);
+    if ("needsVerification" in data && data.needsVerification) {
+      return { needsVerification: true as const, userId: data.userId };
+    }
+    if ("accessToken" in data) {
+      useAuth.getState().setAccessToken(data.accessToken);
+      const user = await http.get<AuthUser>("/users/me").then((r) => r.data);
+      if (user.density) applyDensity(user.density);
+      applyServerTheme(user.theme);
+      return { accessToken: data.accessToken, user };
+    }
+    throw new Error("Unexpected signup response");
   },
+  verifyEmail: (token: string) =>
+    http.post<{ ok: boolean }>("/auth/verify-email", { token }).then((r) => r.data),
+  resendVerification: (email: string) =>
+    http.post<{ ok: boolean }>("/auth/resend-verification", { email }).then((r) => r.data),
+  requestPasswordReset: (email: string) =>
+    http.post<{ ok: boolean }>("/auth/request-password-reset", { email }).then((r) => r.data),
+  completePasswordReset: (token: string, newPassword: string) =>
+    http
+      .post<{ ok: boolean }>("/auth/complete-password-reset", { token, newPassword })
+      .then((r) => r.data),
   login: async (input: { email: string; password: string; totpCode?: string }) => {
     const { data } = await http.post<{ accessToken: string; userId: string }>("/auth/login", input);
     useAuth.getState().setAccessToken(data.accessToken);
     const user = await http.get<AuthUser>("/users/me").then((r) => r.data);
     if (user.density) applyDensity(user.density);
+    applyServerTheme(user.theme);
     return { accessToken: data.accessToken, user };
   },
   logout: () => http.post("/auth/logout").then((r) => r.data),
@@ -591,7 +613,7 @@ export const api = {
   oauthProviders: () =>
     http.get<{ google: boolean; github: boolean }>("/auth/oauth/providers").then((r) => r.data),
   oauthUrl: (provider: "google" | "github") => `${API_URL}/auth/oauth/${provider}`,
-  updateProfile: (patch: { displayName?: string; density?: AuthUser["density"] }) =>
+  updateProfile: (patch: { displayName?: string; density?: AuthUser["density"]; theme?: AuthUser["theme"] }) =>
     http.patch<AuthUser>("/users/me", patch).then((r) => r.data),
   enable2fa: () =>
     http.post<{ secret: string; otpauthUrl: string; qrSvg: string }>("/auth/2fa/enable").then((r) => r.data),
@@ -696,10 +718,59 @@ export const api = {
   runQuery: (id: string, body: { sql: string; confirmDestructive?: boolean; maxRows?: number }) =>
     http.post<QueryResult>(`/connections/${id}/query`, body).then((r) => r.data),
 
+  exportResult: (
+    id: string,
+    body: {
+      sql: string;
+      target: "email" | "slack" | "webhook";
+      to: string;
+      name?: string;
+    },
+  ) =>
+    http
+      .post<{ rowCount: number; delivered: true }>(`/connections/${id}/export`, body)
+      .then((r) => r.data),
+
   aiGenerateSql: (id: string, body: { prompt: string; schema?: string }) =>
     http
       .post<{ sql: string; explanation: string; tables: string[] }>(`/connections/${id}/ai/generate-sql`, body)
       .then((r) => r.data),
+
+  getWorkspaceSso: (workspaceId: string) =>
+    http
+      .get<{
+        enabled: boolean;
+        issuerUrl: string;
+        clientId: string;
+        allowedDomains: string | null;
+        autoProvision: boolean;
+        hasSecret: boolean;
+      } | null>(`/workspaces/${workspaceId}/sso`)
+      .then((r) => r.data),
+  upsertWorkspaceSso: (
+    workspaceId: string,
+    input: {
+      issuerUrl: string;
+      clientId: string;
+      clientSecret?: string;
+      enabled?: boolean;
+      allowedDomains?: string | null;
+      autoProvision?: boolean;
+    },
+  ) =>
+    http.put<{
+      enabled: boolean;
+      issuerUrl: string;
+      clientId: string;
+      allowedDomains: string | null;
+      autoProvision: boolean;
+      hasSecret: boolean;
+    }>(`/workspaces/${workspaceId}/sso`, input).then((r) => r.data),
+  disableWorkspaceSso: (workspaceId: string) =>
+    http.delete<{ ok: true }>(`/workspaces/${workspaceId}/sso`).then((r) => r.data),
+  ssoAvailable: (slug: string) =>
+    http.get<{ available: boolean }>(`/auth/sso/${slug}/available`).then((r) => r.data),
+  ssoStartUrl: (slug: string) => `${API_URL}/auth/sso/${slug}`,
 
   listWorkspaces: () => http.get<Workspace[]>("/workspaces").then((r) => r.data),
   createWorkspace: (body: { name: string }) =>
@@ -849,6 +920,49 @@ export const api = {
         `/connections/${connectionId}/migration-export`,
         { params: { target, ...(schema ? { schema } : {}) } },
       )
+      .then((r) => r.data),
+
+  listSchemaSnapshots: (connectionId: string) =>
+    http
+      .get<
+        {
+          id: string;
+          name: string;
+          dbSchema: string | null;
+          createdAt: string;
+          createdBy: { email: string; displayName: string | null } | null;
+        }[]
+      >(`/connections/${connectionId}/migration-export/snapshots`)
+      .then((r) => r.data),
+  createSchemaSnapshot: (connectionId: string, body: { name: string; schema?: string }) =>
+    http
+      .post<{ id: string; name: string; createdAt: string }>(
+        `/connections/${connectionId}/migration-export/snapshots`,
+        body,
+      )
+      .then((r) => r.data),
+  deleteSchemaSnapshot: (connectionId: string, snapshotId: string) =>
+    http
+      .delete<{ ok: true }>(
+        `/connections/${connectionId}/migration-export/snapshots/${snapshotId}`,
+      )
+      .then((r) => r.data),
+  diffSchemaSnapshot: (connectionId: string, snapshotId: string) =>
+    http
+      .get<{
+        fromSnapshotId: string;
+        dialect: string;
+        sql: string;
+        summary: {
+          addedTables: string[];
+          droppedTables: string[];
+          addedColumns: string[];
+          droppedColumns: string[];
+          changedColumns: string[];
+          addedFks: string[];
+          droppedFks: string[];
+        };
+      }>(`/connections/${connectionId}/migration-export/snapshots/${snapshotId}/diff`)
       .then((r) => r.data),
 
   federatedQuery: (body: {
@@ -1018,6 +1132,24 @@ export const api = {
         if (Array.isArray(d)) return { items: d, nextCursor: undefined as string | undefined };
         return d;
       }),
+
+  listQueryHistory: (
+    id: string,
+    params?: {
+      limit?: number;
+      cursor?: string;
+      userId?: string;
+      sinceMs?: number;
+      search?: string;
+      action?: "QUERY_RUN" | "SCHEMA_CHANGE";
+    },
+  ) =>
+    http
+      .get<{ items: AuditEntry[]; nextCursor?: string }>(
+        `/connections/${id}/audit/query-history`,
+        { params },
+      )
+      .then((r) => r.data),
 
   auditRevertPreview: (id: string, entryId: string) =>
     http

@@ -1,0 +1,20 @@
+/// Point-in-time snapshot of a connection's schema. Used by diff-mode
+/// migration export to generate ALTER statements between the stored state
+/// and the live DB. Stored as JSON of ErDiagram to keep it dialect-agnostic.
+model SchemaSnapshot {
+  id           String   @id @default(cuid())
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  /// Human-readable label, e.g. "before v3.1 release".
+  name         String
+  /// Optional filter: snapshot covers only this schema (Postgres-style).
+  dbSchema     String?
+  /// Serialized ErDiagram. Typed as Json because the payload includes nested
+  /// columns / FKs — flattening into relations would explode the row count.
+  payload      Json
+  createdById  String?
+  createdBy    User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+
+  @@index([connectionId, createdAt(sort: Desc)])
+}

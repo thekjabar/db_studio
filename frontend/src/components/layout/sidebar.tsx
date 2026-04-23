@@ -19,6 +19,7 @@ import {
   Timer,
   FileCode2,
   Webhook,
+  History,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -167,6 +168,7 @@ export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSche
         <NavItem to={`/c/${connectionId}/schema`} icon={<Hammer className="h-3.5 w-3.5" />} label="Schema" />
         <NavItem to={`/c/${connectionId}/saved`} icon={<BookOpen className="h-3.5 w-3.5" />} label="Saved queries" />
         <NavItem to={`/c/${connectionId}/audit`} icon={<FileClock className="h-3.5 w-3.5" />} label="Audit log" />
+        <NavItem to={`/c/${connectionId}/query-history`} icon={<History className="h-3.5 w-3.5" />} label="Query history" />
         <NavItem to={`/c/${connectionId}/slow-queries`} icon={<Timer className="h-3.5 w-3.5" />} label="Slow queries" />
         <NavItem to={`/c/${connectionId}/permissions`} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Permissions" />
         <NavItem to={`/c/${connectionId}/backup`} icon={<Archive className="h-3.5 w-3.5" />} label="Backup" />

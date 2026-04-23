@@ -7,6 +7,7 @@ import * as Sentry from '@sentry/node';
 import { AppModule } from './app.module';
 import { AppConfigService } from './config/config.service';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
+import { makeLogger } from './common/json.logger';
 
 async function bootstrap() {
   // Sentry must initialize BEFORE the Nest app is created so
@@ -28,8 +29,33 @@ async function bootstrap() {
   });
 
   const config = app.get(AppConfigService);
+  // Swap in the JSON logger when the operator has opted in. The ConsoleLogger
+  // is a better fit for local-dev (colorized + readable) so we leave that as
+  // the bootstrap logger until we can read the env.
+  app.useLogger(makeLogger(config.logFormat));
 
-  app.use(helmet());
+  // Helmet defaults are mostly fine; we tighten CSP explicitly. The API
+  // serves JSON only — no HTML, no inline scripts — so a strict policy
+  // catches any accidental reflected-HTML leak. The frontend (nginx)
+  // container has its own CSP story.
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          defaultSrc: ["'none'"],
+          baseUri: ["'none'"],
+          frameAncestors: ["'none'"],
+          formAction: ["'none'"],
+          objectSrc: ["'none'"],
+        },
+      },
+      referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+      // Allow the backup-stream endpoint to set Content-Disposition for
+      // cross-origin downloads (already in CORS exposedHeaders).
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+    }),
+  );
   app.use(cookieParser());
 
   app.enableCors({

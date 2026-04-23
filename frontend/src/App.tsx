@@ -3,9 +3,13 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-store";
 import { applyDensity } from "@/lib/density";
+import { applyServerTheme } from "@/lib/theme-store";
 import LoginPage from "@/routes/login";
 import SignupPage from "@/routes/signup";
 import OAuthCallbackPage from "@/routes/oauth-callback";
+import VerifyEmailPage from "@/routes/verify-email";
+import ForgotPasswordPage from "@/routes/forgot-password";
+import ResetPasswordPage from "@/routes/reset-password";
 import ConnectionsPage from "@/routes/connections";
 import { AppShell } from "@/components/layout/app-shell";
 import TableRoute from "@/routes/connection/table";
@@ -13,6 +17,7 @@ import SqlRoute from "@/routes/connection/sql";
 import ErRoute from "@/routes/connection/er";
 import SchemaRoute from "@/routes/connection/schema";
 import AuditRoute from "@/routes/connection/audit";
+import QueryHistoryRoute from "@/routes/connection/query-history";
 import SavedRoute from "@/routes/connection/saved";
 import PermissionsRoute from "@/routes/connection/permissions";
 import BackupRoute from "@/routes/connection/backup";
@@ -22,7 +27,9 @@ import WebhooksRoute from "@/routes/connection/webhooks";
 import SchedulesRoute from "@/routes/schedules";
 import FederatedRoute from "@/routes/federated";
 import ApiKeysRoute from "@/routes/api-keys";
+import WorkspaceSsoRoute from "@/routes/workspace-sso";
 import LandingPage from "@/routes/landing";
+import NotFoundPage from "@/routes/not-found";
 import { Loader2 } from "lucide-react";
 
 function Protected({ children }: { children: React.ReactNode }) {
@@ -60,6 +67,7 @@ export default function App() {
           const user = await api.me();
           setUser(user);
           if (user.density) applyDensity(user.density);
+          applyServerTheme(user.theme);
         }
       } catch {
         // no session
@@ -105,6 +113,9 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/auth/callback" element={<OAuthCallbackPage />} />
+      <Route path="/auth/verify" element={<VerifyEmailPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/auth/reset" element={<ResetPasswordPage />} />
       <Route
         path="/connections"
         element={
@@ -138,6 +149,14 @@ export default function App() {
         }
       />
       <Route
+        path="/workspaces/:id/sso"
+        element={
+          <Protected>
+            <WorkspaceSsoRoute />
+          </Protected>
+        }
+      />
+      <Route
         path="/c/:id"
         element={
           <Protected>
@@ -152,22 +171,17 @@ export default function App() {
         <Route path="er" element={<ErRoute />} />
         <Route path="schema" element={<SchemaRoute />} />
         <Route path="audit" element={<AuditRoute />} />
+        <Route path="query-history" element={<QueryHistoryRoute />} />
         <Route path="saved" element={<SavedRoute />} />
         <Route path="permissions" element={<PermissionsRoute />} />
         <Route path="backup" element={<BackupRoute />} />
         <Route path="slow-queries" element={<SlowQueriesRoute />} />
         <Route path="migration-export" element={<MigrationExportRoute />} />
         <Route path="webhooks" element={<WebhooksRoute />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Route>
-      <Route
-        path="/"
-        element={
-          // Authenticated users land on their connections dashboard; everyone
-          // else sees the marketing surface explaining what DB Studio is.
-          accessToken ? <Navigate to="/connections" replace /> : <LandingPage />
-        }
-      />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="/" element={<LandingPage />} />
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }

@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Patch } from '@nestjs/common';
 import { IsEnum, IsOptional, IsString, Length } from 'class-validator';
-import { Density } from '@prisma/client';
+import { Density, Theme } from '@prisma/client';
 import { UsersService } from './users.service';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
 
@@ -13,6 +13,10 @@ class UpdateProfileDto {
   @IsOptional()
   @IsEnum(Density)
   density?: Density;
+
+  @IsOptional()
+  @IsEnum(Theme)
+  theme?: Theme;
 }
 
 @Controller('users')

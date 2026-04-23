@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Density, Prisma } from '@prisma/client';
+import { Density, Prisma, Theme } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -14,6 +14,7 @@ export class UsersService {
         email: true,
         displayName: true,
         density: true,
+        theme: true,
         createdAt: true,
         totpSecret: { select: { enabled: true } },
       },
@@ -24,19 +25,24 @@ export class UsersService {
       email: u.email,
       displayName: u.displayName,
       density: u.density,
+      theme: u.theme,
       createdAt: u.createdAt,
       totpEnabled: u.totpSecret?.enabled ?? false,
     };
   }
 
-  async updateProfile(userId: string, patch: { displayName?: string; density?: Density }) {
+  async updateProfile(
+    userId: string,
+    patch: { displayName?: string; density?: Density; theme?: Theme },
+  ) {
     const data: Prisma.UserUpdateInput = {};
     if (patch.displayName !== undefined) data.displayName = patch.displayName || null;
     if (patch.density !== undefined) data.density = patch.density;
+    if (patch.theme !== undefined) data.theme = patch.theme;
     return this.prisma.user.update({
       where: { id: userId },
       data,
-      select: { id: true, email: true, displayName: true, density: true },
+      select: { id: true, email: true, displayName: true, density: true, theme: true },
     });
   }
 }

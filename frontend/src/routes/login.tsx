@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Database, Loader2 } from "lucide-react";
+import { Database, Loader2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,14 +18,36 @@ export default function LoginPage() {
   const [totpCode, setTotpCode] = useState("");
   const [needsTotp, setNeedsTotp] = useState(false);
   const [loading, setLoading] = useState(false);
+  // When the server says the email isn't verified, the login form shows a
+  // "Resend verification email" link next to the error instead of just toasting.
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
+  const [resending, setResending] = useState(false);
+  // Workspace slug from ?ws= — when present and SSO is configured for that
+  // workspace, show a "Sign in with SSO" button that short-circuits the form.
+  const wsSlug = sp.get("ws") ?? null;
+  const [ssoAvailable, setSsoAvailable] = useState(false);
 
   useEffect(() => {
     if (sp.get("error") === "oauth_failed") {
       toast.error("Sign-in with that provider failed");
       sp.delete("error");
       setSp(sp, { replace: true });
+    } else if (sp.get("error") === "sso") {
+      const detail = sp.get("detail");
+      toast.error(`SSO sign-in failed${detail ? `: ${detail}` : ""}`);
+      sp.delete("error");
+      sp.delete("detail");
+      setSp(sp, { replace: true });
     }
   }, [sp, setSp]);
+
+  useEffect(() => {
+    if (!wsSlug) return;
+    api
+      .ssoAvailable(wsSlug)
+      .then((r) => setSsoAvailable(r.available))
+      .catch(() => setSsoAvailable(false));
+  }, [wsSlug]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -40,11 +62,28 @@ export default function LoginPage() {
       if (data?.needsTotp) {
         setNeedsTotp(true);
         toast.info("Two-factor code required");
+      } else if (data?.code === "EMAIL_NOT_VERIFIED" || data?.message?.code === "EMAIL_NOT_VERIFIED") {
+        // Backend returns 403 with a code — surface inline so the user can
+        // click "Resend" without losing their typed email.
+        setUnverifiedEmail(email);
       } else {
         toast.error(extractErrorMessage(err));
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const resend = async () => {
+    if (!unverifiedEmail) return;
+    setResending(true);
+    try {
+      await api.resendVerification(unverifiedEmail);
+      toast.success("If the email is registered, a new verification link has been sent.");
+    } catch (err) {
+      toast.error(extractErrorMessage(err));
+    } finally {
+      setResending(false);
     }
   };
 
@@ -59,6 +98,42 @@ export default function LoginPage() {
           <p className="text-sm text-muted-foreground mt-1">Welcome back</p>
         </div>
         <div className="rounded-lg border border-border bg-card shadow-xl p-6">
+          {unverifiedEmail && (
+            <div className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+              <div className="font-medium mb-1">Verify your email first</div>
+              <div className="text-muted-foreground">
+                We sent a link to <span className="font-mono">{unverifiedEmail}</span>. Click it
+                before signing in.
+              </div>
+              <button
+                type="button"
+                onClick={resend}
+                disabled={resending}
+                className="mt-2 underline hover:text-foreground disabled:opacity-50"
+              >
+                {resending ? "Sending…" : "Resend verification email"}
+              </button>
+            </div>
+          )}
+          {ssoAvailable && wsSlug && (
+            <div className="mb-4">
+              <a
+                href={api.ssoStartUrl(wsSlug)}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-md border border-border bg-background hover:bg-accent text-sm py-2.5 font-medium"
+              >
+                <ShieldCheck className="h-4 w-4" />
+                Sign in with SSO ({wsSlug})
+              </a>
+              <div className="relative my-3">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-border" />
+                </div>
+                <div className="relative flex justify-center text-[10px] uppercase tracking-wider">
+                  <span className="bg-card px-2 text-muted-foreground">or sign in with password</span>
+                </div>
+              </div>
+            </div>
+          )}
           <form onSubmit={submit} className="space-y-4">
             <div className="space-y-1.5">
               <Label>Email</Label>
@@ -72,7 +147,15 @@ export default function LoginPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Password</Label>
+              <div className="flex items-center justify-between">
+                <Label>Password</Label>
+                <Link
+                  to="/forgot-password"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Forgot?
+                </Link>
+              </div>
               <Input
                 type="password"
                 autoComplete="current-password"

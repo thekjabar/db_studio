@@ -3,7 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { toast } from "sonner";
-import { BarChart3, Download, Loader2, Play, Save, Share2, Sparkles, Trash2 } from "lucide-react";
+import { BarChart3, Download, Loader2, Play, Save, Send, Share2, Sparkles, Trash2 } from "lucide-react";
 import { format as formatSql } from "sql-formatter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import { api, extractErrorMessage, type ExplainResult, type QueryResult } from "
 import { useModal } from "@/components/modal-provider";
 import { useTheme } from "@/lib/theme-store";
 import { AiQueryDialog } from "@/components/ai-query-dialog";
+import { SendResultDialog } from "@/components/send-result-dialog";
 import { useOutletContext } from "react-router-dom";
 import {
   Dialog,
@@ -79,6 +80,7 @@ export default function SqlRoute() {
   const [history, setHistory] = useState<HistoryEntry[]>(() => (id ? loadHistory(id) : []));
   const [confirmSql, setConfirmSql] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
   const ctx = useOutletContext<{ schema?: string } | null>();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
@@ -399,6 +401,15 @@ export default function SqlRoute() {
           <Button size="sm" variant="ghost" onClick={exportCsv} disabled={!result}>
             <Download className="h-3.5 w-3.5" /> CSV
           </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setSendOpen(true)}
+            disabled={!sql.trim()}
+            title="Send result to email / Slack / webhook"
+          >
+            <Send className="h-3.5 w-3.5" /> Send
+          </Button>
           {result && (
             <span
               className={
@@ -535,6 +546,13 @@ export default function SqlRoute() {
         connectionId={id!}
         schema={ctx?.schema}
         onAccept={(generatedSql) => setSql(generatedSql)}
+      />
+
+      <SendResultDialog
+        open={sendOpen}
+        onClose={() => setSendOpen(false)}
+        connectionId={id!}
+        sql={sql}
       />
     </div>
   );

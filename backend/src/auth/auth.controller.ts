@@ -9,8 +9,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { IsEmail, IsString, Length } from 'class-validator';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
+import { EmailVerificationService } from './email-verification.service';
+import { PasswordResetService } from './password-reset.service';
 import { Public } from './decorators/public.decorator';
 import { CurrentUser, AuthUser } from './decorators/current-user.decorator';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -22,12 +25,28 @@ import {
   DisableTotpDto,
 } from './dto/auth.dto';
 
+class VerifyEmailDto {
+  @IsString() @Length(1, 512) token!: string;
+}
+class ResendVerificationDto {
+  @IsEmail() email!: string;
+}
+class RequestPasswordResetDto {
+  @IsEmail() email!: string;
+}
+class CompletePasswordResetDto {
+  @IsString() @Length(1, 512) token!: string;
+  @IsString() @Length(8, 256) newPassword!: string;
+}
+
 const REFRESH_COOKIE = 'dbdash_rt';
 
 @Controller('auth')
 export class AuthController {
   constructor(
     private readonly auth: AuthService,
+    private readonly verification: EmailVerificationService,
+    private readonly passwordReset: PasswordResetService,
     private readonly cfg: AppConfigService,
   ) {}
 
@@ -64,8 +83,50 @@ export class AuthController {
   @Post('signup')
   async signup(@Body() dto: SignupDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const t = await this.auth.signup(dto, this.meta(req));
+    if ('needsVerification' in t) {
+      // No session cookie — user must click the email link first.
+      return { userId: t.userId, needsVerification: true };
+    }
     this.setRefreshCookie(res, t.refreshToken, t.refreshExpiresAt);
     return { accessToken: t.accessToken, userId: t.userId };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @HttpCode(200)
+  @Post('verify-email')
+  async verifyEmail(@Body() dto: VerifyEmailDto) {
+    await this.verification.verify(dto.token);
+    return { ok: true };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(200)
+  @Post('resend-verification')
+  async resendVerification(@Body() dto: ResendVerificationDto) {
+    // Always 200 — don't disclose which emails exist.
+    await this.verification.requestResend(dto.email);
+    return { ok: true };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(200)
+  @Post('request-password-reset')
+  async requestPasswordReset(@Body() dto: RequestPasswordResetDto) {
+    await this.passwordReset.requestReset(dto.email);
+    // Same 200 regardless of whether the email exists.
+    return { ok: true };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @HttpCode(200)
+  @Post('complete-password-reset')
+  async completePasswordReset(@Body() dto: CompletePasswordResetDto) {
+    await this.passwordReset.completeReset(dto.token, dto.newPassword);
+    return { ok: true };
   }
 
   @Public()

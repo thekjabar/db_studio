@@ -32,6 +32,32 @@ export class AuditController {
     );
   }
 
+  /**
+   * Team-wide query history — same underlying table as /audit, but filtered to
+   * QUERY_RUN / SCHEMA_CHANGE and with user / time / search filters so the UI
+   * can offer a focused "who ran what" view.
+   */
+  @Get('query-history')
+  @RequireRole('VIEWER')
+  async queryHistory(
+    @Param('id') connectionId: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+    @Query('userId') userId?: string,
+    @Query('sinceMs') sinceMs?: string,
+    @Query('search') search?: string,
+    @Query('action') action?: 'QUERY_RUN' | 'SCHEMA_CHANGE',
+  ) {
+    return this.audit.listQueryHistory(connectionId, {
+      limit: limit ? parseInt(limit, 10) : 50,
+      cursor,
+      userId: userId || undefined,
+      sinceMs: sinceMs ? parseInt(sinceMs, 10) : undefined,
+      search: search || undefined,
+      actions: action ? [action] : undefined,
+    });
+  }
+
   @Get(':entryId/revert-preview')
   @RequireRole('EDITOR')
   async revertPreview(

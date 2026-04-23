@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Archive, Download, Loader2, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { ErrorCard } from "@/components/error-card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -280,9 +281,11 @@ function ProgressCard({
       </div>
 
       {job.status === "error" && job.error && (
-        <div className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs text-destructive">
-          {job.error}
-        </div>
+        <ErrorCard
+          title="Backup failed"
+          message={job.error}
+          onDismiss={onDismiss}
+        />
       )}
     </div>
   );

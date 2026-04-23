@@ -2,9 +2,13 @@ import { Link } from "react-router-dom";
 import {
   ArrowRight,
   BookOpen,
+  Camera,
   Database,
+  History,
   Key,
   LayoutDashboard,
+  Mail,
+  Send,
   ShieldCheck,
   Sparkles,
   Table2,
@@ -13,6 +17,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { useAuth } from "@/lib/auth-store";
 
 const features = [
   {
@@ -60,9 +65,37 @@ const features = [
     title: "Audit + revert",
     body: "Every row change is logged with before/after. One click to roll back a bad UPDATE.",
   },
+  {
+    icon: ShieldCheck,
+    title: "SSO for workspaces",
+    body: "Bring your own IdP. OpenID Connect for Okta, Azure AD, Google Workspace, Auth0, Keycloak — configured per workspace.",
+  },
+  {
+    icon: History,
+    title: "Team query history",
+    body: "See what the team ran, when, and against which connection. Filter by user, action, or SQL text. Open any query back in the editor.",
+  },
+  {
+    icon: Camera,
+    title: "Diff-mode migrations",
+    body: "Snapshot your schema before a change, then generate the ALTER statements that take it to the current live state.",
+  },
+  {
+    icon: Send,
+    title: "One-click result delivery",
+    body: "Send any query's result to email, Slack, or an HTTPS webhook — without scheduling it. CSV for email, previewed tables for Slack.",
+  },
+  {
+    icon: Mail,
+    title: "Self-serve password + email",
+    body: "Password reset, email verification, per-email login cooldown, and SMTP-aware fallback for single-user self-hosts.",
+  },
 ];
 
 export default function LandingPage() {
+  const accessToken = useAuth((s) => s.accessToken);
+  const isAuthed = !!accessToken;
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="h-14 flex items-center justify-between px-6 border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-20">
@@ -72,18 +105,29 @@ export default function LandingPage() {
         </Link>
         <div className="flex items-center gap-2">
           <ThemeToggle />
-          <Link
-            to="/login"
-            className="text-sm text-muted-foreground hover:text-foreground px-3 py-1.5"
-          >
-            Sign in
-          </Link>
-          <Link
-            to="/signup"
-            className="text-sm bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1.5"
-          >
-            Sign up
-          </Link>
+          {isAuthed ? (
+            <Link
+              to="/connections"
+              className="text-sm bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1.5 inline-flex items-center gap-1.5"
+            >
+              Open app <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          ) : (
+            <>
+              <Link
+                to="/login"
+                className="text-sm text-muted-foreground hover:text-foreground px-3 py-1.5"
+              >
+                Sign in
+              </Link>
+              <Link
+                to="/signup"
+                className="text-sm bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-3 py-1.5"
+              >
+                Sign up
+              </Link>
+            </>
+          )}
         </div>
       </header>
 
@@ -103,18 +147,29 @@ export default function LandingPage() {
           SQLite. One interface, role-aware, with an AI that actually knows your schema.
         </p>
         <div className="mt-8 flex items-center justify-center gap-3 flex-wrap">
-          <Link
-            to="/signup"
-            className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-5 py-2.5 text-sm font-medium"
-          >
-            Get started free <ArrowRight className="h-4 w-4" />
-          </Link>
-          <Link
-            to="/login"
-            className="inline-flex items-center gap-2 border border-border hover:bg-accent rounded-md px-5 py-2.5 text-sm"
-          >
-            Sign in
-          </Link>
+          {isAuthed ? (
+            <Link
+              to="/connections"
+              className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-5 py-2.5 text-sm font-medium"
+            >
+              Go to your connections <ArrowRight className="h-4 w-4" />
+            </Link>
+          ) : (
+            <>
+              <Link
+                to="/signup"
+                className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-5 py-2.5 text-sm font-medium"
+              >
+                Get started free <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link
+                to="/login"
+                className="inline-flex items-center gap-2 border border-border hover:bg-accent rounded-md px-5 py-2.5 text-sm"
+              >
+                Sign in
+              </Link>
+            </>
+          )}
         </div>
       </section>
 
@@ -146,10 +201,10 @@ export default function LandingPage() {
           </p>
           <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
             <Link
-              to="/signup"
+              to={isAuthed ? "/connections" : "/signup"}
               className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-5 py-2.5 text-sm font-medium"
             >
-              Start using it
+              {isAuthed ? "Open the app" : "Start using it"}
             </Link>
           </div>
         </div>

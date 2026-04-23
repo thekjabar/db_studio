@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
   BadRequestException,
@@ -14,6 +15,8 @@ import { AppConfigService } from '../config/config.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { AuditService } from '../audit/audit.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
+import { EmailVerificationService } from './email-verification.service';
+import { LoginCooldownService } from './login-cooldown.service';
 import { SignupDto, LoginDto, EnableTotpDto, DisableTotpDto } from './dto/auth.dto';
 
 export interface AuthTokens {
@@ -36,6 +39,8 @@ export class AuthService {
     private readonly crypto: CryptoService,
     private readonly audit: AuditService,
     private readonly workspaces: WorkspacesService,
+    private readonly emailVerification: EmailVerificationService,
+    private readonly cooldown: LoginCooldownService,
   ) {}
 
   private hashRefresh(token: string): string {
@@ -74,25 +79,47 @@ export class AuthService {
     return { accessToken, refreshToken: refreshRaw, refreshExpiresAt: expiresAt };
   }
 
-  async signup(dto: SignupDto, meta: ReqMeta): Promise<AuthTokens & { userId: string }> {
+  async signup(
+    dto: SignupDto,
+    meta: ReqMeta,
+  ): Promise<(AuthTokens & { userId: string }) | { userId: string; needsVerification: true }> {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) throw new ConflictException('Email already registered');
 
     const passwordHash = await argon2.hash(dto.password, { type: argon2.argon2id });
+    // If this install requires verification, leave emailVerifiedAt null so
+    // login is blocked until the user clicks the link. Otherwise auto-verify
+    // (single-user self-host / dev).
+    const needsVerify = this.cfg.requireEmailVerification;
     const user = await this.prisma.user.create({
-      data: { email: dto.email, passwordHash, displayName: dto.displayName },
+      data: {
+        email: dto.email,
+        passwordHash,
+        displayName: dto.displayName,
+        emailVerifiedAt: needsVerify ? null : new Date(),
+      },
     });
 
-    // Every user gets a Personal workspace on signup.
     await this.workspaces.ensurePersonalWorkspace(user.id).catch(() => null);
-
     await this.audit.log({ userId: user.id, action: 'SIGNUP', ...meta });
+
+    if (needsVerify) {
+      // Fire the email. If it fails (SMTP down), we still return a pending
+      // state so the client can show a "resend" button — the DB row exists.
+      await this.emailVerification
+        .issueAndSend(user.id, user.email)
+        .catch(() => null);
+      return { userId: user.id, needsVerification: true };
+    }
 
     const tokens = await this.issueTokens(user.id, user.email, meta);
     return { userId: user.id, ...tokens };
   }
 
   async login(dto: LoginDto, meta: ReqMeta): Promise<AuthTokens & { userId: string }> {
+    // Check cooldown BEFORE argon2 — locked emails shouldn't consume CPU.
+    await this.cooldown.assertNotLocked(dto.email);
+
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
       include: { totpSecret: true },
@@ -104,6 +131,9 @@ export class AuthService {
 
     if (!user || !valid) {
       await this.audit.log({ userId: user?.id, action: 'LOGIN_FAILED', ...meta });
+      // Increment failure counter on the email, even for unknown accounts,
+      // to deter enumeration + slow down credential stuffing.
+      await this.cooldown.recordFailure(dto.email);
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -117,8 +147,18 @@ export class AuthService {
       }
     }
 
+    // Block unverified users from logging in on installs that require
+    // verification. Distinct error code so the UI can show a "resend" prompt.
+    if (!this.emailVerification.isAllowedToLogin(user)) {
+      throw new ForbiddenException({
+        code: 'EMAIL_NOT_VERIFIED',
+        message: 'Verify your email address to sign in.',
+      });
+    }
+
     // Back-compat: users that existed before workspaces shipped still need one.
     await this.workspaces.ensurePersonalWorkspace(user.id).catch(() => null);
+    await this.cooldown.recordSuccess(dto.email);
 
     await this.audit.log({ userId: user.id, action: 'LOGIN', ...meta });
     const tokens = await this.issueTokens(user.id, user.email, meta);
@@ -201,6 +241,18 @@ export class AuthService {
     await this.audit.log({ userId, action: 'TOTP_DISABLED', ...meta });
   }
 
+  /** Issue a fresh session for an already-authenticated user (SSO callback
+   *  path). The caller has already verified identity out-of-band. */
+  async issueSessionForUser(
+    userId: string,
+    email: string,
+    meta: ReqMeta,
+  ): Promise<AuthTokens & { userId: string }> {
+    await this.audit.log({ userId, action: 'LOGIN', ...meta });
+    const tokens = await this.issueTokens(userId, email, meta);
+    return { userId, ...tokens };
+  }
+
   async loginOrCreateOAuth(
     profile: { provider: 'google' | 'github'; providerId: string; email: string; displayName?: string },
     meta: ReqMeta,
@@ -210,18 +262,25 @@ export class AuthService {
       where: { oauthProvider: profile.provider, oauthId: profile.providerId },
     });
 
-    // 2) Fall back to email match — link this OAuth identity to the existing account.
+    // 2) Fall back to email match — link this OAuth identity to the existing
+    //    account. The OAuth provider has vouched for this email, so we also
+    //    mark the account verified (legitimate sign-in via Google proves
+    //    ownership of the mailbox).
     if (!user && profile.email) {
       user = await this.prisma.user.findUnique({ where: { email: profile.email } });
       if (user) {
         user = await this.prisma.user.update({
           where: { id: user.id },
-          data: { oauthProvider: profile.provider, oauthId: profile.providerId },
+          data: {
+            oauthProvider: profile.provider,
+            oauthId: profile.providerId,
+            emailVerifiedAt: user.emailVerifiedAt ?? new Date(),
+          },
         });
       }
     }
 
-    // 3) Brand-new user.
+    // 3) Brand-new user — OAuth accounts are verified at creation.
     if (!user) {
       user = await this.prisma.user.create({
         data: {
@@ -230,6 +289,7 @@ export class AuthService {
           displayName: profile.displayName,
           oauthProvider: profile.provider,
           oauthId: profile.providerId,
+          emailVerifiedAt: new Date(),
         },
       });
       await this.audit.log({ userId: user.id, action: 'SIGNUP', ...meta });

@@ -19,6 +19,7 @@ model Connection {
   auditLogs        AuditLog[]
   savedQueries     SavedQuery[]
   comments         Comment[]
+  schemaSnapshots  SchemaSnapshot[]
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 

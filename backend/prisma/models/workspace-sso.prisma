@@ -1,0 +1,25 @@
+/// Per-workspace SSO configuration. OIDC-only (covers Okta, Azure AD,
+/// Google Workspace, Auth0, Keycloak etc.). SAML deliberately left out —
+/// OIDC is sufficient for every IdP a self-hosted Studio install is likely
+/// to meet, and SAML's surface area (XML signatures, metadata discovery) is
+/// not worth the 10x maintenance burden until an actual user demands it.
+///
+/// `clientSecret` is encrypted at rest with the app's ENCRYPTION_KEY — the
+/// same envelope as database-connection passwords.
+model WorkspaceSso {
+  id            String   @id @default(cuid())
+  workspaceId   String   @unique
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  enabled       Boolean  @default(false)
+  /// Discovery doc URL, e.g. https://company.okta.com/oauth2/default/.well-known/openid-configuration
+  issuerUrl     String
+  clientId      String
+  /// AES-GCM-encrypted client secret. Never returned to the API consumer.
+  clientSecretCt Bytes
+  /// Optional: restrict sign-in to these email domains (comma-separated).
+  allowedDomains String?
+  /// Auto-provision new users on first successful SSO login.
+  autoProvision Boolean @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}

@@ -13,6 +13,13 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { GoogleOAuthGuard, GithubOAuthGuard } from './guards/oauth.guards';
 import { AuditModule } from '../audit/audit.module';
 import { WorkspacesModule } from '../workspaces/workspaces.module';
+import { SchedulerModule } from '../scheduler/scheduler.module';
+import { EmailVerificationService } from './email-verification.service';
+import { PasswordResetService } from './password-reset.service';
+import { LoginCooldownService } from './login-cooldown.service';
+import { SsoService } from './sso.service';
+import { SsoController } from './sso.controller';
+import { CryptoModule } from '../crypto/crypto.module';
 
 // Strategies are only registered when their envs are set. Passport's OAuth2
 // base class throws "requires a clientID option" at construction time if the
@@ -54,10 +61,16 @@ const githubStrategyProvider: Provider = {
     }),
     AuditModule,
     WorkspacesModule,
+    SchedulerModule,
+    CryptoModule,
   ],
-  controllers: [AuthController, OAuthController],
+  controllers: [AuthController, OAuthController, SsoController],
   providers: [
     AuthService,
+    EmailVerificationService,
+    PasswordResetService,
+    LoginCooldownService,
+    SsoService,
     JwtStrategy,
     googleStrategyProvider,
     githubStrategyProvider,

@@ -134,6 +134,7 @@ export class SlowQueryService {
     const since = opts.sinceMs ? new Date(Date.now() - opts.sinceMs) : undefined;
     // One aggregate query per shape. Prisma doesn't support aggregate + groupBy
     // with multiple metrics + ORDER BY, so do it in two passes.
+    // Groupby first — the other two queries need the list of hashes from it.
     const rows = await this.prisma.slowQueryLog.groupBy({
       by: ['shapeHash'],
       where: {
@@ -147,24 +148,29 @@ export class SlowQueryService {
       orderBy: { _sum: { durationMs: 'desc' } },
       take: Math.min(Math.max(opts.limit ?? 100, 1), 500),
     });
-    // Fetch an example SQL + errored-count per shape.
     const hashes = rows.map((r) => r.shapeHash);
-    const examples = await this.prisma.slowQueryLog.findMany({
-      where: { connectionId, shapeHash: { in: hashes } },
-      orderBy: { createdAt: 'desc' },
-      distinct: ['shapeHash'],
-      select: { shapeHash: true, exampleSql: true, normalizedSql: true },
-    });
+
+    // Examples + errored-counts are independent — fire in parallel. Cuts
+    // total latency roughly in half on DBs where each Prisma call has
+    // meaningful round-trip cost.
+    const [examples, erroredCounts] = await Promise.all([
+      this.prisma.slowQueryLog.findMany({
+        where: { connectionId, shapeHash: { in: hashes } },
+        orderBy: { createdAt: 'desc' },
+        distinct: ['shapeHash'],
+        select: { shapeHash: true, exampleSql: true, normalizedSql: true },
+      }),
+      this.prisma.slowQueryLog.groupBy({
+        by: ['shapeHash'],
+        where: {
+          connectionId,
+          errored: true,
+          ...(since ? { createdAt: { gte: since } } : {}),
+        },
+        _count: { _all: true },
+      }),
+    ]);
     const exampleByHash = new Map(examples.map((e) => [e.shapeHash, e]));
-    const erroredCounts = await this.prisma.slowQueryLog.groupBy({
-      by: ['shapeHash'],
-      where: {
-        connectionId,
-        errored: true,
-        ...(since ? { createdAt: { gte: since } } : {}),
-      },
-      _count: { _all: true },
-    });
     const erroredByHash = new Map(erroredCounts.map((e) => [e.shapeHash, e._count._all]));
 
     return rows.map((r) => {

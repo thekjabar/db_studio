@@ -19,6 +19,6 @@ import { SchedulerController } from './scheduler.controller';
     SchedulerWorker,
     SchedulerService,
   ],
-  exports: [SchedulerService],
+  exports: [SchedulerService, EmailService],
 })
 export class SchedulerModule {}

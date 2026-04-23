@@ -1,0 +1,14 @@
+/// One-time token for confirming a user's email address on signup (and for
+/// resend-requests). We store only a SHA-256 hash of the token so a database
+/// leak doesn't give attackers login-grade artefacts.
+model EmailVerification {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenSha   String   @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+}

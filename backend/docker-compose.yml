@@ -85,9 +85,80 @@ services:
       - "${API_PORT:-3000}:3000"
     networks: [dbdash]
 
+  # Nightly pg_dump of the app's own Postgres. Writes a timestamped .sql.gz
+  # to the `app_backups` volume and prunes anything older than the retention
+  # window. Intentionally separate from the user-data volume so a misbehaving
+  # backup can't stomp on the live DB.
+  #
+  # Restore: docker compose exec db psql -U dbdash -d dbdash < /path/to/dump.sql
+  db-backup:
+    image: postgres:17-alpine
+    container_name: dbdash-db-backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-dbdash}
+      PGUSER: ${POSTGRES_USER:-dbdash}
+      PGDATABASE: ${POSTGRES_DB:-dbdash}
+      PGHOST: db
+      RETENTION_DAYS: ${DB_BACKUP_RETENTION_DAYS:-14}
+      SCHEDULE_CRON: ${DB_BACKUP_CRON:-0 2 * * *}
+    volumes:
+      - app_backups:/backups
+    # Install a minimal cron (busybox) + a backup script, then run crond.
+    # Heredoc keeps the whole thing in one compose file; for larger setups
+    # the script would move into its own Dockerfile.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        mkdir -p /backups
+        cat > /usr/local/bin/do-backup.sh <<'EOF'
+        #!/bin/sh
+        set -eu
+        stamp=$$(date -u +%Y%m%dT%H%M%SZ)
+        out="/backups/dbdash-$$stamp.sql.gz"
+        echo "[backup] starting $$out"
+        pg_dump --format=plain --no-owner --no-privileges | gzip -9 > "$$out.tmp"
+        mv "$$out.tmp" "$$out"
+        echo "[backup] done $$(stat -c%s "$$out") bytes"
+        find /backups -name 'dbdash-*.sql.gz' -type f -mtime +$$RETENTION_DAYS -delete || true
+        EOF
+        chmod +x /usr/local/bin/do-backup.sh
+        echo "$$SCHEDULE_CRON /usr/local/bin/do-backup.sh >> /backups/cron.log 2>&1" > /etc/crontabs/root
+        # Run once at container start so operators see output immediately, then hand off to cron.
+        /usr/local/bin/do-backup.sh >> /backups/cron.log 2>&1 || true
+        exec crond -f -L /dev/stderr
+    networks: [dbdash]
+
+  # Caddy reverse-proxy for production HTTPS. Disabled by default so local
+  # dev doesn't fight for ports 80/443 or need valid certs. To enable:
+  #   1. Copy Caddyfile.example to Caddyfile and fill in your domain.
+  #   2. Uncomment this service + the caddy volumes at the bottom.
+  #   3. Make sure ports 80/443 on the host are free and public DNS points here.
+  # caddy:
+  #   image: caddy:2-alpine
+  #   container_name: dbdash-caddy
+  #   restart: unless-stopped
+  #   depends_on:
+  #     - frontend
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy_data:/data
+  #     - caddy_config:/config
+  #   networks: [dbdash]
+
 volumes:
   db_data:
   redis_data:
+  app_backups:
+  # caddy_data:
+  # caddy_config:
 
 networks:
   # Pinned name so the frontend compose file can join the same network

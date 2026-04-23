@@ -9,6 +9,7 @@ model Workspace {
   owner       User               @relation("OwnedWorkspaces", fields: [ownerId], references: [id], onDelete: Cascade)
   members     WorkspaceMember[]
   connections Connection[]
+  sso         WorkspaceSso?
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
 

@@ -32,8 +32,13 @@ export function quoteMssql(ident: string): string {
 /**
  * Whitelist the given identifier against a list of known-good identifiers from
  * live introspection. Throws if not found.
+ *
+ * Also asserts shape first — defense in depth. If a caller ever seeds `allowed`
+ * from untrusted input by mistake, a shape-invalid candidate still can't sneak
+ * through just by appearing in the list.
  */
 export function whitelistIdent(candidate: string, allowed: Iterable<string>): string {
+  assertIdentShape(candidate);
   for (const a of allowed) if (a === candidate) return candidate;
   throw new BadRequestException(`Identifier not found in schema: ${candidate}`);
 }

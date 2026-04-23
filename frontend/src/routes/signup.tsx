@@ -27,9 +27,16 @@ export default function SignupPage() {
     setLoading(true);
     try {
       const r = await api.signup({ email, password, displayName: displayName || undefined });
-      setAuth(r.accessToken, r.user);
-      toast.success("Account created");
-      nav("/connections");
+      if ("needsVerification" in r && r.needsVerification) {
+        toast.success(`We sent a verification link to ${email}. Click it to finish.`);
+        nav("/login", { replace: true, state: { justSignedUp: true } });
+        return;
+      }
+      if ("accessToken" in r) {
+        setAuth(r.accessToken, r.user);
+        toast.success("Account created");
+        nav("/connections");
+      }
     } catch (err) {
       toast.error(extractErrorMessage(err));
     } finally {

@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowRight, Code2, Database, Loader2, Network, Pencil, Plus, Shield, Table2, Trash2, Zap } from "lucide-react";
+import { ArrowRight, Code2, Database, Loader2, Network, Pencil, Plus, Shield, ShieldCheck, Table2, Trash2, Zap } from "lucide-react";
 import { api, extractErrorMessage, type Connection, type CreateConnectionInput, type Dialect, type SshTunnelInput } from "@/lib/api";
 import { SshTunnelFields, defaultSshTunnel } from "@/components/ssh-tunnel-fields";
 import { EditConnectionDialog } from "@/components/edit-connection-dialog";
@@ -122,6 +122,21 @@ export default function ConnectionsPage() {
                 </SelectContent>
               </Select>
             )}
+            {workspaceId && (() => {
+              const ws = wsQ.data?.find((w) => w.id === workspaceId);
+              // Only non-personal workspaces support SSO — a personal one is a
+              // single-user bucket, configuring SSO on it makes no sense.
+              if (!ws || ws.isPersonal) return null;
+              return (
+                <Link
+                  to={`/workspaces/${workspaceId}/sso`}
+                  className="inline-flex items-center gap-1 h-9 px-3 rounded-md border border-border hover:bg-accent text-xs font-medium"
+                  title="Configure SSO for this workspace"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5" /> SSO
+                </Link>
+              );
+            })()}
             <Button onClick={() => setDialogOpen(true)}>
               <Plus className="h-4 w-4" /> New connection
             </Button>
@@ -225,6 +240,31 @@ export default function ConnectionsPage() {
 }
 
 function FirstRunGuide({ onCreate }: { onCreate: () => void }) {
+  // Three explicit steps — the user hits the first-run guide with zero
+  // connections, so step 1 is always active. Step 2/3 appear grayed so the
+  // user sees what's next without feeling dumped-in.
+  const steps = [
+    {
+      n: 1,
+      title: "Add your first connection",
+      desc: "Postgres, MySQL, SQL Server, or SQLite. Credentials are AES-256-GCM encrypted at rest and never leave the server in plain text.",
+      active: true,
+      cta: { label: "Add connection", onClick: onCreate },
+    },
+    {
+      n: 2,
+      title: "Browse or query",
+      desc: "Click a table to filter/sort/edit rows, or hit the SQL editor (Ctrl+K → SQL Editor) to run queries.",
+      active: false,
+    },
+    {
+      n: 3,
+      title: "Share with your team",
+      desc: "Workspaces group connections; per-table grants + column masks give VIEWERs safe read-only access to production.",
+      active: false,
+    },
+  ];
+
   const features = [
     {
       icon: Table2,
@@ -247,35 +287,68 @@ function FirstRunGuide({ onCreate }: { onCreate: () => void }) {
       desc: "Schema edits, inserts, updates and deletes all get logged.",
     },
   ];
+
   return (
-    <div className="rounded-xl border border-dashed border-border bg-card/50 p-8 md:p-12">
-      <div className="max-w-2xl mx-auto text-center space-y-4">
+    <div className="rounded-xl border border-dashed border-border bg-card/50 p-8 md:p-12 space-y-10">
+      <div className="max-w-2xl mx-auto text-center space-y-3">
         <div className="h-12 w-12 mx-auto rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center">
           <Database className="h-6 w-6 text-primary" />
         </div>
         <h2 className="text-xl font-semibold">Welcome to DB Studio</h2>
         <p className="text-sm text-muted-foreground">
-          Connect a database to start browsing tables, running queries, editing schema, and tracking changes.
-          Credentials are encrypted at rest — the dashboard never sees plain-text passwords again after save.
+          3 steps to a connected, queryable database. Most teams finish in under 2 minutes.
         </p>
-        <div className="pt-2">
-          <Button size="lg" onClick={onCreate}>
-            <Plus className="h-4 w-4" /> Add your first connection
-          </Button>
-        </div>
       </div>
-      <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto">
-        {features.map((f) => (
-          <div key={f.title} className="flex items-start gap-3 rounded-lg border border-border bg-card p-3">
-            <div className="h-8 w-8 shrink-0 rounded-md bg-muted flex items-center justify-center text-muted-foreground">
-              <f.icon className="h-4 w-4" />
+
+      <ol className="mx-auto max-w-2xl space-y-3">
+        {steps.map((s) => (
+          <li
+            key={s.n}
+            className={`flex gap-3 rounded-lg border p-4 transition-colors ${
+              s.active
+                ? "border-primary/40 bg-primary/5"
+                : "border-border bg-card/60 opacity-70"
+            }`}
+          >
+            <div
+              className={`h-7 w-7 shrink-0 rounded-full flex items-center justify-center text-xs font-semibold ${
+                s.active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {s.n}
             </div>
-            <div className="min-w-0">
-              <div className="text-sm font-medium">{f.title}</div>
-              <div className="text-xs text-muted-foreground">{f.desc}</div>
+            <div className="min-w-0 flex-1">
+              <div className="font-medium">{s.title}</div>
+              <div className="text-sm text-muted-foreground mt-0.5">{s.desc}</div>
+              {s.cta && s.active && (
+                <div className="mt-3">
+                  <Button onClick={s.cta.onClick}>
+                    <Plus className="h-4 w-4" /> {s.cta.label}
+                  </Button>
+                </div>
+              )}
             </div>
-          </div>
+          </li>
         ))}
+      </ol>
+
+      <div className="mt-8">
+        <div className="text-xs uppercase tracking-wider text-muted-foreground text-center mb-3">
+          What you'll get
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto">
+          {features.map((f) => (
+            <div key={f.title} className="flex items-start gap-3 rounded-lg border border-border bg-card p-3">
+              <div className="h-8 w-8 shrink-0 rounded-md bg-muted flex items-center justify-center text-muted-foreground">
+                <f.icon className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-medium">{f.title}</div>
+                <div className="text-xs text-muted-foreground">{f.desc}</div>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

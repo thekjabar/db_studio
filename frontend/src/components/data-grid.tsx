@@ -77,6 +77,8 @@ function typeIconColor(type?: string): string {
 }
 
 const DEFAULT_WIDTH = 220;
+// Rendered-row cap. See comment at the map call site for rationale.
+const MAX_RENDER_ROWS = 5000;
 const MIN_WIDTH = 80;
 
 export function DataGrid({
@@ -310,7 +312,14 @@ export function DataGrid({
             </tr>
           )}
           {!loading &&
-            rows.map((row, i) => {
+            // Hard cap on rendered rows. The server already truncates at the
+            // user's configured cap (default 1000), but a federated query or
+            // local result from `pnpm dev` could still hand us 50k rows — and
+            // rendering 50k <tr>s will pin a browser tab. 5000 is enough for
+            // any meaningful scroll-through; anything over that, the user
+            // should narrow the SELECT. Real virtualization is a larger
+            // refactor than this cap's pragmatic trade-off.
+            rows.slice(0, MAX_RENDER_ROWS).map((row, i) => {
               const isSel = selected?.has(i);
               return (
                 <tr

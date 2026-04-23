@@ -1,12 +1,14 @@
 import { create } from "zustand";
 
 export type Density = "SMALL" | "MEDIUM" | "LARGE";
+export type ServerTheme = "LIGHT" | "DARK" | "SYSTEM";
 
 export interface AuthUser {
   id: string;
   email: string;
   displayName?: string;
   density?: Density;
+  theme?: ServerTheme;
   totpEnabled?: boolean;
 }
 

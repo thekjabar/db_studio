@@ -23,6 +23,9 @@ import { BackupModule } from './backup/backup.module';
 import { SlowQueryModule } from './slow-query/slow-query.module';
 import { FederatedModule } from './federated/federated.module';
 import { MigrationExportModule } from './migration-export/migration-export.module';
+import { RedisModule } from './redis/redis.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
+import { ApiKeysModule } from './api-keys/api-keys.module';
 import { HealthController } from './common/health.controller';
 
 @Module({
@@ -59,6 +62,9 @@ import { HealthController } from './common/health.controller';
     SlowQueryModule,
     FederatedModule,
     MigrationExportModule,
+    RedisModule,
+    WebhooksModule,
+    ApiKeysModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

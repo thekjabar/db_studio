@@ -20,6 +20,8 @@ model User {
   tableGrants      TableGrant[]
   scheduledQueries ScheduledQuery[]
   slowQueryLogs    SlowQueryLog[]
+  webhooks         Webhook[]
+  apiKeys          ApiKey[]
 
   @@unique([oauthProvider, oauthId])
   @@index([email])

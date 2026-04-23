@@ -281,6 +281,60 @@ export interface CreateScheduleInput {
   enabled?: boolean;
 }
 
+export interface ApiKey {
+  id: string;
+  userId: string;
+  name: string;
+  tokenPrefix: string;
+  connectionIds: string[];
+  expiresAt: string | null;
+  revokedAt: string | null;
+  lastUsedAt: string | null;
+  createdAt: string;
+}
+
+export type WebhookEvent = "ROW_INSERT" | "ROW_UPDATE" | "ROW_DELETE";
+export type WebhookDeliveryStatus = "PENDING" | "SUCCESS" | "FAILED";
+
+export interface Webhook {
+  id: string;
+  connectionId: string;
+  ownerId: string;
+  name: string;
+  url: string;
+  schemaName: string;
+  tableName: string;
+  events: WebhookEvent[];
+  enabled: boolean;
+  lastFiredAt: string | null;
+  lastStatus: WebhookDeliveryStatus | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateWebhookInput {
+  name: string;
+  url: string;
+  schemaName: string;
+  tableName: string;
+  events: WebhookEvent[];
+  enabled?: boolean;
+}
+
+export interface WebhookDelivery {
+  id: string;
+  webhookId: string;
+  event: WebhookEvent;
+  attempt: number;
+  status: WebhookDeliveryStatus;
+  httpStatus: number | null;
+  responseBody: string | null;
+  errorMessage: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+}
+
 export interface FederatedQueryResult {
   rows: Record<string, unknown>[];
   fields: { name: string; dataType?: string }[];
@@ -753,6 +807,36 @@ export const api = {
   ) =>
     http
       .post<ExplainResult>(`/connections/${connectionId}/query/explain`, body)
+      .then((r) => r.data),
+
+  listApiKeys: () => http.get<ApiKey[]>("/api-keys").then((r) => r.data),
+  createApiKey: (body: { name: string; connectionIds?: string[]; expiresAt?: string }) =>
+    http.post<ApiKey & { token: string }>("/api-keys", body).then((r) => r.data),
+  revokeApiKey: (id: string) =>
+    http.post<ApiKey>(`/api-keys/${id}/revoke`).then((r) => r.data),
+  deleteApiKey: (id: string) => http.delete(`/api-keys/${id}`).then((r) => r.data),
+
+  listWebhooks: (connectionId: string) =>
+    http.get<Webhook[]>(`/connections/${connectionId}/webhooks`).then((r) => r.data),
+  createWebhook: (connectionId: string, body: CreateWebhookInput) =>
+    http
+      .post<Webhook & { secret: string }>(`/connections/${connectionId}/webhooks`, body)
+      .then((r) => r.data),
+  updateWebhook: (connectionId: string, webhookId: string, body: Partial<CreateWebhookInput> & { secret?: string }) =>
+    http
+      .patch<Webhook>(`/connections/${connectionId}/webhooks/${webhookId}`, body)
+      .then((r) => r.data),
+  deleteWebhook: (connectionId: string, webhookId: string) =>
+    http.delete(`/connections/${connectionId}/webhooks/${webhookId}`).then((r) => r.data),
+  testWebhook: (connectionId: string, webhookId: string) =>
+    http
+      .post<{ queued: boolean }>(`/connections/${connectionId}/webhooks/${webhookId}/test`)
+      .then((r) => r.data),
+  listWebhookDeliveries: (connectionId: string, webhookId: string, limit = 50) =>
+    http
+      .get<WebhookDelivery[]>(`/connections/${connectionId}/webhooks/${webhookId}/deliveries`, {
+        params: { limit },
+      })
       .then((r) => r.data),
 
   migrationExport: (

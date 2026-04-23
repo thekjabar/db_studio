@@ -14,6 +14,7 @@ model Connection {
   tableGrants      TableGrant[]
   scheduledQueries ScheduledQuery[]
   slowQueryLogs    SlowQueryLog[]
+  webhooks         Webhook[]
   auditLogs        AuditLog[]
   savedQueries     SavedQuery[]
   comments         Comment[]

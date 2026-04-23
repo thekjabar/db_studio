@@ -18,6 +18,7 @@ import {
   Archive,
   Timer,
   FileCode2,
+  Webhook,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -170,6 +171,7 @@ export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSche
         <NavItem to={`/c/${connectionId}/permissions`} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Permissions" />
         <NavItem to={`/c/${connectionId}/backup`} icon={<Archive className="h-3.5 w-3.5" />} label="Backup" />
         <NavItem to={`/c/${connectionId}/migration-export`} icon={<FileCode2 className="h-3.5 w-3.5" />} label="Migration export" />
+        <NavItem to={`/c/${connectionId}/webhooks`} icon={<Webhook className="h-3.5 w-3.5" />} label="Webhooks" />
       </nav>
     </aside>
   );

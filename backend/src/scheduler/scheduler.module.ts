@@ -3,7 +3,6 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { ConnectionsModule } from '../connections/connections.module';
 import { AppConfigService } from '../config/config.service';
-import { redisProvider } from './redis.provider';
 import { QueuesService } from './queues.service';
 import { EmailService } from './email.service';
 import { SchedulerWorker } from './scheduler.worker';
@@ -15,7 +14,6 @@ import { SchedulerController } from './scheduler.controller';
   controllers: [SchedulerController],
   providers: [
     AppConfigService,
-    redisProvider,
     QueuesService,
     EmailService,
     SchedulerWorker,

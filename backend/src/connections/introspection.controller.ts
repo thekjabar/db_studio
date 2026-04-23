@@ -9,8 +9,9 @@ import { RequireRole, RequireTableRole } from '../rbac/rbac.decorator';
 import { TableDataQuery } from '../drivers/driver.interface';
 import { InsertRowDto, UpdateRowDto, DeleteRowDto, BulkDeleteRowsDto, BulkUpdateRowsDto } from './connections.dto';
 import { AuditService } from '../audit/audit.service';
+import { WebhooksService } from '../webhooks/webhooks.service';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
-import { Role } from '@prisma/client';
+import { Role, WebhookEvent } from '@prisma/client';
 
 function meta(req: Request) {
   return { ip: req.ip, userAgent: req.get('user-agent') ?? undefined };
@@ -19,7 +20,11 @@ function meta(req: Request) {
 @Controller('connections/:id')
 @UseGuards(RbacGuard)
 export class IntrospectionController {
-  constructor(private readonly svc: ConnectionsService, private readonly audit: AuditService) {}
+  constructor(
+    private readonly svc: ConnectionsService,
+    private readonly audit: AuditService,
+    private readonly webhooks: WebhooksService,
+  ) {}
 
   private roleFromReq(req: Request): Role {
     return ((req as any).connectionRole as Role) ?? Role.VIEWER;
@@ -94,6 +99,10 @@ export class IntrospectionController {
         userId: u.id, connectionId: id, action: 'ROW_INSERT', affectedRows: 1, ...meta(req),
         metadata: { table: `${schema}.${name}`, schema, tableName: name, after: r },
       });
+      this.webhooks.dispatch({
+        connectionId: id, schemaName: schema, tableName: name,
+        event: WebhookEvent.ROW_INSERT, userId: u.id, after: r,
+      });
       return r;
     } finally { await drv.close().catch(() => {}); }
   }
@@ -114,6 +123,10 @@ export class IntrospectionController {
         userId: u.id, connectionId: id, action: 'ROW_UPDATE', affectedRows: 1, ...meta(req),
         metadata: { table: `${schema}.${name}`, schema, tableName: name, pk: dto.pk, before, after: r },
       });
+      this.webhooks.dispatch({
+        connectionId: id, schemaName: schema, tableName: name,
+        event: WebhookEvent.ROW_UPDATE, userId: u.id, pk: dto.pk, before, after: r,
+      });
       return r;
     } finally { await drv.close().catch(() => {}); }
   }
@@ -133,6 +146,10 @@ export class IntrospectionController {
       await this.audit.log({
         userId: u.id, connectionId: id, action: 'ROW_DELETE', affectedRows: affected, ...meta(req),
         metadata: { table: `${schema}.${name}`, schema, tableName: name, pk: dto.pk, before },
+      });
+      this.webhooks.dispatch({
+        connectionId: id, schemaName: schema, tableName: name,
+        event: WebhookEvent.ROW_DELETE, userId: u.id, pk: dto.pk, before,
       });
       return { affectedRows: affected };
     } finally { await drv.close().catch(() => {}); }
@@ -155,10 +172,18 @@ export class IntrospectionController {
         let total = 0;
         for (const pk of dto.pks) total += await drv.deleteRow(schema, name, pk);
         await this.audit.log({ userId: u.id, connectionId: id, action: 'ROW_DELETE', affectedRows: total, ...meta(req), metadata: { table: `${schema}.${name}`, schema, tableName: name, bulk: dto.pks.length, beforeRows } });
+        this.webhooks.dispatch({
+          connectionId: id, schemaName: schema, tableName: name,
+          event: WebhookEvent.ROW_DELETE, userId: u.id, bulk: dto.pks.length,
+        });
         return { affectedRows: total };
       }
       const affected = await drv.deleteRows(schema, name, dto.pks);
       await this.audit.log({ userId: u.id, connectionId: id, action: 'ROW_DELETE', affectedRows: affected, ...meta(req), metadata: { table: `${schema}.${name}`, schema, tableName: name, bulk: dto.pks.length, beforeRows } });
+      this.webhooks.dispatch({
+        connectionId: id, schemaName: schema, tableName: name,
+        event: WebhookEvent.ROW_DELETE, userId: u.id, bulk: dto.pks.length,
+      });
       return { affectedRows: affected };
     } finally { await drv.close().catch(() => {}); }
   }
@@ -182,10 +207,18 @@ export class IntrospectionController {
           total++;
         }
         await this.audit.log({ userId: u.id, connectionId: id, action: 'ROW_UPDATE', affectedRows: total, ...meta(req), metadata: { table: `${schema}.${name}`, schema, tableName: name, bulk: dto.pks.length, beforeRows, afterValues: dto.values } });
+        this.webhooks.dispatch({
+          connectionId: id, schemaName: schema, tableName: name,
+          event: WebhookEvent.ROW_UPDATE, userId: u.id, bulk: dto.pks.length,
+        });
         return { affectedRows: total };
       }
       const affected = await drv.bulkUpdateRows(schema, name, dto.pks, dto.values);
       await this.audit.log({ userId: u.id, connectionId: id, action: 'ROW_UPDATE', affectedRows: affected, ...meta(req), metadata: { table: `${schema}.${name}`, schema, tableName: name, bulk: dto.pks.length, beforeRows, afterValues: dto.values } });
+      this.webhooks.dispatch({
+        connectionId: id, schemaName: schema, tableName: name,
+        event: WebhookEvent.ROW_UPDATE, userId: u.id, bulk: dto.pks.length,
+      });
       return { affectedRows: affected };
     } finally { await drv.close().catch(() => {}); }
   }

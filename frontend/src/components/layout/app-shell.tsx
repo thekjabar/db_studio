@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./topbar";
-import { CommandPalette } from "../command-palette";
 import { useViewport } from "@/lib/use-viewport";
 
 export function AppShell() {
@@ -15,7 +14,6 @@ export function AppShell() {
   // Mobile: hide sidebar entirely; show as overlay when `mobileOpen`.
   const [collapsed, setCollapsed] = useState(isTablet && !isMobile);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const [schema, setSchema] = useState<string>("public");
 
   // When crossing breakpoints, update defaults.
@@ -96,7 +94,9 @@ export function AppShell() {
       <div className="flex-1 flex flex-col min-w-0">
         <TopBar
           connection={connQ.data}
-          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenPalette={() =>
+            window.dispatchEvent(new CustomEvent("dbstudio:open-palette"))
+          }
           crumbs={crumbs}
           onMenuClick={isMobile ? () => setMobileOpen(true) : undefined}
         />
@@ -111,7 +111,6 @@ export function AppShell() {
           <Outlet context={{ schema, setSchema }} />
         </main>
       </div>
-      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} connectionId={id} schema={schema} />
     </div>
   );
 }

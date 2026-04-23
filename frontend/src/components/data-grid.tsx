@@ -318,7 +318,7 @@ export function DataGrid({
                   className={cn(
                     "group transition-colors",
                     isSel
-                      ? "bg-primary/15 dark:bg-primary/10"
+                      ? "bg-primary/15 dark:bg-primary/20"
                       : "hover:bg-accent/80 dark:hover:bg-accent/40",
                   )}
                 >
@@ -327,7 +327,7 @@ export function DataGrid({
                       className={cn(
                         "sticky left-0 z-5 border-b border-r border-border px-0 py-0 align-middle relative",
                         isSel
-                          ? "bg-primary/15 dark:bg-primary/10 before:content-[''] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-0.5 before:bg-primary"
+                          ? "bg-primary/15 dark:bg-primary/20 before:content-[''] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-0.5 before:bg-primary"
                           : "bg-card group-hover:bg-accent/80 dark:group-hover:bg-accent/40",
                       )}
                     >
@@ -488,18 +488,22 @@ function Cell({ kind, value }: { kind: CellKind; value: unknown }) {
   }
   if (kind === "json") {
     const text = formatValue(value, kind);
+    // Collapse whitespace so pretty-printed JSON doesn't explode a cell's
+    // visual height. Full value still accessible via tooltip.
+    const inline = text.replace(/\s+/g, " ").slice(0, 80);
+    const truncated = text.length > 80;
     return (
       <span
         className="font-mono text-amber-700 dark:text-amber-400 truncate block"
-        title={text.length > 120 ? text : undefined}
+        title={text}
       >
-        {text}
+        {inline}{truncated ? "…" : ""}
       </span>
     );
   }
   if (kind === "number") {
     return (
-      <span className="font-mono text-sky-700 dark:text-sky-400">
+      <span className="font-mono text-sky-700 dark:text-sky-400 block text-right tabular-nums">
         {formatValue(value, kind)}
       </span>
     );

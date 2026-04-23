@@ -15,7 +15,7 @@ import {
   type Node,
   type Edge,
 } from "@xyflow/react";
-import { Key, KeyRound, LayoutGrid, MoreVertical, Pencil, Plus, Trash2, Link2 } from "lucide-react";
+import { Key, KeyRound, LayoutGrid, MoreVertical, Pencil, Plus, Trash2, Link2, Undo2 } from "lucide-react";
 import { api, extractErrorMessage, type AlterTableRequest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -216,6 +216,41 @@ export default function ErRoute() {
   const [filter, setFilter] = useState("");
   const [onlyRelated, setOnlyRelated] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  // Undo stack for safe-to-reverse schema edits. Intentionally scoped:
+  //   • addColumn  → inverse is dropColumn (no data yet, so recoverable)
+  //   • addForeignKey → inverse is dropConstraint
+  // We deliberately don't record drops/retypes/renames — their undos would
+  // need to restore column data we no longer have.
+  type UndoOp =
+    | { kind: "addColumn"; schema: string; table: string; column: string }
+    | { kind: "addForeignKey"; schema: string; table: string; constraintName: string };
+  const [undoStack, setUndoStack] = useState<UndoOp[]>([]);
+  const pushUndo = (op: UndoOp) => setUndoStack((s) => [...s, op]);
+  const popUndo = (): UndoOp | undefined => {
+    let popped: UndoOp | undefined;
+    setUndoStack((s) => {
+      if (s.length === 0) return s;
+      popped = s[s.length - 1];
+      return s.slice(0, -1);
+    });
+    return popped;
+  };
+  // Applies the inverse of the top operation and pops it from the stack.
+  const undoLast = () => {
+    const op = undoStack[undoStack.length - 1];
+    if (!op) return;
+    if (op.kind === "addColumn") {
+      alter.mutate(
+        { schema: op.schema, name: op.table, dropColumns: [op.column], confirm: true },
+        { onSuccess: () => { popUndo(); toast.success(`Undid: add column ${op.column}`); } },
+      );
+    } else if (op.kind === "addForeignKey") {
+      alter.mutate(
+        { schema: op.schema, name: op.table, dropConstraints: [op.constraintName], confirm: true },
+        { onSuccess: () => { popUndo(); toast.success("Undid: add foreign key"); } },
+      );
+    }
+  };
   const [fkPending, setFkPending] = useState<{ table: string; column: string } | null>(null);
   const [addColumnFor, setAddColumnFor] = useState<{ schema: string; table: string } | null>(null);
   const [retypeState, setRetypeState] = useState<{ table: string; column: string; currentType: string } | null>(null);
@@ -334,17 +369,31 @@ export default function ErRoute() {
           confirmLabel: "Add FK",
         });
         if (ok) {
-          alter.mutate({
-            schema,
-            name: fkPending.table,
-            addForeignKeys: [{
-              columns: [fkPending.column],
-              refSchema,
-              refTable: a.table,
-              refColumns: [a.column],
-            }],
-            confirm: true,
-          });
+          // Derive the FK constraint name the driver will generate. Matches
+          // the pg naming convention used by our Postgres driver
+          // (<table>_<first-col>_fkey). Good enough for undo.
+          const constraintName = `${fkPending.table}_${fkPending.column}_fkey`;
+          alter.mutate(
+            {
+              schema,
+              name: fkPending.table,
+              addForeignKeys: [{
+                columns: [fkPending.column],
+                refSchema,
+                refTable: a.table,
+                refColumns: [a.column],
+              }],
+              confirm: true,
+            },
+            {
+              onSuccess: () => pushUndo({
+                kind: "addForeignKey",
+                schema,
+                table: fkPending!.table,
+                constraintName,
+              }),
+            },
+          );
         }
         setFkPending(null);
         return;
@@ -354,6 +403,25 @@ export default function ErRoute() {
 
   // Refresh the ref without triggering a render.
   handleActionRef.current = handleAction;
+
+  // Ctrl+Z / Cmd+Z triggers undo while in edit mode. We scope to edit mode so
+  // the shortcut doesn't interfere with text editing inputs elsewhere.
+  useEffect(() => {
+    if (!editMode) return;
+    const h = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      // Skip when typing into an input/textarea/contenteditable.
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undoLast();
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editMode, undoStack.length]);
 
   // Normalize values that may arrive as a Postgres array literal string
   // (e.g. "{id,user_id}") instead of a JS array.
@@ -462,13 +530,27 @@ export default function ErRoute() {
         <div className="text-[10px] text-muted-foreground font-mono">
           {nodes.length}/{totalNodes} tables · {edges.length}/{totalEdges} edges
         </div>
+        {editMode && undoStack.length > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="ml-auto"
+            onClick={undoLast}
+            title="Undo last safe schema change (Ctrl+Z)"
+          >
+            <Undo2 className="h-3.5 w-3.5" /> Undo ({undoStack.length})
+          </Button>
+        )}
         <Button
           size="sm"
           variant={editMode ? "default" : "outline"}
-          className="ml-auto"
+          className={editMode && undoStack.length > 0 ? "" : "ml-auto"}
           onClick={() => {
+            // Clear the undo stack on toggle — applies in both directions so
+            // stale entries from a previous edit session don't reappear.
             setEditMode((v) => !v);
             setFkPending(null);
+            setUndoStack([]);
           }}
         >
           <Pencil className="h-3.5 w-3.5" /> {editMode ? "Exit edit" : "Edit schema"}
@@ -511,9 +593,17 @@ export default function ErRoute() {
           table={addColumnFor.table}
           open
           onOpenChange={(v) => !v && setAddColumnFor(null)}
-          onSaved={() => {
+          onSaved={(columnName) => {
             toast.success("Column added");
             qc.invalidateQueries({ queryKey: ["er", id, schema] });
+            if (addColumnFor) {
+              pushUndo({
+                kind: "addColumn",
+                schema: addColumnFor.schema,
+                table: addColumnFor.table,
+                column: columnName,
+              });
+            }
           }}
         />
       )}

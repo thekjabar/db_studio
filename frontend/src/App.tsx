@@ -18,8 +18,10 @@ import PermissionsRoute from "@/routes/connection/permissions";
 import BackupRoute from "@/routes/connection/backup";
 import SlowQueriesRoute from "@/routes/connection/slow-queries";
 import MigrationExportRoute from "@/routes/connection/migration-export";
+import WebhooksRoute from "@/routes/connection/webhooks";
 import SchedulesRoute from "@/routes/schedules";
 import FederatedRoute from "@/routes/federated";
+import ApiKeysRoute from "@/routes/api-keys";
 import { Loader2 } from "lucide-react";
 
 function Protected({ children }: { children: React.ReactNode }) {
@@ -127,6 +129,14 @@ export default function App() {
         }
       />
       <Route
+        path="/api-keys"
+        element={
+          <Protected>
+            <ApiKeysRoute />
+          </Protected>
+        }
+      />
+      <Route
         path="/c/:id"
         element={
           <Protected>
@@ -146,6 +156,7 @@ export default function App() {
         <Route path="backup" element={<BackupRoute />} />
         <Route path="slow-queries" element={<SlowQueriesRoute />} />
         <Route path="migration-export" element={<MigrationExportRoute />} />
+        <Route path="webhooks" element={<WebhooksRoute />} />
       </Route>
       <Route path="/" element={<Navigate to="/connections" replace />} />
       <Route path="*" element={<Navigate to="/connections" replace />} />

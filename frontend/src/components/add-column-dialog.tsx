@@ -29,7 +29,7 @@ interface Props {
   table: string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onSaved: () => void;
+  onSaved: (columnName: string) => void;
 }
 
 type FkDraft = {
@@ -160,7 +160,7 @@ export function AddColumnDialog({ connectionId, schema, table, open, onOpenChang
     setBusy(true);
     try {
       await api.alterTable(connectionId, req);
-      onSaved();
+      onSaved(name);
       onOpenChange(false);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message;

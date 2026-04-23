@@ -1,0 +1,14 @@
+/// Row-change events that can fire a webhook. These fire only when the change
+/// is made through DB Studio's own APIs — external writes to the target DB
+/// aren't captured (that would require DB-native CDC which is out of scope).
+enum WebhookEvent {
+  ROW_INSERT
+  ROW_UPDATE
+  ROW_DELETE
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}

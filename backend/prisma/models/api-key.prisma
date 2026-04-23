@@ -1,0 +1,24 @@
+/// Per-user API keys for programmatic access. The plaintext token is only
+/// shown to the user once at creation — we store a SHA-256 hash for lookup
+/// and an argon2 hash for verification (the SHA index lets us find the row
+/// in O(1) without brute-forcing argon2 per request).
+model ApiKey {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  /// sha256(token) — used as an index-friendly lookup key.
+  tokenSha       String    @unique
+  /// argon2id(token) — verified on match to guard against collision attacks.
+  tokenHash      String
+  /// Visible prefix like "dbs_live_abc12…" so the user can recognize keys in the UI.
+  tokenPrefix    String
+  /// Optional scope: if set, this key may only act on the listed connections.
+  connectionIds  String[]
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  lastUsedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+}

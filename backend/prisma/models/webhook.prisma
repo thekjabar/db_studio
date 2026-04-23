@@ -1,0 +1,47 @@
+/// Webhooks that POST when rows in a watched table change via DB Studio's APIs.
+/// A webhook targets one specific (connection, schema, table) tuple and fires
+/// for a configurable subset of row events.
+model Webhook {
+  id             String     @id @default(cuid())
+  connectionId   String
+  connection     Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  ownerId        String
+  owner          User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name           String
+  url            String
+  /// Encrypted HMAC secret; recipients verify the X-DBStudio-Signature header.
+  /// Stored with the same per-connection purpose binding used elsewhere.
+  secretCt       String
+  schemaName     String
+  tableName      String
+  /// Which row events this webhook cares about. Empty = all.
+  events         WebhookEvent[]
+  enabled        Boolean    @default(true)
+  lastFiredAt    DateTime?
+  lastStatus     WebhookDeliveryStatus?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  deliveries     WebhookDelivery[]
+
+  @@index([connectionId, schemaName, tableName, enabled])
+  @@index([ownerId])
+}
+
+/// Per-attempt log. We keep a rolling window (sweeper trims oldest) to avoid
+/// unbounded growth on busy hooks.
+model WebhookDelivery {
+  id             String     @id @default(cuid())
+  webhookId      String
+  webhook        Webhook    @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  event          WebhookEvent
+  attempt        Int
+  status         WebhookDeliveryStatus
+  httpStatus     Int?
+  responseBody   String?
+  errorMessage   String?
+  startedAt      DateTime   @default(now())
+  finishedAt     DateTime?
+  durationMs     Int?
+
+  @@index([webhookId, startedAt(sort: Desc)])
+}

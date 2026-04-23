@@ -1,5 +1,5 @@
-export const QUEUE_EXEC = 'schedules:exec';
-export const QUEUE_EMAIL = 'schedules:email';
+export const QUEUE_EXEC = 'schedules-exec';
+export const QUEUE_EMAIL = 'schedules-email';
 
 export const REDIS_CLIENT = 'REDIS_CLIENT';
 

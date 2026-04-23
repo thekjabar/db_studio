@@ -18,6 +18,8 @@ import { AiModule } from './ai/ai.module';
 import { CommentsModule } from './comments/comments.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
+import { CsvImportModule } from './csv-import/csv-import.module';
+import { BackupModule } from './backup/backup.module';
 import { HealthController } from './common/health.controller';
 
 @Module({
@@ -49,6 +51,8 @@ import { HealthController } from './common/health.controller';
     CommentsModule,
     WorkspacesModule,
     SchedulerModule,
+    CsvImportModule,
+    BackupModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

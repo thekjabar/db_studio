@@ -277,6 +277,31 @@ export interface CreateScheduleInput {
   enabled?: boolean;
 }
 
+export interface CsvUploadResult {
+  sessionId: string;
+  filename: string;
+  headers: string[];
+  sample: Record<string, string>[];
+  totalRows: number;
+}
+
+export interface CsvMapping {
+  csvColumn: number | null;
+  targetColumn: string;
+}
+
+export interface CsvDryRunReport {
+  totalRows: number;
+  okRows: number;
+  errorRows: { rowIndex: number; message: string }[];
+}
+
+export interface CsvCommitReport {
+  inserted: number;
+  failed: { rowIndex: number; message: string }[];
+  durationMs: number;
+}
+
 export interface ScheduledQueryRun {
   id: string;
   scheduleId: string;
@@ -590,6 +615,68 @@ export const api = {
     http
       .get<ScheduledQueryRun[]>(`/schedules/${id}/runs`, { params: { limit } })
       .then((r) => r.data),
+
+  uploadCsv: (connectionId: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return http
+      .post<CsvUploadResult>(`/connections/${connectionId}/csv-import/upload`, fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      })
+      .then((r) => r.data);
+  },
+  csvDryRun: (
+    connectionId: string,
+    sessionId: string,
+    body: { schema: string; table: string; mappings: CsvMapping[] },
+  ) =>
+    http
+      .post<CsvDryRunReport>(
+        `/connections/${connectionId}/csv-import/${sessionId}/dry-run`,
+        body,
+      )
+      .then((r) => r.data),
+  csvCommit: (
+    connectionId: string,
+    sessionId: string,
+    body: { schema: string; table: string; mappings: CsvMapping[]; stopOnError?: boolean },
+  ) =>
+    http
+      .post<CsvCommitReport>(
+        `/connections/${connectionId}/csv-import/${sessionId}/commit`,
+        body,
+      )
+      .then((r) => r.data),
+  csvDiscard: (connectionId: string, sessionId: string) =>
+    http.delete(`/connections/${connectionId}/csv-import/${sessionId}`).then((r) => r.data),
+
+  /**
+   * Fetch a DB backup as a blob and trigger a browser download. Uses axios so
+   * the access token is attached automatically. Server streams pg_dump stdout.
+   */
+  downloadBackup: async (
+    connectionId: string,
+    opts: { format: "sql" | "custom"; schemaOnly?: boolean; schema?: string },
+  ) => {
+    const params: Record<string, string> = { format: opts.format };
+    if (opts.schemaOnly) params.schemaOnly = "true";
+    if (opts.schema) params.schema = opts.schema;
+    const r = await http.get<Blob>(`/connections/${connectionId}/backup`, {
+      params,
+      responseType: "blob",
+    });
+    const disposition = r.headers["content-disposition"] as string | undefined;
+    const match = disposition?.match(/filename="([^"]+)"/);
+    const filename = match?.[1] ?? `backup.${opts.format === "custom" ? "dump" : "sql"}`;
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 
   listComments: (id: string, target?: string) =>
     http

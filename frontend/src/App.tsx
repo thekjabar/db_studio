@@ -15,6 +15,7 @@ import SchemaRoute from "@/routes/connection/schema";
 import AuditRoute from "@/routes/connection/audit";
 import SavedRoute from "@/routes/connection/saved";
 import PermissionsRoute from "@/routes/connection/permissions";
+import BackupRoute from "@/routes/connection/backup";
 import SchedulesRoute from "@/routes/schedules";
 import { Loader2 } from "lucide-react";
 
@@ -131,6 +132,7 @@ export default function App() {
         <Route path="audit" element={<AuditRoute />} />
         <Route path="saved" element={<SavedRoute />} />
         <Route path="permissions" element={<PermissionsRoute />} />
+        <Route path="backup" element={<BackupRoute />} />
       </Route>
       <Route path="/" element={<Navigate to="/connections" replace />} />
       <Route path="*" element={<Navigate to="/connections" replace />} />

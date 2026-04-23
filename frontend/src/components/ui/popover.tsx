@@ -1,4 +1,5 @@
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
 /**
@@ -90,16 +91,22 @@ export function Popover({
   }, [open, onOpenChange, anchorRef]);
 
   if (!open || !style) return null;
-  return (
+  // Portal to <body> so the popover escapes any transformed ancestor (e.g. a
+  // Dialog uses -translate-* which would otherwise become the containing block
+  // for `position: fixed` and pull the popover inside the dialog.)
+  return createPortal(
     <div
       ref={ref}
       style={style}
+      data-popover-content=""
+      onPointerDownCapture={(e) => e.stopPropagation()}
       className={cn(
         "rounded-md border border-border bg-card shadow-xl p-2",
         className,
       )}
     >
       {children}
-    </div>
+    </div>,
+    document.body,
   );
 }

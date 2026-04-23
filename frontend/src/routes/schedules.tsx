@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -19,7 +19,9 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
+import { Check, ChevronDown } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useModal } from "@/components/modal-provider";
@@ -390,7 +392,7 @@ function NewScheduleDialog({
           </div>
           <div className="space-y-1.5">
             <Label>Timezone (optional)</Label>
-            <Input value={timezone} onChange={(e) => setTimezone(e.target.value)} placeholder="UTC, America/New_York…" />
+            <TimezoneSelect value={timezone} onChange={setTimezone} />
           </div>
           <div className="space-y-1.5">
             <Label>SQL</Label>
@@ -421,5 +423,135 @@ function NewScheduleDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// IANA timezone list — `Intl.supportedValuesOf('timeZone')` is available in
+// every evergreen browser. Falls back to a short curated list for older ones.
+function getTimezones(): string[] {
+  try {
+    const sv = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf;
+    if (typeof sv === "function") return sv("timeZone");
+  } catch {
+    /* ignore */
+  }
+  return [
+    "UTC",
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "Europe/London",
+    "Europe/Berlin",
+    "Europe/Istanbul",
+    "Asia/Dubai",
+    "Asia/Kolkata",
+    "Asia/Tokyo",
+    "Australia/Sydney",
+  ];
+}
+
+function TimezoneSelect({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState("");
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const zones = useMemo(() => getTimezones(), []);
+  const browserZone = useMemo(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch {
+      return "UTC";
+    }
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return zones.slice(0, 100);
+    return zones.filter((z) => z.toLowerCase().includes(q)).slice(0, 200);
+  }, [filter, zones]);
+
+  const display = value || "Leave unset (UTC)";
+
+  return (
+    <>
+      <button
+        ref={anchorRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <span className={value ? "" : "text-muted-foreground"}>{display}</span>
+        <ChevronDown className="h-4 w-4 opacity-60" />
+      </button>
+      <Popover
+        open={open}
+        onOpenChange={setOpen}
+        anchorRef={anchorRef}
+        align="start"
+        className="w-72 p-0"
+      >
+        <div className="p-2 border-b border-border">
+          <input
+            autoFocus
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Search timezones…"
+            className="h-8 w-full rounded border border-input bg-transparent px-2 text-sm focus-visible:outline-none"
+          />
+        </div>
+        <div className="max-h-60 overflow-y-auto py-1">
+          {value && (
+            <button
+              type="button"
+              onClick={() => {
+                onChange("");
+                setOpen(false);
+                setFilter("");
+              }}
+              className="flex w-full items-center justify-between px-3 py-1.5 text-xs text-muted-foreground hover:bg-accent"
+            >
+              Clear (use UTC)
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              onChange(browserZone);
+              setOpen(false);
+              setFilter("");
+            }}
+            className="flex w-full items-center justify-between px-3 py-1.5 text-xs hover:bg-accent"
+          >
+            <span>Your browser: {browserZone}</span>
+            {value === browserZone && <Check className="h-3.5 w-3.5" />}
+          </button>
+          <div className="my-1 border-t border-border" />
+          {filtered.map((z) => (
+            <button
+              key={z}
+              type="button"
+              onClick={() => {
+                onChange(z);
+                setOpen(false);
+                setFilter("");
+              }}
+              className="flex w-full items-center justify-between px-3 py-1.5 text-sm hover:bg-accent"
+            >
+              <span>{z}</span>
+              {value === z && <Check className="h-3.5 w-3.5" />}
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <div className="px-3 py-2 text-xs text-muted-foreground">No matches</div>
+          )}
+        </div>
+      </Popover>
+    </>
   );
 }

@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Share2,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -37,6 +38,7 @@ import { cn } from "@/lib/utils";
 import { RowDrawer } from "@/components/row-drawer";
 import { JsonFieldEditor } from "@/components/json-field-editor";
 import { BulkEditDialog } from "@/components/bulk-edit-dialog";
+import { CsvImportDialog } from "@/components/csv-import-dialog";
 import { useTableSubscription } from "@/lib/realtime";
 import { useTheme } from "@/lib/theme-store";
 import { useModal } from "@/components/modal-provider";
@@ -142,6 +144,7 @@ export default function TableRoute() {
   // JSON cell editor: { rowIdx, column } when open.
   const [jsonCell, setJsonCell] = useState<{ r: number; c: string } | null>(null);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
 
   const ready = !!id && !!schema && !!table;
 
@@ -344,6 +347,9 @@ export default function TableRoute() {
             </Button>
             <Button size="sm" variant="ghost" onClick={exportCsv}>
               <Download className="h-3.5 w-3.5" /> CSV
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setCsvImportOpen(true)}>
+              <Upload className="h-3.5 w-3.5" /> Import
             </Button>
             {selected.size > 0 && (
               <>
@@ -630,6 +636,18 @@ export default function TableRoute() {
             setSelected(new Set());
             qc.invalidateQueries({ queryKey: ["data", id, schema, table] });
           }}
+        />
+      )}
+
+      {ready && (
+        <CsvImportDialog
+          open={csvImportOpen}
+          onOpenChange={setCsvImportOpen}
+          connectionId={id!}
+          schema={schema!}
+          table={table!}
+          tableColumns={colsQ.data ?? []}
+          onCommitted={() => qc.invalidateQueries({ queryKey: ["data", id, schema, table] })}
         />
       )}
     </div>

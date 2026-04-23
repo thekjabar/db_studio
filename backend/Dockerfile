@@ -36,8 +36,12 @@ RUN pnpm prune --prod
 
 # ---- Runner ----
 FROM node:22-bookworm-slim AS runner
+# postgresql-client supplies pg_dump/pg_restore — used by the backup endpoint
+# to stream database snapshots. Bookworm's default client major version is
+# pinned; add a newer version via the upstream pgdg apt repo if you need to
+# target a remote server on a higher major.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssl ca-certificates curl tini \
+    openssl ca-certificates curl tini postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production

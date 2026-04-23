@@ -11,6 +11,12 @@ import { BackupService, BackupFormat } from './backup.service';
 export class BackupController {
   constructor(private readonly svc: BackupService) {}
 
+  @Get('estimate')
+  @RequireRole('VIEWER')
+  estimate(@Param('id') id: string, @Query('schema') schema: string | undefined) {
+    return this.svc.estimateSize(id, { schema: schema || undefined });
+  }
+
   @Throttle({ heavy: { limit: 3, ttl: 60_000 } })
   @Get()
   @RequireRole('OWNER') // Full-database dump is an owner-level op.

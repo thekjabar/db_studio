@@ -7,6 +7,7 @@ import { BarChart3, Download, Loader2, Play, Save, Share2, Sparkles, Trash2 } fr
 import { format as formatSql } from "sql-formatter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DataGrid } from "@/components/data-grid";
 import { ExplainPanel } from "@/components/explain-panel";
 import { api, extractErrorMessage, type ExplainResult, type QueryResult } from "@/lib/api";
@@ -65,6 +66,16 @@ export default function SqlRoute() {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [explainResult, setExplainResult] = useState<ExplainResult | null>(null);
   const [resultTab, setResultTab] = useState<"data" | "plan">("data");
+  // Row-cap for SELECT queries. 0 means "no cap" and triggers a warning before
+  // running — raw SELECT * FROM big_table is a common way to freeze the app.
+  const [maxRows, setMaxRows] = useState<number>(() => {
+    const stored = localStorage.getItem("dbdash.sqlMaxRows");
+    const n = stored ? parseInt(stored, 10) : NaN;
+    return Number.isFinite(n) && n >= 0 ? n : 1000;
+  });
+  useEffect(() => {
+    localStorage.setItem("dbdash.sqlMaxRows", String(maxRows));
+  }, [maxRows]);
   const [history, setHistory] = useState<HistoryEntry[]>(() => (id ? loadHistory(id) : []));
   const [confirmSql, setConfirmSql] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
@@ -112,11 +123,18 @@ export default function SqlRoute() {
 
   const run = useMutation({
     mutationFn: async (body: { sql: string; confirmDestructive?: boolean }) =>
-      api.runQuery(id!, body),
+      api.runQuery(id!, { ...body, maxRows }),
     onSuccess: (r) => {
       setResult(r);
+      setResultTab("data");
       pushHistory({ sql, when: Date.now() });
-      toast.success(`${r.rowCount ?? r.rows.length} rows · ${r.durationMs}ms`);
+      if (r.truncated) {
+        toast.warning(
+          `Showed first ${r.rowCount} rows — result is larger. Add LIMIT to your query or raise the cap.`,
+        );
+      } else {
+        toast.success(`${r.rowCount ?? r.rows.length} rows · ${r.durationMs}ms`);
+      }
     },
     onError: (err: any) => {
       const data = err?.response?.data;
@@ -287,11 +305,47 @@ export default function SqlRoute() {
 
       <div className="flex-1 flex flex-col min-w-0">
         <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
-          <Button size="sm" onClick={() => sql.trim() && run.mutate({ sql })} disabled={run.isPending || !sql.trim()}>
+          <Button
+            size="sm"
+            onClick={async () => {
+              if (!sql.trim()) return;
+              if (maxRows === 0) {
+                const ok = await modal.confirm({
+                  title: "Run without a row cap?",
+                  description:
+                    "Unbounded SELECT on a large table can freeze the browser and stress the database. Continue?",
+                  confirmLabel: "Run anyway",
+                  destructive: true,
+                });
+                if (!ok) return;
+              }
+              run.mutate({ sql });
+            }}
+            disabled={run.isPending || !sql.trim()}
+          >
             {run.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
             Run
             <kbd className="ml-1 rounded border border-border bg-background/30 px-1 text-[10px]">Ctrl ↵</kbd>
           </Button>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span>Limit</span>
+            <Select
+              value={String(maxRows)}
+              onValueChange={(v) => setMaxRows(parseInt(v, 10))}
+            >
+              <SelectTrigger className="h-7 w-28 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="100">100</SelectItem>
+                <SelectItem value="500">500</SelectItem>
+                <SelectItem value="1000">1,000</SelectItem>
+                <SelectItem value="5000">5,000</SelectItem>
+                <SelectItem value="10000">10,000</SelectItem>
+                <SelectItem value="0">No cap</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <Button size="sm" variant="outline" onClick={() => setAiOpen(true)}>
             <Sparkles className="h-3.5 w-3.5" /> Ask AI
           </Button>
@@ -346,8 +400,14 @@ export default function SqlRoute() {
             <Download className="h-3.5 w-3.5" /> CSV
           </Button>
           {result && (
-            <span className="ml-auto text-xs text-muted-foreground font-mono">
-              {result.rowCount ?? result.rows.length} rows · {result.durationMs}ms
+            <span
+              className={
+                "ml-auto text-xs font-mono " +
+                (result.truncated ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")
+              }
+            >
+              {result.truncated ? `${result.rowCount}+ rows (capped)` : `${result.rowCount ?? result.rows.length} rows`} ·{" "}
+              {result.durationMs}ms
             </span>
           )}
         </div>
@@ -416,20 +476,31 @@ export default function SqlRoute() {
               </button>
             </div>
           )}
-          <div className="flex-1 min-h-0">
-            {resultTab === "plan" && explainResult ? (
-              <ExplainPanel result={explainResult} />
-            ) : result ? (
-              <DataGrid
-                columns={result.fields.map((c) => ({ name: c.name, type: c.dataType }))}
-                rows={result.rows}
-                emptyMessage="Query returned no rows"
-              />
-            ) : (
-              <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
-                Run a query to see results.
+          <div className="flex-1 min-h-0 flex flex-col">
+            {resultTab === "data" && result?.truncated && (
+              <div className="flex items-center gap-2 border-b border-border bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400">
+                <span>
+                  Showing first <strong>{result.rowCount}</strong> rows. Real result is larger — add
+                  an explicit <code className="font-mono">LIMIT</code> to your query, or raise the
+                  cap above.
+                </span>
               </div>
             )}
+            <div className="flex-1 min-h-0">
+              {resultTab === "plan" && explainResult ? (
+                <ExplainPanel result={explainResult} />
+              ) : result ? (
+                <DataGrid
+                  columns={result.fields.map((c) => ({ name: c.name, type: c.dataType }))}
+                  rows={result.rows}
+                  emptyMessage="Query returned no rows"
+                />
+              ) : (
+                <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+                  Run a query to see results.
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

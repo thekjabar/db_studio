@@ -1,13 +1,36 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { Archive, Download, Loader2 } from "lucide-react";
-import { api, extractErrorMessage } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { Archive, Download, Loader2, X } from "lucide-react";
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { useBackupJob, type BackupJob } from "@/components/backup-job-provider";
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function formatRate(bytes: number, ms: number): string {
+  if (ms < 100 || bytes === 0) return "—";
+  const bps = bytes / (ms / 1000);
+  return `${formatBytes(bps)}/s`;
+}
+
+function formatEta(bytes: number, estimate: number | null, ms: number): string {
+  if (!estimate || bytes === 0 || ms < 500) return "—";
+  const rate = bytes / ms;
+  const remaining = Math.max(0, estimate - bytes);
+  const etaMs = remaining / rate;
+  if (etaMs < 1000) return "<1s";
+  if (etaMs < 60_000) return `${Math.round(etaMs / 1000)}s`;
+  return `${Math.round(etaMs / 60_000)}m`;
+}
 
 export default function BackupRoute() {
   const { id } = useParams<{ id: string }>();
@@ -19,22 +42,38 @@ function BackupInner({ connectionId }: { connectionId: string }) {
   const [format, setFormat] = useState<"sql" | "custom">("sql");
   const [schemaOnly, setSchemaOnly] = useState(false);
   const [schema, setSchema] = useState<string>("");
+  const { current, start, cancel, clear } = useBackupJob();
+
+  // Only show progress for a job that belongs to *this* connection — otherwise
+  // the user might see a backup from another connection if they multi-task.
+  const myJob = current && current.options.connectionId === connectionId ? current : null;
+  const isRunningForMe = myJob?.status === "starting" || myJob?.status === "streaming";
 
   const schemasQ = useQuery({
     queryKey: ["schemas", connectionId],
     queryFn: () => api.listSchemas(connectionId),
   });
 
-  const download = useMutation({
-    mutationFn: () =>
-      api.downloadBackup(connectionId, {
-        format,
-        schemaOnly,
-        schema: schema || undefined,
-      }),
-    onSuccess: () => toast.success("Download started"),
-    onError: (e) => toast.error(extractErrorMessage(e)),
+  const estimateQ = useQuery({
+    queryKey: ["backup-estimate", connectionId, schema, schemaOnly],
+    queryFn: () => api.estimateBackup(connectionId, schema || undefined),
+    enabled: !schemaOnly,
   });
+
+  const connectionName = useQuery({
+    queryKey: ["connection", connectionId],
+    queryFn: () => api.getConnection(connectionId),
+  });
+
+  const kickoff = () => {
+    start({
+      connectionId,
+      connectionName: connectionName.data?.name ?? "Connection",
+      format,
+      schemaOnly,
+      schema: schema || undefined,
+    });
+  };
 
   return (
     <div className="p-6 space-y-6 max-w-2xl mx-auto">
@@ -52,7 +91,7 @@ function BackupInner({ connectionId }: { connectionId: string }) {
       <div className="rounded-md border border-border bg-card p-4 space-y-4">
         <div className="space-y-1.5">
           <Label>Format</Label>
-          <Select value={format} onValueChange={(v) => setFormat(v as "sql" | "custom")}>
+          <Select value={format} onValueChange={(v) => setFormat(v as "sql" | "custom")} disabled={isRunningForMe}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
@@ -69,7 +108,11 @@ function BackupInner({ connectionId }: { connectionId: string }) {
 
         <div className="space-y-1.5">
           <Label>Schema (optional)</Label>
-          <Select value={schema || "__all__"} onValueChange={(v) => setSchema(v === "__all__" ? "" : v)}>
+          <Select
+            value={schema || "__all__"}
+            onValueChange={(v) => setSchema(v === "__all__" ? "" : v)}
+            disabled={isRunningForMe}
+          >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
@@ -85,7 +128,7 @@ function BackupInner({ connectionId }: { connectionId: string }) {
         </div>
 
         <div className="flex items-center gap-3">
-          <Switch checked={schemaOnly} onCheckedChange={setSchemaOnly} />
+          <Switch checked={schemaOnly} onCheckedChange={setSchemaOnly} disabled={isRunningForMe} />
           <div>
             <div className="text-sm font-medium">Schema only</div>
             <div className="text-xs text-muted-foreground">
@@ -94,19 +137,34 @@ function BackupInner({ connectionId }: { connectionId: string }) {
           </div>
         </div>
 
-        <div className="pt-2 border-t border-border flex items-center justify-between gap-3">
-          <div className="text-xs text-muted-foreground">
-            Large databases stream directly to your browser — no server-side temp files.
+        {!schemaOnly && estimateQ.data && estimateQ.data.bytes !== null && (
+          <div className="rounded border border-border/50 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+            Estimated size:{" "}
+            <span className="text-foreground font-medium">{formatBytes(estimateQ.data.bytes)}</span>{" "}
+            across {estimateQ.data.tables} tables.{" "}
+            <span className="text-muted-foreground/70">
+              Actual dump may be 50–200% of this depending on compression and column widths.
+            </span>
           </div>
-          <Button onClick={() => download.mutate()} disabled={download.isPending}>
-            {download.isPending ? (
-              <><Loader2 className="h-4 w-4 animate-spin" /> Starting…</>
-            ) : (
-              <><Download className="h-4 w-4" /> Download</>
-            )}
-          </Button>
+        )}
+
+        <div className="pt-2 border-t border-border flex items-center justify-between gap-3 flex-wrap">
+          <div className="text-xs text-muted-foreground">
+            Backup keeps running when you change pages — watch the status in the bottom-right.
+          </div>
+          {isRunningForMe ? (
+            <Button variant="outline" onClick={cancel}>
+              <X className="h-4 w-4" /> Cancel
+            </Button>
+          ) : (
+            <Button onClick={kickoff} disabled={!!current && current.status === "streaming"}>
+              <Download className="h-4 w-4" /> Download
+            </Button>
+          )}
         </div>
       </div>
+
+      {myJob && <ProgressCard job={myJob} onDismiss={clear} />}
 
       <div className="rounded-md border border-border bg-card p-4 text-xs text-muted-foreground space-y-1">
         <div className="font-medium text-foreground">Heads up</div>
@@ -117,6 +175,97 @@ function BackupInner({ connectionId }: { connectionId: string }) {
           dump may fail. Install a matching client binary on the API host when upgrading.
         </div>
       </div>
+    </div>
+  );
+}
+
+function ProgressCard({ job, onDismiss }: { job: BackupJob; onDismiss: () => void }) {
+  const running = job.status === "starting" || job.status === "streaming";
+  const percent = job.estimateBytes
+    ? Math.min(99, Math.round((job.bytes / job.estimateBytes) * 100))
+    : null;
+
+  return (
+    <div className="rounded-md border border-border bg-card p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {running ? (
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          ) : (
+            <Archive className="h-4 w-4 text-emerald-500" />
+          )}
+          <div className="text-sm font-medium">
+            {!running
+              ? job.status === "done"
+                ? "Download complete"
+                : job.status === "cancelled"
+                ? "Cancelled"
+                : "Failed"
+              : job.bytes === 0
+                ? "Starting — pg_dump is connecting…"
+                : "Streaming…"}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {percent !== null && job.bytes > 0 && (
+            <div className="text-sm font-mono">{percent}%</div>
+          )}
+          {!running && (
+            <button
+              onClick={onDismiss}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
+      </div>
+
+      {percent !== null && job.bytes > 0 && (
+        <div className="h-2 w-full rounded bg-muted overflow-hidden">
+          <div
+            className="h-full bg-primary transition-all duration-200"
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+      )}
+      {percent === null && running && job.bytes > 0 && (
+        <div className="h-2 w-full rounded bg-muted overflow-hidden">
+          <div className="h-full w-1/3 bg-primary animate-pulse" />
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+        <Stat label="Downloaded" value={formatBytes(job.bytes)} />
+        <Stat
+          label="Estimated"
+          value={job.estimateBytes ? formatBytes(job.estimateBytes) : "unknown"}
+        />
+        <Stat label="Rate" value={formatRate(job.bytes, job.elapsedMs)} />
+        <Stat
+          label={running ? "ETA" : "Elapsed"}
+          value={
+            running
+              ? formatEta(job.bytes, job.estimateBytes, job.elapsedMs)
+              : `${(job.elapsedMs / 1000).toFixed(1)}s`
+          }
+        />
+      </div>
+
+      {job.status === "error" && job.error && (
+        <div className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs text-destructive">
+          {job.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-muted-foreground">{label}</div>
+      <div className="font-mono">{value}</div>
     </div>
   );
 }

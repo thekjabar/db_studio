@@ -37,7 +37,46 @@ export class BackupService {
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     private readonly ssh: SshTunnelService,
+    private readonly connections: ConnectionsService,
   ) {}
+
+  /**
+   * Pre-flight size estimate so the UI can render a rough percentage. Returns
+   * on-disk bytes per `pg_total_relation_size` summed across base tables.
+   * Compressed plain-SQL output is typically ~0.5–2× this number — wildly
+   * imprecise but better than no signal. Only applicable to Postgres.
+   */
+  async estimateSize(
+    connectionId: string,
+    opts: { schema?: string } = {},
+  ): Promise<{ bytes: number | null; tables: number; note: string }> {
+    const drv = await this.connections.buildDriverForRole(connectionId, Role.VIEWER);
+    try {
+      if (drv.dialect !== Dialect.POSTGRES) {
+        return { bytes: null, tables: 0, note: 'Estimate only available for PostgreSQL' };
+      }
+      const where = opts.schema
+        ? `AND n.nspname = '${opts.schema.replace(/'/g, "''")}'`
+        : "AND n.nspname NOT IN ('pg_catalog','information_schema')";
+      const sql = `
+        SELECT COALESCE(SUM(pg_total_relation_size(c.oid)), 0)::text AS bytes,
+               COUNT(*)::int AS tables
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE c.relkind = 'r' ${where}
+      `;
+      const r = await drv.runRawQuery(sql);
+      const row = r.rows[0] as { bytes?: string; tables?: number } | undefined;
+      const bytes = row?.bytes ? Number(row.bytes) : 0;
+      return {
+        bytes: Number.isFinite(bytes) ? bytes : null,
+        tables: row?.tables ?? 0,
+        note: 'On-disk size; dump output typically 50–200% of this',
+      };
+    } finally {
+      await drv.close().catch(() => {});
+    }
+  }
 
   async streamBackup(connectionId: string, opts: BackupOptions, res: Response): Promise<void> {
     const conn = await this.prisma.connection.findUnique({
@@ -96,10 +135,36 @@ export class BackupService {
     const safeName = conn.name.replace(/[^a-z0-9-_]+/gi, '_');
     const filename = `${safeName}-${new Date().toISOString().slice(0, 10)}.${ext}`;
 
+    // Pre-flight estimate so the client shows a rough percentage right away.
+    // Skipped for --schema-only because on-disk size includes data, which
+    // overestimates a schema-only dump wildly.
+    let estimate: { bytes: number | null; tables: number } = { bytes: null, tables: 0 };
+    if (!opts.schemaOnly) {
+      try {
+        estimate = await this.estimateSize(connectionId, { schema: opts.schema });
+      } catch (err) {
+        this.log.warn(`estimate failed, continuing without: ${(err as Error).message}`);
+      }
+    }
+
     res.setHeader('Content-Type',
       opts.format === 'custom' ? 'application/octet-stream' : 'application/sql');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    // Custom headers expose progress hints to the client — it subtracts bytes
+    // received from estimate to draw a progress bar.
+    if (estimate.bytes !== null) {
+      res.setHeader('X-Dbdash-Estimate-Bytes', String(estimate.bytes));
+    }
+    if (estimate.tables > 0) {
+      res.setHeader('X-Dbdash-Tables-Total', String(estimate.tables));
+    }
+    // Must be listed in Access-Control-Expose-Headers for the browser to read
+    // them via fetch() / axios on a cross-origin response.
+    res.setHeader(
+      'Access-Control-Expose-Headers',
+      'Content-Disposition, X-Dbdash-Estimate-Bytes, X-Dbdash-Tables-Total',
+    );
 
     this.log.log(`pg_dump start conn=${connectionId} fmt=${opts.format} schemaOnly=${!!opts.schemaOnly}`);
     const child = spawn('pg_dump', args, { env });

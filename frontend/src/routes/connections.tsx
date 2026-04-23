@@ -86,6 +86,9 @@ export default function ConnectionsPage() {
           <Link to="/schedules" className="text-sm text-muted-foreground hover:text-foreground">
             Schedules
           </Link>
+          <Link to="/federated" className="text-sm text-muted-foreground hover:text-foreground">
+            Multi-DB query
+          </Link>
           <span className="hidden sm:inline text-sm text-muted-foreground mr-2 truncate max-w-50">{user?.email}</span>
           <ThemeToggle />
           <Button variant="ghost" size="sm" onClick={logout}>

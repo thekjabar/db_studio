@@ -160,6 +160,10 @@ export interface QueryResult {
   durationMs: number;
   warnings?: string[];
   needsConfirm?: boolean;
+  /** True when the server capped the result below the real row count. */
+  truncated?: boolean;
+  /** The cap the server applied (null if none). */
+  appliedLimit?: number | null;
 }
 
 export type AuditAction =
@@ -275,6 +279,16 @@ export interface CreateScheduleInput {
   sqlText: string;
   emailTo: string[];
   enabled?: boolean;
+}
+
+export interface FederatedQueryResult {
+  rows: Record<string, unknown>[];
+  fields: { name: string; dataType?: string }[];
+  rowCount: number;
+  durationMs: number;
+  truncated: boolean;
+  appliedLimit: number | null;
+  sources: { alias: string; connectionId: string; dialect: Dialect }[];
 }
 
 export interface SlowQueryGroup {
@@ -534,6 +548,8 @@ export const api = {
     http
       .get<Connection[]>("/connections", { params: workspaceId ? { workspaceId } : undefined })
       .then((r) => r.data),
+  getConnection: (id: string) =>
+    http.get<Connection>(`/connections/${id}`).then((r) => r.data),
   createConnection: (input: CreateConnectionInput) =>
     http.post<Connection>("/connections", toCreatePayload(input)).then((r) => r.data),
   updateConnection: (id: string, input: Partial<CreateConnectionInput>) =>
@@ -623,7 +639,7 @@ export const api = {
       )
       .then((r) => r.data),
 
-  runQuery: (id: string, body: { sql: string; confirmDestructive?: boolean }) =>
+  runQuery: (id: string, body: { sql: string; confirmDestructive?: boolean; maxRows?: number }) =>
     http.post<QueryResult>(`/connections/${id}/query`, body).then((r) => r.data),
 
   aiGenerateSql: (id: string, body: { prompt: string; schema?: string }) =>
@@ -739,21 +755,85 @@ export const api = {
       .post<ExplainResult>(`/connections/${connectionId}/query/explain`, body)
       .then((r) => r.data),
 
+  federatedQuery: (body: {
+    sources: { alias: string; connectionId: string }[];
+    sql: string;
+    maxRows?: number;
+  }) => http.post<FederatedQueryResult>("/federated/query", body).then((r) => r.data),
+
+  estimateBackup: (connectionId: string, schema?: string) =>
+    http
+      .get<{ bytes: number | null; tables: number; note: string }>(
+        `/connections/${connectionId}/backup/estimate`,
+        { params: schema ? { schema } : undefined },
+      )
+      .then((r) => r.data),
+
+  /**
+   * Stream a DB backup and report live progress. Uses fetch() directly because
+   * axios blob mode doesn't expose chunks mid-flight. Assembles the file and
+   * triggers a browser save when done.
+   */
   downloadBackup: async (
     connectionId: string,
     opts: { format: "sql" | "custom"; schemaOnly?: boolean; schema?: string },
+    onProgress?: (p: { bytes: number; estimateBytes: number | null; elapsedMs: number }) => void,
+    signal?: AbortSignal,
   ) => {
-    const params: Record<string, string> = { format: opts.format };
-    if (opts.schemaOnly) params.schemaOnly = "true";
-    if (opts.schema) params.schema = opts.schema;
-    const r = await http.get<Blob>(`/connections/${connectionId}/backup`, {
-      params,
-      responseType: "blob",
-    });
-    const disposition = r.headers["content-disposition"] as string | undefined;
+    const params = new URLSearchParams({ format: opts.format });
+    if (opts.schemaOnly) params.set("schemaOnly", "true");
+    if (opts.schema) params.set("schema", opts.schema);
+
+    const token = useAuth.getState().accessToken;
+    const response = await fetch(
+      `${API_URL}/connections/${connectionId}/backup?${params.toString()}`,
+      {
+        credentials: "include",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        signal,
+      },
+    );
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`Backup failed (${response.status}): ${text.slice(0, 200)}`);
+    }
+    if (!response.body) throw new Error("Streaming not supported by browser");
+
+    const estimateRaw = response.headers.get("X-Dbdash-Estimate-Bytes");
+    const estimateBytes = estimateRaw ? Number(estimateRaw) : null;
+    const disposition = response.headers.get("Content-Disposition");
     const match = disposition?.match(/filename="([^"]+)"/);
     const filename = match?.[1] ?? `backup.${opts.format === "custom" ? "dump" : "sql"}`;
-    const url = URL.createObjectURL(r.data);
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    const started = Date.now();
+    onProgress?.({ bytes: 0, estimateBytes, elapsedMs: 0 });
+
+    // Throttle progress callbacks so React doesn't re-render on every chunk.
+    let lastEmit = 0;
+    const EMIT_INTERVAL = 150;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        bytes += value.byteLength;
+        const now = Date.now();
+        if (now - lastEmit >= EMIT_INTERVAL) {
+          lastEmit = now;
+          onProgress?.({ bytes, estimateBytes, elapsedMs: now - started });
+        }
+      }
+    }
+    onProgress?.({ bytes, estimateBytes, elapsedMs: Date.now() - started });
+
+    const blob = new Blob(chunks as BlobPart[], {
+      type: opts.format === "custom" ? "application/octet-stream" : "application/sql",
+    });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
@@ -761,6 +841,7 @@ export const api = {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    return { bytes, filename };
   },
 
   listComments: (id: string, target?: string) =>

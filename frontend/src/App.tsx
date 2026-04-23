@@ -18,6 +18,7 @@ import PermissionsRoute from "@/routes/connection/permissions";
 import BackupRoute from "@/routes/connection/backup";
 import SlowQueriesRoute from "@/routes/connection/slow-queries";
 import SchedulesRoute from "@/routes/schedules";
+import FederatedRoute from "@/routes/federated";
 import { Loader2 } from "lucide-react";
 
 function Protected({ children }: { children: React.ReactNode }) {
@@ -113,6 +114,14 @@ export default function App() {
         element={
           <Protected>
             <SchedulesRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/federated"
+        element={
+          <Protected>
+            <FederatedRoute />
           </Protected>
         }
       />

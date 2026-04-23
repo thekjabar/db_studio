@@ -21,6 +21,7 @@ import { SchedulerModule } from './scheduler/scheduler.module';
 import { CsvImportModule } from './csv-import/csv-import.module';
 import { BackupModule } from './backup/backup.module';
 import { SlowQueryModule } from './slow-query/slow-query.module';
+import { FederatedModule } from './federated/federated.module';
 import { HealthController } from './common/health.controller';
 
 @Module({
@@ -55,6 +56,7 @@ import { HealthController } from './common/health.controller';
     CsvImportModule,
     BackupModule,
     SlowQueryModule,
+    FederatedModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

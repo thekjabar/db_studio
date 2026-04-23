@@ -15,6 +15,7 @@ model Connection {
   scheduledQueries ScheduledQuery[]
   slowQueryLogs    SlowQueryLog[]
   webhooks         Webhook[]
+  columnMasks     ColumnMask[]
   auditLogs        AuditLog[]
   savedQueries     SavedQuery[]
   comments         Comment[]

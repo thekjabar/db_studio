@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RbacService } from '../rbac/rbac.service';
 import { Role } from '@prisma/client';
 import { QueuesService } from './queues.service';
+import { QuotaService } from '../common/quota.service';
 
 // Very light cron validation — 5 space-separated fields. bullmq/cron-parser
 // will reject invalid patterns at enqueue time with a clearer message.
@@ -33,6 +34,7 @@ export class SchedulerService {
     private readonly prisma: PrismaService,
     private readonly rbac: RbacService,
     private readonly queues: QueuesService,
+    private readonly quota: QuotaService,
   ) {}
 
   private async assertCanManage(userId: string, scheduleId: string) {
@@ -83,6 +85,7 @@ export class SchedulerService {
     // Caller must have at least EDITOR rights on the connection — same bar as
     // running any SQL against it.
     await this.rbac.require(userId, input.connectionId, Role.EDITOR);
+    await this.quota.assertCanCreateSchedule(userId);
 
     const row = await this.prisma.scheduledQuery.create({
       data: {

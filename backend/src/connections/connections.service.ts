@@ -7,6 +7,7 @@ import { SshTunnelService, OpenTunnel } from '../drivers/ssh-tunnel.service';
 import { AuditService } from '../audit/audit.service';
 import { ConnectionCredentials, IDatabaseDriver } from '../drivers/driver.interface';
 import { CreateConnectionDto, UpdateConnectionDto } from './connections.dto';
+import { QuotaService } from '../common/quota.service';
 
 const PURPOSE = (id: string) => `conn:${id}`;
 
@@ -55,6 +56,7 @@ export class ConnectionsService implements OnModuleDestroy {
     private readonly factory: DriverFactory,
     private readonly ssh: SshTunnelService,
     private readonly audit: AuditService,
+    private readonly quota: QuotaService,
   ) {
     this.sweeper = setInterval(() => this.sweepIdle(), SWEEP_INTERVAL_MS);
     // Don't keep the process alive just for this.
@@ -133,6 +135,9 @@ export class ConnectionsService implements OnModuleDestroy {
       });
       workspaceId = personal?.id ?? null;
     }
+
+    // Enforce per-workspace connection cap before creating.
+    await this.quota.assertCanCreateConnection(workspaceId);
 
     const credCt = this.crypto.encryptJson(dto.credentials, 'conn:new');
     const created = await this.prisma.connection.create({

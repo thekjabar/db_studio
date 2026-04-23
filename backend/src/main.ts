@@ -3,11 +3,25 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import * as Sentry from '@sentry/node';
 import { AppModule } from './app.module';
 import { AppConfigService } from './config/config.service';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
+  // Sentry must initialize BEFORE the Nest app is created so
+  // unhandled errors during bootstrap also get reported. When no DSN is set
+  // the SDK short-circuits every call, so this is safe to leave unconditional.
+  const preConfig = {
+    dsn: process.env.SENTRY_DSN,
+    tracesSampleRate: process.env.SENTRY_SAMPLE_RATE ? Number(process.env.SENTRY_SAMPLE_RATE) : 0.2,
+    environment: process.env.NODE_ENV ?? 'development',
+  };
+  if (preConfig.dsn) {
+    Sentry.init(preConfig);
+    Logger.log('Sentry enabled', 'Bootstrap');
+  }
+
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'log'],
     bufferLogs: true,

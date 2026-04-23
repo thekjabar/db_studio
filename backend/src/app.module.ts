@@ -26,6 +26,7 @@ import { MigrationExportModule } from './migration-export/migration-export.modul
 import { RedisModule } from './redis/redis.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { ApiKeysModule } from './api-keys/api-keys.module';
+import { CommonModule } from './common/common.module';
 import { HealthController } from './common/health.controller';
 
 @Module({
@@ -65,6 +66,7 @@ import { HealthController } from './common/health.controller';
     RedisModule,
     WebhooksModule,
     ApiKeysModule,
+    CommonModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

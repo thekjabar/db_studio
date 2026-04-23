@@ -10,6 +10,7 @@ import { TableDataQuery } from '../drivers/driver.interface';
 import { InsertRowDto, UpdateRowDto, DeleteRowDto, BulkDeleteRowsDto, BulkUpdateRowsDto } from './connections.dto';
 import { AuditService } from '../audit/audit.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
+import { ColumnMasksService } from './column-masks.service';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
 import { Role, WebhookEvent } from '@prisma/client';
 
@@ -24,6 +25,7 @@ export class IntrospectionController {
     private readonly svc: ConnectionsService,
     private readonly audit: AuditService,
     private readonly webhooks: WebhooksService,
+    private readonly masks: ColumnMasksService,
   ) {}
 
   private roleFromReq(req: Request): Role {
@@ -67,6 +69,7 @@ export class IntrospectionController {
     @Query('limit') limit = '50', @Query('offset') offset = '0',
     @Query('orderBy') orderByRaw: string | undefined,
     @Query('filters') filtersRaw: string | undefined,
+    @CurrentUser() u: AuthUser,
     @Req() req: Request,
   ) {
     const orderBy = (orderByRaw ?? '').split(',').filter(Boolean).map((s) => {
@@ -81,7 +84,17 @@ export class IntrospectionController {
       orderBy, filters,
     };
     const drv = await this.svc.buildDriverForRole(id, this.roleFromReq(req));
-    try { return await drv.getTableData(q); } finally { await drv.close().catch(() => {}); }
+    try {
+      const result = await drv.getTableData(q);
+      // Apply column masks — for this caller, replace values in masked
+      // columns with NULL. Owner of the connection is exempt automatically
+      // because masks are refused on them at write time.
+      const masked = await this.masks.maskedColumns(u.id, id, schema, name);
+      if (masked.size > 0) {
+        this.masks.applyMasks(result.rows as Record<string, unknown>[], masked);
+      }
+      return result;
+    } finally { await drv.close().catch(() => {}); }
   }
 
   @Throttle({ heavy: { limit: 60, ttl: 60_000 } })

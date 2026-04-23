@@ -22,6 +22,7 @@ import WebhooksRoute from "@/routes/connection/webhooks";
 import SchedulesRoute from "@/routes/schedules";
 import FederatedRoute from "@/routes/federated";
 import ApiKeysRoute from "@/routes/api-keys";
+import LandingPage from "@/routes/landing";
 import { Loader2 } from "lucide-react";
 
 function Protected({ children }: { children: React.ReactNode }) {
@@ -158,8 +159,15 @@ export default function App() {
         <Route path="migration-export" element={<MigrationExportRoute />} />
         <Route path="webhooks" element={<WebhooksRoute />} />
       </Route>
-      <Route path="/" element={<Navigate to="/connections" replace />} />
-      <Route path="*" element={<Navigate to="/connections" replace />} />
+      <Route
+        path="/"
+        element={
+          // Authenticated users land on their connections dashboard; everyone
+          // else sees the marketing surface explaining what DB Studio is.
+          accessToken ? <Navigate to="/connections" replace /> : <LandingPage />
+        }
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

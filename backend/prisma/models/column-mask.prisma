@@ -1,0 +1,19 @@
+/// Column-level read masking. When a user has a matching row, API responses
+/// return NULL instead of the real value for that column. Enforcement is
+/// post-fetch in the API layer — v1 caveat: the data still travels from the
+/// source DB to our server, just not to the user. Full RLS would require
+/// driver-level SQL rewriting.
+model ColumnMask {
+  id           String     @id @default(cuid())
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  schemaName   String
+  tableName    String
+  columnName   String
+  createdAt    DateTime   @default(now())
+
+  @@unique([connectionId, userId, schemaName, tableName, columnName])
+  @@index([connectionId, userId, schemaName, tableName])
+}

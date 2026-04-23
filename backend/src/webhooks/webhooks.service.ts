@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { RbacService } from '../rbac/rbac.service';
 import { WebhookQueue } from './webhook.queue';
+import { QuotaService } from '../common/quota.service';
 
 const PURPOSE = (id: string) => `webhook:${id}`;
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
@@ -38,6 +39,7 @@ export class WebhooksService {
     private readonly crypto: CryptoService,
     private readonly rbac: RbacService,
     private readonly queue: WebhookQueue,
+    private readonly quota: QuotaService,
   ) {}
 
   private validateInput(input: CreateWebhookInput | UpdateWebhookInput) {
@@ -66,6 +68,7 @@ export class WebhooksService {
     if (input.events.length === 0) {
       throw new BadRequestException('At least one event must be selected');
     }
+    await this.quota.assertCanCreateWebhook(connectionId);
 
     const secret = randomBytes(32).toString('base64url');
     // Encrypt at write time. We use a random purpose since the webhook id

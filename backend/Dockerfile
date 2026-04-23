@@ -36,13 +36,24 @@ RUN pnpm prune --prod
 
 # ---- Runner ----
 FROM node:22-bookworm-slim AS runner
-# postgresql-client supplies pg_dump/pg_restore — used by the backup endpoint
-# to stream database snapshots. Bookworm's default client major version is
-# pinned; add a newer version via the upstream pgdg apt repo if you need to
-# target a remote server on a higher major.
+# Install multiple pg_dump majors (14 / 15 / 16 / 17) from the upstream PGDG
+# apt repo. The backup service detects the remote server's major version
+# and picks the matching pg_dump binary — prevents "server version newer
+# than pg_dump" failures when users point at a newer managed Postgres.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssl ca-certificates curl tini postgresql-client \
+      openssl ca-certificates curl tini gnupg lsb-release \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+         | gpg --dearmor -o /usr/share/keyrings/pgdg.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+         > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+         postgresql-client-14 postgresql-client-15 postgresql-client-16 postgresql-client-17 \
     && rm -rf /var/lib/apt/lists/*
+# Expose the majors so the backup service knows what's installed without shelling
+# out to `ls`. Keep in sync with the package list above.
+ENV DBSTUDIO_PG_DUMP_MAJORS="14 15 16 17"
 
 ENV NODE_ENV=production
 ENV PORT=3000

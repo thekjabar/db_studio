@@ -47,7 +47,7 @@ export class SchedulerWorker implements OnModuleInit, OnModuleDestroy {
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
   ) {}
 
-  onModuleInit() {
+  async onModuleInit() {
     if (!this.redis) return;
 
     this.execWorker = new Worker<ExecJobData>(
@@ -72,10 +72,45 @@ export class SchedulerWorker implements OnModuleInit, OnModuleDestroy {
     });
 
     this.log.log('bullmq workers started');
+
+    // Leader election for the one-time repeatable-job registrar. Any pod can
+    // process jobs (bullmq hands each job to exactly one worker), but only
+    // one pod should re-register existing schedules at startup — otherwise we
+    // hammer Redis with redundant upserts whenever the deployment scales.
+    // SET NX EX acquires a 30-second lease; non-leaders skip. We don't need
+    // to renew it: by the end of the 30s window, registration is done.
+    const LOCK_KEY = 'dbs:scheduler:registrar-lock';
+    const gotLock = await this.redis.set(LOCK_KEY, '1', 'EX', 30, 'NX');
+    if (gotLock === 'OK') {
+      this.log.log('Registering existing schedules (acquired registrar lock)');
+      void this.registerAllSchedules().catch((err) =>
+        this.log.warn(`Schedule registration failed: ${(err as Error).message}`),
+      );
+    } else {
+      this.log.log('Another pod is registering schedules; skipping');
+    }
   }
 
   async onModuleDestroy() {
     await Promise.allSettled([this.execWorker?.close(), this.emailWorker?.close()]);
+  }
+
+  /** On leader-pod startup, re-register repeatable bullmq jobs for every
+   *  enabled schedule. bullmq keys repeatable jobs by cron pattern so this
+   *  is idempotent — a re-register just replaces the existing definition. */
+  private async registerAllSchedules(): Promise<void> {
+    const rows = await this.prisma.scheduledQuery.findMany({
+      where: { enabled: true },
+      select: { id: true, cron: true, timezone: true },
+    });
+    for (const r of rows) {
+      try {
+        await this.queues.upsertCron(r.id, r.cron, r.timezone);
+      } catch (err) {
+        this.log.warn(`upsertCron failed for ${r.id}: ${(err as Error).message}`);
+      }
+    }
+    this.log.log(`Registered ${rows.length} schedule(s)`);
   }
 
   private async runExec(job: Job<ExecJobData>): Promise<void> {

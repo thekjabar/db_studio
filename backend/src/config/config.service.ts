@@ -38,6 +38,12 @@ const EnvSchema = z.object({
   SMTP_FROM: z.string().transform((v) => v || undefined).optional(),
   SLOW_QUERY_THRESHOLD_MS: z.coerce.number().int().positive().default(1000),
   SLOW_QUERY_RETENTION: z.coerce.number().int().positive().default(10_000),
+  SENTRY_DSN: z.string().transform((v) => v || undefined).optional(),
+  SENTRY_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.2),
+  API_KEY_RATE_LIMIT: z.coerce.number().int().positive().default(60),
+  MAX_CONNECTIONS_PER_WORKSPACE: z.coerce.number().int().positive().default(50),
+  MAX_SCHEDULED_QUERIES_PER_WORKSPACE: z.coerce.number().int().positive().default(50),
+  MAX_WEBHOOKS_PER_CONNECTION: z.coerce.number().int().positive().default(20),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -113,4 +119,11 @@ export class AppConfigService {
   get emailEnabled() { return !!(this.env.SMTP_URL && this.env.SMTP_FROM); }
   get slowQueryThresholdMs() { return this.env.SLOW_QUERY_THRESHOLD_MS; }
   get slowQueryRetention() { return this.env.SLOW_QUERY_RETENTION; }
+  get sentryDsn() { return this.env.SENTRY_DSN; }
+  get sentrySampleRate() { return this.env.SENTRY_SAMPLE_RATE; }
+  get sentryEnabled() { return !!this.env.SENTRY_DSN; }
+  get apiKeyRateLimit() { return this.env.API_KEY_RATE_LIMIT; }
+  get maxConnectionsPerWorkspace() { return this.env.MAX_CONNECTIONS_PER_WORKSPACE; }
+  get maxScheduledQueriesPerWorkspace() { return this.env.MAX_SCHEDULED_QUERIES_PER_WORKSPACE; }
+  get maxWebhooksPerConnection() { return this.env.MAX_WEBHOOKS_PER_CONNECTION; }
 }

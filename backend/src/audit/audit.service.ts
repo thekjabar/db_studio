@@ -56,13 +56,33 @@ export class AuditService {
 
   async listForConnection(connectionId: string, limit = 100, cursor?: string) {
     const take = Math.min(Math.max(1, limit), 500);
+
+    // Keyset pagination instead of Prisma's `cursor` (which uses id alone and
+    // doesn't match the createdAt ordering, degenerating to a full scan at
+    // depth). Cursor shape: "<iso createdAt>|<id>" — matches the composite
+    // index on (connectionId, createdAt DESC, id DESC).
+    let where: Record<string, unknown> = { connectionId };
+    if (cursor) {
+      const pipe = cursor.indexOf('|');
+      if (pipe > 0) {
+        const createdAt = new Date(cursor.slice(0, pipe));
+        const id = cursor.slice(pipe + 1);
+        if (!Number.isNaN(createdAt.getTime())) {
+          where = {
+            connectionId,
+            OR: [
+              { createdAt: { lt: createdAt } },
+              { createdAt, id: { lt: id } },
+            ],
+          };
+        }
+      }
+    }
+
     const rows = await this.prisma.auditLog.findMany({
-      where: { connectionId },
-      orderBy: { createdAt: 'desc' },
-      // Fetch one extra to know if there's another page — don't return it.
+      where,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: take + 1,
-      skip: cursor ? 1 : 0,
-      cursor: cursor ? { id: cursor } : undefined,
       include: {
         user: { select: { email: true, displayName: true } },
       },
@@ -83,7 +103,9 @@ export class AuditService {
         metadata: r.metadata,
         createdAt: r.createdAt,
       })),
-      nextCursor: hasMore ? items[items.length - 1].id : undefined,
+      nextCursor: hasMore
+        ? `${items[items.length - 1].createdAt.toISOString()}|${items[items.length - 1].id}`
+        : undefined,
     };
   }
 }

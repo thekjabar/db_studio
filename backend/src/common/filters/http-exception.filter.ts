@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import * as Sentry from '@sentry/node';
 import { Request, Response } from 'express';
 
 /**
@@ -37,15 +38,26 @@ export class HttpExceptionFilter implements ExceptionFilter {
       }
     } else if (exception instanceof Error) {
       this.logger.error(`Unhandled ${exception.name}: ${exception.message}`, exception.stack);
+      // Only send non-HTTP (i.e. unexpected) errors to Sentry; HttpExceptions
+      // are part of normal API contract and would drown the inbox.
+      Sentry.captureException(exception, {
+        tags: {
+          path: req.url,
+          method: req.method,
+          requestId: (req as unknown as { requestId?: string }).requestId,
+        },
+      });
     } else {
       this.logger.error('Unknown exception', String(exception));
     }
 
+    const requestId = (req as unknown as { requestId?: string }).requestId;
     res.status(status).json({
       statusCode: status,
       code,
       message: safeMessage,
       path: req.url,
+      requestId,
       timestamp: new Date().toISOString(),
     });
   }

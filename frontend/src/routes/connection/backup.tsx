@@ -181,9 +181,14 @@ function BackupInner({ connectionId }: { connectionId: string }) {
 
 function ProgressCard({ job, onDismiss }: { job: BackupJob; onDismiss: () => void }) {
   const running = job.status === "starting" || job.status === "streaming";
-  const percent = job.estimateBytes
-    ? Math.min(99, Math.round((job.bytes / job.estimateBytes) * 100))
-    : null;
+  // While streaming, cap at 99% so a bad estimate doesn't park us at "100%"
+  // forever. Once the job is done, snap to 100% — the bytes-on-disk are
+  // authoritative regardless of whether they matched the estimate.
+  const percent = !running && job.status === "done"
+    ? 100
+    : job.estimateBytes
+      ? Math.min(99, Math.round((job.bytes / job.estimateBytes) * 100))
+      : null;
 
   return (
     <div className="rounded-md border border-border bg-card p-4 space-y-3">

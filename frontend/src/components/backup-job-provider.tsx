@@ -50,6 +50,47 @@ export function BackupJobProvider({ children }: { children: React.ReactNode }) {
       toast.error("Another backup is already running");
       return;
     }
+
+    // Open the "Save as…" file picker SYNCHRONOUSLY while the user gesture is
+    // still valid. Any `await` before this call would drop the gesture flag
+    // and the browser would throw SecurityError. If the API isn't available
+    // (Firefox/Safari/HTTP origin) we fall through to the in-memory path.
+    let fileHandle: FileSystemFileHandle | null = null;
+    const picker = (window as unknown as {
+      showSaveFilePicker?: (o: {
+        suggestedName?: string;
+        types?: { description: string; accept: Record<string, string[]> }[];
+      }) => Promise<FileSystemFileHandle>;
+    }).showSaveFilePicker;
+    if (typeof picker === "function" && window.isSecureContext) {
+      try {
+        const ext = opts.format === "custom" ? "dump" : "sql";
+        const safeName = opts.connectionName.replace(/[^a-z0-9-_]+/gi, "_");
+        const today = new Date().toISOString().slice(0, 10);
+        fileHandle = await picker({
+          suggestedName: `${safeName}-${today}.${ext}`,
+          types: [
+            {
+              description: opts.format === "custom" ? "Postgres custom dump" : "SQL",
+              accept:
+                opts.format === "custom"
+                  ? { "application/octet-stream": [".dump"] }
+                  : { "application/sql": [".sql"] },
+            },
+          ],
+        });
+      } catch (err) {
+        // User cancelled the save dialog — bail out cleanly without starting.
+        if ((err as Error).name === "AbortError") {
+          toast.info("Backup cancelled");
+          return;
+        }
+        // Anything else: log and continue to the in-memory fallback.
+        // eslint-disable-next-line no-console
+        console.warn("showSaveFilePicker failed, using in-memory path:", err);
+      }
+    }
+
     const id = crypto.randomUUID();
     const startedAt = Date.now();
     setJob({
@@ -81,6 +122,7 @@ export function BackupJobProvider({ children }: { children: React.ReactNode }) {
           );
         },
         ac.signal,
+        fileHandle,
       );
       setJob((prev) =>
         prev && prev.id === id

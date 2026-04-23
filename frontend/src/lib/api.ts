@@ -867,14 +867,20 @@ export const api = {
 
   /**
    * Stream a DB backup and report live progress. Uses fetch() directly because
-   * axios blob mode doesn't expose chunks mid-flight. Assembles the file and
-   * triggers a browser save when done.
+   * axios blob mode doesn't expose chunks mid-flight.
+   *
+   * `fileHandle` must be provided by the caller synchronously during the click
+   * handler — `showSaveFilePicker` enforces that it's opened from a user
+   * gesture, and any `await` before it loses the gesture flag. If omitted we
+   * fall back to buffering in memory and triggering a normal download (used
+   * on Firefox/Safari and HTTP origins where the picker isn't available).
    */
   downloadBackup: async (
     connectionId: string,
     opts: { format: "sql" | "custom"; schemaOnly?: boolean; schema?: string },
     onProgress?: (p: { bytes: number; estimateBytes: number | null; elapsedMs: number }) => void,
     signal?: AbortSignal,
+    fileHandle?: FileSystemFileHandle | null,
   ) => {
     const params = new URLSearchParams({ format: opts.format });
     if (opts.schemaOnly) params.set("schemaOnly", "true");
@@ -901,16 +907,49 @@ export const api = {
     const match = disposition?.match(/filename="([^"]+)"/);
     const filename = match?.[1] ?? `backup.${opts.format === "custom" ? "dump" : "sql"}`;
 
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let bytes = 0;
     const started = Date.now();
     onProgress?.({ bytes: 0, estimateBytes, elapsedMs: 0 });
-
     // Throttle progress callbacks so React doesn't re-render on every chunk.
     let lastEmit = 0;
     const EMIT_INTERVAL = 150;
+    let bytes = 0;
 
+    // Fast path: caller already opened a file picker on the user click and
+    // handed us a writable handle. Stream chunks straight to disk — memory
+    // stays flat, so the browser doesn't stall on large dumps (>500 MB).
+    if (fileHandle) {
+      try {
+        const writable = await fileHandle.createWritable();
+        try {
+          const reader = response.body.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              await writable.write(value);
+              bytes += value.byteLength;
+              const now = Date.now();
+              if (now - lastEmit >= EMIT_INTERVAL) {
+                lastEmit = now;
+                onProgress?.({ bytes, estimateBytes, elapsedMs: now - started });
+              }
+            }
+          }
+        } finally {
+          await writable.close().catch(() => {});
+        }
+        onProgress?.({ bytes, estimateBytes, elapsedMs: Date.now() - started });
+        return { bytes, filename };
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn("File System Access write failed, falling back to in-memory:", err);
+      }
+    }
+
+    // Fallback: buffer chunks in memory, assemble a Blob, trigger a download.
+    // Firefox/Safari path. Fine up to a few hundred MB.
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;

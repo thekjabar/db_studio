@@ -21,9 +21,12 @@ export function BackupToast() {
   if (onOwnBackupPage) return null;
 
   const isActive = current.status === "starting" || current.status === "streaming";
-  const percent = current.estimateBytes
-    ? Math.min(99, Math.round((current.bytes / current.estimateBytes) * 100))
-    : null;
+  // Snap to 100% on completion — same reason as the main page's card.
+  const percent = current.status === "done"
+    ? 100
+    : current.estimateBytes
+      ? Math.min(99, Math.round((current.bytes / current.estimateBytes) * 100))
+      : null;
   const rate =
     current.elapsedMs > 500 && current.bytes > 0
       ? formatBytes(current.bytes / (current.elapsedMs / 1000)) + "/s"

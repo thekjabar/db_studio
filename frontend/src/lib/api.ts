@@ -917,37 +917,37 @@ export const api = {
     // Fast path: caller already opened a file picker on the user click and
     // handed us a writable handle. Stream chunks straight to disk — memory
     // stays flat, so the browser doesn't stall on large dumps (>500 MB).
+    //
+    // If this path fails mid-stream the response body is already locked to a
+    // reader, so we can't retry the in-memory fallback. Surface the error
+    // instead; the user picked a file and expects bytes in it.
     if (fileHandle) {
+      const writable = await fileHandle.createWritable();
       try {
-        const writable = await fileHandle.createWritable();
-        try {
-          const reader = response.body.getReader();
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            if (value) {
-              await writable.write(value);
-              bytes += value.byteLength;
-              const now = Date.now();
-              if (now - lastEmit >= EMIT_INTERVAL) {
-                lastEmit = now;
-                onProgress?.({ bytes, estimateBytes, elapsedMs: now - started });
-              }
+        const reader = response.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) {
+            await writable.write(value);
+            bytes += value.byteLength;
+            const now = Date.now();
+            if (now - lastEmit >= EMIT_INTERVAL) {
+              lastEmit = now;
+              onProgress?.({ bytes, estimateBytes, elapsedMs: now - started });
             }
           }
-        } finally {
-          await writable.close().catch(() => {});
         }
-        onProgress?.({ bytes, estimateBytes, elapsedMs: Date.now() - started });
-        return { bytes, filename };
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn("File System Access write failed, falling back to in-memory:", err);
+      } finally {
+        await writable.close().catch(() => {});
       }
+      onProgress?.({ bytes, estimateBytes, elapsedMs: Date.now() - started });
+      return { bytes, filename };
     }
 
-    // Fallback: buffer chunks in memory, assemble a Blob, trigger a download.
-    // Firefox/Safari path. Fine up to a few hundred MB.
+    // In-memory path — used when the File System Access API isn't available
+    // (Firefox/Safari/HTTP origin) or the caller chose not to open a picker.
+    // Fine up to a few hundred MB; gets memory-pressure stalls past that.
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
     while (true) {

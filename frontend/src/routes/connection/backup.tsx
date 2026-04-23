@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Archive, Download, Loader2, X } from "lucide-react";
@@ -164,7 +164,7 @@ function BackupInner({ connectionId }: { connectionId: string }) {
         </div>
       </div>
 
-      {myJob && <ProgressCard job={myJob} onDismiss={clear} />}
+      {myJob && <ProgressCard job={myJob} onDismiss={clear} onCancel={cancel} />}
 
       <div className="rounded-md border border-border bg-card p-4 text-xs text-muted-foreground space-y-1">
         <div className="font-medium text-foreground">Heads up</div>
@@ -179,8 +179,25 @@ function BackupInner({ connectionId }: { connectionId: string }) {
   );
 }
 
-function ProgressCard({ job, onDismiss }: { job: BackupJob; onDismiss: () => void }) {
+function ProgressCard({
+  job,
+  onDismiss,
+  onCancel,
+}: {
+  job: BackupJob;
+  onDismiss: () => void;
+  onCancel: () => void;
+}) {
   const running = job.status === "starting" || job.status === "streaming";
+
+  // Auto-dismiss the card after a successful download so the user isn't nagged
+  // to click Dismiss. Failed/cancelled jobs stay so the user can read the
+  // reason. The Dismiss button is still there as an explicit override.
+  useEffect(() => {
+    if (job.status !== "done") return;
+    const t = setTimeout(onDismiss, 5000);
+    return () => clearTimeout(t);
+  }, [job.status, onDismiss]);
   // While streaming, cap at 99% so a bad estimate doesn't park us at "100%"
   // forever. Once the job is done, snap to 100% — the bytes-on-disk are
   // authoritative regardless of whether they matched the estimate.
@@ -214,6 +231,11 @@ function ProgressCard({ job, onDismiss }: { job: BackupJob; onDismiss: () => voi
         <div className="flex items-center gap-2">
           {percent !== null && job.bytes > 0 && (
             <div className="text-sm font-mono">{percent}%</div>
+          )}
+          {running && (
+            <Button variant="outline" size="sm" onClick={onCancel}>
+              <X className="h-3.5 w-3.5" /> Cancel
+            </Button>
           )}
           {!running && (
             <button

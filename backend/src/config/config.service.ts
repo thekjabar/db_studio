@@ -36,6 +36,8 @@ const EnvSchema = z.object({
   SCHEDULER_QUERY_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
   SMTP_URL: z.string().transform((v) => v || undefined).optional(),
   SMTP_FROM: z.string().transform((v) => v || undefined).optional(),
+  SLOW_QUERY_THRESHOLD_MS: z.coerce.number().int().positive().default(1000),
+  SLOW_QUERY_RETENTION: z.coerce.number().int().positive().default(10_000),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -109,4 +111,6 @@ export class AppConfigService {
   get smtpUrl() { return this.env.SMTP_URL; }
   get smtpFrom() { return this.env.SMTP_FROM; }
   get emailEnabled() { return !!(this.env.SMTP_URL && this.env.SMTP_FROM); }
+  get slowQueryThresholdMs() { return this.env.SLOW_QUERY_THRESHOLD_MS; }
+  get slowQueryRetention() { return this.env.SLOW_QUERY_RETENTION; }
 }

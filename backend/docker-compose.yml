@@ -75,6 +75,8 @@ services:
       SCHEDULER_QUERY_TIMEOUT_MS: ${SCHEDULER_QUERY_TIMEOUT_MS:-120000}
       SMTP_URL: ${SMTP_URL:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      SLOW_QUERY_THRESHOLD_MS: ${SLOW_QUERY_THRESHOLD_MS:-1000}
+      SLOW_QUERY_RETENTION: ${SLOW_QUERY_RETENTION:-10000}
     entrypoint: ["/usr/bin/tini", "--", "sh", "-c", "node_modules/.bin/prisma migrate deploy && exec node dist/main.js"]
     ports:
       - "${API_PORT:-3000}:3000"

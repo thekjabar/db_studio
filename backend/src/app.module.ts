@@ -20,6 +20,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { CsvImportModule } from './csv-import/csv-import.module';
 import { BackupModule } from './backup/backup.module';
+import { SlowQueryModule } from './slow-query/slow-query.module';
 import { HealthController } from './common/health.controller';
 
 @Module({
@@ -53,6 +54,7 @@ import { HealthController } from './common/health.controller';
     SchedulerModule,
     CsvImportModule,
     BackupModule,
+    SlowQueryModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

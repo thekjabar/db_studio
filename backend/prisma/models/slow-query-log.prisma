@@ -1,0 +1,25 @@
+/// One row per slow query execution. Use `shapeHash` to group identical query
+/// shapes together (WHERE ... = 42 and WHERE ... = 43 share the same hash).
+model SlowQueryLog {
+  id             String   @id @default(cuid())
+  connectionId   String
+  connection     Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  userId         String?
+  user           User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// SHA1 of the normalized shape.
+  shapeHash      String
+  /// Normalized SQL with literals replaced by `?`. What a reader wants to see.
+  normalizedSql  String
+  /// The actual SQL this execution ran. Kept truncated.
+  exampleSql     String
+  durationMs     Int
+  rowCount       Int?
+  rowsAffected   Int?
+  errored        Boolean  @default(false)
+  errorMessage   String?
+  createdAt      DateTime @default(now())
+
+  @@index([connectionId, createdAt(sort: Desc)])
+  @@index([connectionId, shapeHash])
+  @@index([connectionId, durationMs(sort: Desc)])
+}

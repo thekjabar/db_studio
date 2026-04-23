@@ -13,6 +13,7 @@ model Connection {
   members          ConnectionMember[]
   tableGrants      TableGrant[]
   scheduledQueries ScheduledQuery[]
+  slowQueryLogs    SlowQueryLog[]
   auditLogs        AuditLog[]
   savedQueries     SavedQuery[]
   comments         Comment[]

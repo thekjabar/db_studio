@@ -6,9 +6,10 @@ import {
 } from '@nestjs/common';
 import { spawn } from 'child_process';
 import { Response } from 'express';
-import { Dialect } from '@prisma/client';
+import { Dialect, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
+import { ConnectionsService } from '../connections/connections.service';
 import { SshTunnelService } from '../drivers/ssh-tunnel.service';
 import { ConnectionCredentials } from '../drivers/driver.interface';
 

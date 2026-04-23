@@ -19,6 +19,7 @@ model User {
   workspaceMembers WorkspaceMember[]
   tableGrants      TableGrant[]
   scheduledQueries ScheduledQuery[]
+  slowQueryLogs    SlowQueryLog[]
 
   @@unique([oauthProvider, oauthId])
   @@index([email])

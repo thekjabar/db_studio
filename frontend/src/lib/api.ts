@@ -277,6 +277,34 @@ export interface CreateScheduleInput {
   enabled?: boolean;
 }
 
+export interface SlowQueryGroup {
+  shapeHash: string;
+  normalizedSql: string;
+  count: number;
+  totalDurationMs: number;
+  avgDurationMs: number;
+  maxDurationMs: number;
+  lastSeen: string;
+  erroredCount: number;
+  exampleSql: string;
+}
+
+export interface SlowQueryRun {
+  id: string;
+  connectionId: string;
+  userId: string | null;
+  shapeHash: string;
+  normalizedSql: string;
+  exampleSql: string;
+  durationMs: number;
+  rowCount: number | null;
+  rowsAffected: number | null;
+  errored: boolean;
+  errorMessage: string | null;
+  createdAt: string;
+  user?: { email: string; displayName: string | null } | null;
+}
+
 export type ExplainMode = "plan" | "analyze";
 export type ExplainWarningSeverity = "info" | "warn" | "error";
 
@@ -690,6 +718,19 @@ export const api = {
    * Fetch a DB backup as a blob and trigger a browser download. Uses axios so
    * the access token is attached automatically. Server streams pg_dump stdout.
    */
+  listSlowQueries: (connectionId: string, hours = 168, limit = 100) =>
+    http
+      .get<SlowQueryGroup[]>(`/connections/${connectionId}/slow-queries`, {
+        params: { hours, limit },
+      })
+      .then((r) => r.data),
+  listSlowQueryRuns: (connectionId: string, shapeHash: string, limit = 50) =>
+    http
+      .get<SlowQueryRun[]>(`/connections/${connectionId}/slow-queries/${shapeHash}/runs`, {
+        params: { limit },
+      })
+      .then((r) => r.data),
+
   explain: (
     connectionId: string,
     body: { sql: string; mode?: "plan" | "analyze" },

@@ -1,6 +1,10 @@
 node_modules
 dist
 .git
+.gitignore
 .vscode
+.idea
 *.log
 .DS_Store
+# Rust/Tauri build artefacts — not needed for the web image.
+src-tauri/target

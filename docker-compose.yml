@@ -36,7 +36,7 @@ services:
 
   api:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
     container_name: dbdash-api
     restart: unless-stopped
@@ -49,7 +49,10 @@ services:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER:-dbdash}:${POSTGRES_PASSWORD:-dbdash}@db:5432/${POSTGRES_DB:-dbdash}?schema=public
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
+      # Allow both the Vite dev server (local pnpm dev) and the dockerized
+      # frontend (served by nginx on FRONTEND_PORT). Comma-separated list
+      # consumed by AppConfigService.frontendOrigins.
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173,http://localhost:${FRONTEND_PORT:-8080}}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
@@ -80,6 +83,23 @@ services:
     entrypoint: ["/usr/bin/tini", "--", "sh", "-c", "node_modules/.bin/prisma migrate deploy && exec node dist/main.js"]
     ports:
       - "${API_PORT:-3000}:3000"
+    networks: [dbdash]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Baked into the bundle at build time. `/api` routes through nginx to
+        # the api container, no CORS needed. Override for a split origin.
+        VITE_API_URL: ${VITE_API_URL:-/api}
+    container_name: dbdash-frontend
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
     networks: [dbdash]
 
 volumes:

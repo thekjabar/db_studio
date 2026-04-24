@@ -28,6 +28,10 @@ import SchedulesRoute from "@/routes/schedules";
 import FederatedRoute from "@/routes/federated";
 import ApiKeysRoute from "@/routes/api-keys";
 import WorkspaceSsoRoute from "@/routes/workspace-sso";
+import AdminRoute from "@/routes/admin";
+import DashboardsListRoute from "@/routes/dashboards";
+import DashboardDetailRoute from "@/routes/dashboard-detail";
+import PublicDashboardRoute from "@/routes/public-dashboard";
 import LandingPage from "@/routes/landing";
 import NotFoundPage from "@/routes/not-found";
 import { Loader2 } from "lucide-react";
@@ -156,6 +160,32 @@ export default function App() {
           </Protected>
         }
       />
+      <Route
+        path="/admin"
+        element={
+          <Protected>
+            <AdminRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/dashboards"
+        element={
+          <Protected>
+            <DashboardsListRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/dashboards/:id"
+        element={
+          <Protected>
+            <DashboardDetailRoute />
+          </Protected>
+        }
+      />
+      {/* Public share URL — no auth required */}
+      <Route path="/d/:token" element={<PublicDashboardRoute />} />
       <Route
         path="/c/:id"
         element={

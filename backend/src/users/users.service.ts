@@ -15,6 +15,7 @@ export class UsersService {
         displayName: true,
         density: true,
         theme: true,
+        isAdmin: true,
         createdAt: true,
         totpSecret: { select: { enabled: true } },
       },
@@ -26,6 +27,7 @@ export class UsersService {
       displayName: u.displayName,
       density: u.density,
       theme: u.theme,
+      isAdmin: u.isAdmin,
       createdAt: u.createdAt,
       totpEnabled: u.totpSecret?.enabled ?? false,
     };

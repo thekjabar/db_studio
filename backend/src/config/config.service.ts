@@ -70,6 +70,10 @@ const EnvSchema = z.object({
   VAULT_ADDR: z.string().transform((v) => v || undefined).optional(),
   VAULT_TOKEN: z.string().transform((v) => v || undefined).optional(),
   VAULT_TRANSIT_KEY: z.string().transform((v) => v || undefined).optional(),
+  // Bearer token Prometheus scrapers must present on /metrics. Leave unset
+  // to disable the endpoint entirely (returns 404). Generate with:
+  //   node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+  METRICS_TOKEN: z.string().transform((v) => v || undefined).optional(),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -170,4 +174,5 @@ export class AppConfigService {
   get vaultAddr() { return this.env.VAULT_ADDR; }
   get vaultToken() { return this.env.VAULT_TOKEN; }
   get vaultTransitKey() { return this.env.VAULT_TRANSIT_KEY; }
+  get metricsToken() { return this.env.METRICS_TOKEN; }
 }

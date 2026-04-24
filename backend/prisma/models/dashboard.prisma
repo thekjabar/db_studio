@@ -1,0 +1,53 @@
+/// User-defined dashboards. A dashboard owns an ordered set of tiles,
+/// each of which references a SavedQuery and picks how to render it.
+/// Scoped to a single connection so permissioning + share tokens can
+/// reuse the connection's RBAC.
+model Dashboard {
+  id            String           @id @default(cuid())
+  name          String
+  description   String?
+  connectionId  String
+  connection    Connection       @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  ownerId       String
+  owner         User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  /// Unhashed random token for the public read-only share URL. Null means
+  /// "not shared." Rotating clears old links. We deliberately store the
+  /// plaintext token (not a hash) because the URL itself is the credential
+  /// and users need it back when they re-open the share dialog.
+  shareToken    String?          @unique
+  /// Auto-refresh interval in seconds. Null disables.
+  refreshSec    Int?
+  tiles         DashboardTile[]
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([connectionId])
+  @@index([ownerId])
+}
+
+/// A single chart on a dashboard. References a SavedQuery (so the SQL
+/// lives in one place) plus its own layout + chart type. Chart type
+/// override lets the same saved query render differently on different
+/// dashboards without duplicating the SQL.
+model DashboardTile {
+  id            String      @id @default(cuid())
+  dashboardId   String
+  dashboard     Dashboard   @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  savedQueryId  String
+  savedQuery    SavedQuery  @relation(fields: [savedQueryId], references: [id], onDelete: Cascade)
+  /// Chart override — same shape as SavedQuery.chartConfig. Null falls
+  /// back to the saved query's default.
+  chartOverride Json?
+  /// Display title override. Null falls back to the saved query name.
+  title         String?
+  /// 12-column grid layout. x,y are grid cell coordinates; w,h are the
+  /// spans. We enforce client-side; server just stores.
+  x             Int         @default(0)
+  y             Int         @default(0)
+  w             Int         @default(6)
+  h             Int         @default(4)
+  createdAt     DateTime    @default(now())
+
+  @@index([dashboardId])
+  @@index([savedQueryId])
+}

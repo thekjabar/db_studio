@@ -10,6 +10,7 @@ export interface AuthUser {
   density?: Density;
   theme?: ServerTheme;
   totpEnabled?: boolean;
+  isAdmin?: boolean;
 }
 
 interface AuthState {

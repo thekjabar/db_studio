@@ -29,6 +29,7 @@ model Connection {
   savedQueries     SavedQuery[]
   comments         Comment[]
   schemaSnapshots  SchemaSnapshot[]
+  dashboards       Dashboard[]
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 

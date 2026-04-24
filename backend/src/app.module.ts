@@ -24,6 +24,8 @@ import { SlowQueryModule } from './slow-query/slow-query.module';
 import { FederatedModule } from './federated/federated.module';
 import { MigrationExportModule } from './migration-export/migration-export.module';
 import { ExportsModule } from './exports/exports.module';
+import { AdminModule } from './admin/admin.module';
+import { DashboardsModule } from './dashboards/dashboards.module';
 import { RedisModule } from './redis/redis.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { ApiKeysModule } from './api-keys/api-keys.module';
@@ -65,6 +67,8 @@ import { HealthController } from './common/health.controller';
     FederatedModule,
     MigrationExportModule,
     ExportsModule,
+    AdminModule,
+    DashboardsModule,
     RedisModule,
     WebhooksModule,
     ApiKeysModule,

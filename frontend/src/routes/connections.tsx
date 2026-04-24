@@ -83,6 +83,9 @@ export default function ConnectionsPage() {
           DB Studio
         </Link>
         <div className="flex items-center gap-2">
+          <Link to="/dashboards" className="text-sm text-muted-foreground hover:text-foreground">
+            Dashboards
+          </Link>
           <Link to="/schedules" className="text-sm text-muted-foreground hover:text-foreground">
             Schedules
           </Link>
@@ -92,6 +95,11 @@ export default function ConnectionsPage() {
           <Link to="/api-keys" className="text-sm text-muted-foreground hover:text-foreground">
             API keys
           </Link>
+          {user?.isAdmin && (
+            <Link to="/admin" className="text-sm text-primary hover:underline inline-flex items-center gap-1">
+              <ShieldCheck className="h-3.5 w-3.5" /> Admin
+            </Link>
+          )}
           <span className="hidden sm:inline text-sm text-muted-foreground mr-2 truncate max-w-50">{user?.email}</span>
           <ThemeToggle />
           <Button variant="ghost" size="sm" onClick={logout}>

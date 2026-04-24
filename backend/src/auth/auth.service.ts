@@ -91,12 +91,19 @@ export class AuthService {
     // login is blocked until the user clicks the link. Otherwise auto-verify
     // (single-user self-host / dev).
     const needsVerify = this.cfg.requireEmailVerification;
+    // First user on a fresh install is auto-promoted to admin so self-hosters
+    // have someone with /admin access without manual SQL. A race between two
+    // parallel signups can only make the first one admin (count < 1 is a
+    // hard pre-condition) which is acceptable for a single-user bootstrap.
+    const existingCount = await this.prisma.user.count();
+    const isFirst = existingCount === 0;
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
         passwordHash,
         displayName: dto.displayName,
         emailVerifiedAt: needsVerify ? null : new Date(),
+        isAdmin: isFirst,
       },
     });
 

@@ -8,6 +8,11 @@ model User {
   oauthProvider   String?
   oauthId         String?
   emailVerifiedAt DateTime?
+  /// System administrator. Grants access to /admin metrics, user listings,
+  /// instance-wide audit. The very first signup is auto-promoted so a new
+  /// self-host has an admin out of the box. Subsequent admins must be
+  /// granted by an existing admin (or via direct SQL).
+  isAdmin         Boolean           @default(false)
   totpSecret      TotpSecret?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
@@ -28,6 +33,7 @@ model User {
   emailVerifications EmailVerification[]
   passwordResets   PasswordReset[]
   schemaSnapshots  SchemaSnapshot[]
+  dashboards       Dashboard[]
 
   @@unique([oauthProvider, oauthId])
   @@index([email])

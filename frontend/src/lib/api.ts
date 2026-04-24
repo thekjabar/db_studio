@@ -208,6 +208,64 @@ export interface ChartConfig {
   limit?: number;
 }
 
+export interface DashboardSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  connectionId: string;
+  refreshSec: number | null;
+  shareToken: string | null;
+  updatedAt: string;
+  _count: { tiles: number };
+  owner: { id: string; email: string; displayName: string | null };
+}
+
+export interface DashboardTile {
+  id: string;
+  savedQueryId: string;
+  title: string | null;
+  chartOverride: ChartConfig | null;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  savedQuery: {
+    id: string;
+    name: string;
+    sqlText: string;
+    chartConfig: ChartConfig | null;
+  };
+}
+
+export interface Dashboard {
+  id: string;
+  name: string;
+  description: string | null;
+  connectionId: string;
+  ownerId: string;
+  refreshSec: number | null;
+  shareToken: string | null;
+  createdAt: string;
+  updatedAt: string;
+  tiles: DashboardTile[];
+}
+
+export interface PublicDashboard {
+  id: string;
+  name: string;
+  description: string | null;
+  refreshSec: number | null;
+  tiles: {
+    id: string;
+    title: string;
+    chartConfig: ChartConfig | null;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  }[];
+}
+
 export interface Workspace {
   id: string;
   name: string;
@@ -1149,6 +1207,128 @@ export const api = {
         `/connections/${id}/audit/query-history`,
         { params },
       )
+      .then((r) => r.data),
+
+  adminOverview: () =>
+    http
+      .get<{
+        users: number;
+        admins: number;
+        workspaces: number;
+        connections: number;
+        scheduledQueriesEnabled: number;
+        webhooksEnabled: number;
+        apiKeysActive: number;
+        last24h: { failedLogins: number; signups: number; activeUsers: number };
+      }>("/admin/overview")
+      .then((r) => r.data),
+  adminQueryVolume: () =>
+    http
+      .get<{ hour: string; queries: number; schemaChanges: number }[]>(
+        "/admin/query-volume",
+      )
+      .then((r) => r.data),
+  adminTopConnections: () =>
+    http
+      .get<{ connectionId: string; name: string; dialect: string | null; queries: number }[]>(
+        "/admin/top-connections",
+      )
+      .then((r) => r.data),
+  adminTopUsers: () =>
+    http
+      .get<{ userId: string; email: string; displayName: string | null; queries: number }[]>(
+        "/admin/top-users",
+      )
+      .then((r) => r.data),
+  adminListUsers: (params?: { search?: string; cursor?: string; limit?: number }) =>
+    http
+      .get<{
+        items: {
+          id: string;
+          email: string;
+          displayName: string | null;
+          isAdmin: boolean;
+          emailVerifiedAt: string | null;
+          oauthProvider: string | null;
+          createdAt: string;
+        }[];
+        nextCursor?: string;
+      }>("/admin/users", { params })
+      .then((r) => r.data),
+  adminSetUserAdmin: (userId: string, isAdmin: boolean) =>
+    http
+      .patch<{ id: string; email: string; isAdmin: boolean }>(`/admin/users/${userId}`, {
+        isAdmin,
+      })
+      .then((r) => r.data),
+
+  listDashboards: (connectionId?: string) =>
+    http
+      .get<DashboardSummary[]>("/dashboards", {
+        params: connectionId ? { connectionId } : undefined,
+      })
+      .then((r) => r.data),
+  getDashboard: (id: string) =>
+    http.get<Dashboard>(`/dashboards/${id}`).then((r) => r.data),
+  createDashboard: (body: {
+    name: string;
+    description?: string;
+    connectionId: string;
+    refreshSec?: number;
+  }) => http.post<Dashboard>("/dashboards", body).then((r) => r.data),
+  updateDashboard: (
+    id: string,
+    patch: { name?: string; description?: string | null; refreshSec?: number | null },
+  ) => http.patch<Dashboard>(`/dashboards/${id}`, patch).then((r) => r.data),
+  deleteDashboard: (id: string) => http.delete<{ ok: true }>(`/dashboards/${id}`).then((r) => r.data),
+  shareDashboard: (id: string, share: boolean) =>
+    http
+      .post<{ shareToken: string | null }>(`/dashboards/${id}/share`, { share })
+      .then((r) => r.data),
+  addDashboardTile: (
+    id: string,
+    body: {
+      savedQueryId: string;
+      title?: string;
+      chartOverride?: ChartConfig | null;
+      x?: number;
+      y?: number;
+      w?: number;
+      h?: number;
+    },
+  ) => http.post<DashboardTile>(`/dashboards/${id}/tiles`, body).then((r) => r.data),
+  updateDashboardTile: (
+    id: string,
+    tileId: string,
+    patch: {
+      title?: string | null;
+      chartOverride?: ChartConfig | null;
+      x?: number;
+      y?: number;
+      w?: number;
+      h?: number;
+    },
+  ) =>
+    http
+      .patch<DashboardTile>(`/dashboards/${id}/tiles/${tileId}`, patch)
+      .then((r) => r.data),
+  removeDashboardTile: (id: string, tileId: string) =>
+    http.delete<{ ok: true }>(`/dashboards/${id}/tiles/${tileId}`).then((r) => r.data),
+  reorderDashboardTiles: (
+    id: string,
+    tiles: { id: string; x: number; y: number; w: number; h: number }[],
+  ) =>
+    http.put<{ ok: true }>(`/dashboards/${id}/tiles`, { tiles }).then((r) => r.data),
+  runDashboardTile: (id: string, tileId: string) =>
+    http
+      .post<QueryResult>(`/dashboards/${id}/tiles/${tileId}/run`)
+      .then((r) => r.data),
+
+  getPublicDashboard: (token: string) =>
+    http.get<PublicDashboard>(`/public/dashboards/${token}`).then((r) => r.data),
+  runPublicDashboardTile: (token: string, tileId: string) =>
+    http
+      .post<QueryResult>(`/public/dashboards/${token}/tiles/${tileId}/run`)
       .then((r) => r.data),
 
   auditRevertPreview: (id: string, entryId: string) =>

@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
-import { Link, NavLink, useParams } from "react-router-dom";
+import { useMemo, useState, type ReactNode } from "react";
+import { Link, NavLink, useLocation, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   ChevronDown,
+  ChevronRight,
   ChevronsLeft,
   ChevronsRight,
   Code2,
@@ -166,26 +167,128 @@ export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSche
         </ul>
       </div>
 
-      <nav className="border-t border-border p-1 space-y-0.5">
+      <nav className="border-t border-border p-1 space-y-0.5 overflow-y-auto">
+        {/* Always-visible core — these are used on every session, no point
+            hiding them behind a toggle. */}
         <NavItem to={`/c/${connectionId}/sql`} icon={<Code2 className="h-3.5 w-3.5" />} label="SQL Editor" />
         <NavItem to={`/c/${connectionId}/er`} icon={<Network className="h-3.5 w-3.5" />} label="ER Diagram" />
         <NavItem to={`/c/${connectionId}/schema`} icon={<Hammer className="h-3.5 w-3.5" />} label="Schema" />
-        <NavItem to={`/c/${connectionId}/saved`} icon={<BookOpen className="h-3.5 w-3.5" />} label="Saved queries" />
-        <NavItem to={`/c/${connectionId}/audit`} icon={<FileClock className="h-3.5 w-3.5" />} label="Audit log" />
-        <NavItem to={`/c/${connectionId}/query-history`} icon={<History className="h-3.5 w-3.5" />} label="Query history" />
-        <NavItem to={`/c/${connectionId}/slow-queries`} icon={<Timer className="h-3.5 w-3.5" />} label="Slow queries" />
-        <NavItem to={`/c/${connectionId}/db-health`} icon={<Activity className="h-3.5 w-3.5" />} label="DB health" />
-        <NavItem to={`/c/${connectionId}/reviews`} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Query reviews" />
-        <NavItem to={`/c/${connectionId}/row-filters`} icon={<Filter className="h-3.5 w-3.5" />} label="Row filters" />
-        <NavItem to={`/c/${connectionId}/docs`} icon={<BookMarked className="h-3.5 w-3.5" />} label="Docs" />
         <NavItem to={`/c/${connectionId}/ai`} icon={<Sparkles className="h-3.5 w-3.5" />} label="AI chat" />
-        <NavItem to={`/c/${connectionId}/migrate`} icon={<FileCode2 className="h-3.5 w-3.5" />} label="Migration builder" />
-        <NavItem to={`/c/${connectionId}/permissions`} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Permissions" />
-        <NavItem to={`/c/${connectionId}/backup`} icon={<Archive className="h-3.5 w-3.5" />} label="Backup" />
-        <NavItem to={`/c/${connectionId}/migration-export`} icon={<FileCode2 className="h-3.5 w-3.5" />} label="Migration export" />
-        <NavItem to={`/c/${connectionId}/webhooks`} icon={<Webhook className="h-3.5 w-3.5" />} label="Webhooks" />
+
+        <NavSection
+          label="History"
+          storageKey="sidebar.history"
+          paths={["/saved", "/query-history", "/audit"]}
+          connectionId={connectionId}
+        >
+          <NavItem to={`/c/${connectionId}/saved`} icon={<BookOpen className="h-3.5 w-3.5" />} label="Saved queries" />
+          <NavItem to={`/c/${connectionId}/query-history`} icon={<History className="h-3.5 w-3.5" />} label="Query history" />
+          <NavItem to={`/c/${connectionId}/audit`} icon={<FileClock className="h-3.5 w-3.5" />} label="Audit log" />
+        </NavSection>
+
+        <NavSection
+          label="Performance"
+          storageKey="sidebar.perf"
+          paths={["/slow-queries", "/db-health", "/reviews"]}
+          connectionId={connectionId}
+        >
+          <NavItem to={`/c/${connectionId}/slow-queries`} icon={<Timer className="h-3.5 w-3.5" />} label="Slow queries" />
+          <NavItem to={`/c/${connectionId}/db-health`} icon={<Activity className="h-3.5 w-3.5" />} label="DB health" />
+          <NavItem to={`/c/${connectionId}/reviews`} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Query reviews" />
+        </NavSection>
+
+        <NavSection
+          label="Governance"
+          storageKey="sidebar.gov"
+          paths={["/row-filters", "/docs", "/permissions"]}
+          connectionId={connectionId}
+        >
+          <NavItem to={`/c/${connectionId}/docs`} icon={<BookMarked className="h-3.5 w-3.5" />} label="Docs" />
+          <NavItem to={`/c/${connectionId}/row-filters`} icon={<Filter className="h-3.5 w-3.5" />} label="Row filters" />
+          <NavItem to={`/c/${connectionId}/permissions`} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Permissions" />
+        </NavSection>
+
+        <NavSection
+          label="Admin"
+          storageKey="sidebar.admin"
+          paths={["/migrate", "/migration-export", "/backup", "/webhooks"]}
+          connectionId={connectionId}
+        >
+          <NavItem to={`/c/${connectionId}/migrate`} icon={<FileCode2 className="h-3.5 w-3.5" />} label="Migration builder" />
+          <NavItem to={`/c/${connectionId}/migration-export`} icon={<FileCode2 className="h-3.5 w-3.5" />} label="Migration export" />
+          <NavItem to={`/c/${connectionId}/backup`} icon={<Archive className="h-3.5 w-3.5" />} label="Backup" />
+          <NavItem to={`/c/${connectionId}/webhooks`} icon={<Webhook className="h-3.5 w-3.5" />} label="Webhooks" />
+        </NavSection>
       </nav>
     </aside>
+  );
+}
+
+/**
+ * Collapsible nav section. Auto-expands when the user is on one of its
+ * child routes so they can see where they are even after reloading.
+ * Preference stored in localStorage keyed by section so opens survive
+ * reloads and aren't per-connection.
+ */
+function NavSection({
+  label,
+  storageKey,
+  paths,
+  connectionId,
+  children,
+}: {
+  label: string;
+  storageKey: string;
+  paths: string[];
+  connectionId: string;
+  children: ReactNode;
+}) {
+  const loc = useLocation();
+  // Auto-open when navigating into any child path. Guarded so a user who
+  // manually collapses the section isn't fought by the auto-expand.
+  const containsActive = paths.some((p) => loc.pathname.includes(`/c/${connectionId}${p}`));
+  const [open, setOpen] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored != null) return stored === "1";
+    } catch {
+      /* ignore */
+    }
+    return containsActive;
+  });
+  // If the user navigates into the section from elsewhere, open it once.
+  // We don't close on navigation out — that's annoying when bouncing between
+  // tabs.
+  useMemo(() => {
+    if (containsActive && !open) setOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [containsActive]);
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    try {
+      localStorage.setItem(storageKey, next ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  };
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggle}
+        className="w-full flex items-center gap-1 px-2 py-1 text-[10px] uppercase font-medium tracking-wider text-muted-foreground hover:text-foreground"
+      >
+        {open ? (
+          <ChevronDown className="h-3 w-3" />
+        ) : (
+          <ChevronRight className="h-3 w-3" />
+        )}
+        <span>{label}</span>
+      </button>
+      {open && <div className="space-y-0.5">{children}</div>}
+    </div>
   );
 }
 

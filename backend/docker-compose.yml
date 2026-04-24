@@ -44,8 +44,17 @@ services:
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     volumes:
       - redis_data:/data
+    # Redis's entrypoint chowns /data to the `redis` user before dropping
+    # privs, so it needs the same four caps Postgres does. Everything else
+    # stays dropped.
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - SETUID
+      - SETGID
+      - DAC_READ_SEARCH
     security_opt:
       - no-new-privileges:true
     healthcheck:

@@ -1,0 +1,21 @@
+/// Gradual-rollout gates. The backend helper does deterministic hashing
+/// on (userId, flagKey) so a user is always in or out of a rollout until
+/// the percent or override changes — no "sometimes true / sometimes false"
+/// thrash. Exposed to the frontend via /api/flags/my for conditional UI.
+model FeatureFlag {
+  key                 String   @id
+  description         String?
+  /// 0 = off for everyone, 100 = on for everyone. Percentile bucket
+  /// chosen by stable hash of the user ID.
+  rolloutPercent      Int      @default(0)
+  /// Forced-on allowlist (unions with percent rollout).
+  enabledUserIds      String[] @default([])
+  enabledWorkspaceIds String[] @default([])
+  /// Force-off denylist (wins over percent + allowlist).
+  disabledUserIds     String[] @default([])
+  disabledWorkspaceIds String[] @default([])
+  /// Last operator to touch this row — shows in flag history.
+  updatedByOperatorId String?
+  updatedAt           DateTime @updatedAt
+  createdAt           DateTime @default(now())
+}

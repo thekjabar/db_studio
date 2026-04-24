@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Database, Loader2, ShieldCheck } from "lucide-react";
+import { Database, Loader2, ShieldCheck, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,12 +9,17 @@ import { api, extractErrorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth-store";
 import { OAuthButtons } from "@/components/oauth-buttons";
 
+// Dev-only default email. Stripped from production bundles by Vite dead-code
+// elimination so hardcoded credentials don't ship in the compiled HTML.
+const DEV_DEFAULT_EMAIL = import.meta.env.DEV ? "owner@dbdash.local" : "";
+
 export default function LoginPage() {
   const nav = useNavigate();
   const { setAuth } = useAuth();
   const [sp, setSp] = useSearchParams();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(DEV_DEFAULT_EMAIL);
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [totpCode, setTotpCode] = useState("");
   const [needsTotp, setNeedsTotp] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -156,14 +161,26 @@ export default function LoginPage() {
                   Forgot?
                 </Link>
               </div>
-              <Input
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-              />
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="current-password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="pr-9"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  tabIndex={-1}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
             {needsTotp && (
               <div className="space-y-1.5">

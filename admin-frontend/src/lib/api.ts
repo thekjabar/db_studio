@@ -213,6 +213,296 @@ export const api = {
   async enableOperator(id: string) {
     await client.post(`/operator/operators/${id}/enable`);
   },
+
+  // ---- Feedback inbox ----
+  async listFeedback(status: string | undefined, limit = 50, offset = 0) {
+    const { data } = await client.get<{
+      rows: Array<{
+        id: string;
+        userId: string | null;
+        email: string | null;
+        category: string;
+        message: string;
+        sourcePath: string | null;
+        status: string;
+        internalNotes: string | null;
+        replyText: string | null;
+        repliedAt: string | null;
+        createdAt: string;
+        user: { email: string; displayName: string | null; id: string } | null;
+      }>;
+      total: number;
+      unread: number;
+    }>('/operator/feedback', { params: { status, limit, offset } });
+    return data;
+  },
+  async getFeedback(id: string) {
+    const { data } = await client.get(`/operator/feedback/${id}`);
+    return data;
+  },
+  async setFeedbackStatus(id: string, status: string) {
+    await client.patch(`/operator/feedback/${id}/status`, { status });
+  },
+  async setFeedbackNote(id: string, internalNotes: string) {
+    await client.patch(`/operator/feedback/${id}/note`, { internalNotes });
+  },
+  async replyFeedback(id: string, body: string) {
+    const { data } = await client.post<{ sent: boolean; copyToManualEmail: boolean; error: string | null }>(
+      `/operator/feedback/${id}/reply`,
+      { body },
+    );
+    return data;
+  },
+
+  // ---- Announcements ----
+  async listAnnouncements(limit = 50, offset = 0) {
+    const { data } = await client.get<{
+      rows: Array<{
+        id: string;
+        title: string;
+        body: string;
+        severity: 'INFO' | 'WARNING' | 'CRITICAL';
+        targeting: { userIds?: string[]; workspaceIds?: string[] } | null;
+        startsAt: string;
+        endsAt: string | null;
+        createdAt: string;
+      }>;
+      total: number;
+    }>('/operator/announcements', { params: { limit, offset } });
+    return data;
+  },
+  async createAnnouncement(body: {
+    title: string;
+    body: string;
+    severity: 'INFO' | 'WARNING' | 'CRITICAL';
+    targeting?: { userIds?: string[]; workspaceIds?: string[] };
+    startsAt?: string;
+    endsAt?: string;
+  }) {
+    const { data } = await client.post('/operator/announcements', body);
+    return data;
+  },
+  async updateAnnouncement(id: string, body: Record<string, unknown>) {
+    const { data } = await client.patch(`/operator/announcements/${id}`, body);
+    return data;
+  },
+  async deleteAnnouncement(id: string) {
+    await client.delete(`/operator/announcements/${id}`);
+  },
+
+  // ---- Email templates ----
+  async listEmailTemplates() {
+    const { data } = await client.get<Array<{
+      name: string;
+      subject: string;
+      bodyHtml: string;
+      bodyText: string;
+      variables: string[];
+      updatedAt: string;
+    }>>('/operator/email-templates');
+    return data;
+  },
+  async updateEmailTemplate(name: string, patch: { subject?: string; bodyHtml?: string; bodyText?: string }) {
+    const { data } = await client.patch(`/operator/email-templates/${name}`, patch);
+    return data;
+  },
+
+  // ---- Analytics ----
+  async platformSeries(days = 30) {
+    const { data } = await client.get<Array<{ day: string; signups: number; logins: number; uniqueUsers: number }>>(
+      '/operator/analytics/platform', { params: { days } });
+    return data;
+  },
+  async userSeries(id: string, days = 30) {
+    const { data } = await client.get<{
+      classification: 'active' | 'at_risk' | 'dormant' | 'never_logged_in';
+      series: Array<{ day: string; logins: number; queries: number; aiCalls: number }>;
+    }>(`/operator/analytics/users/${id}`, { params: { days } });
+    return data;
+  },
+  async userSupport(id: string) {
+    const { data } = await client.get<{
+      failedLogins: Array<{ id: string; createdAt: string; ip: string | null }>;
+      suspendedLogins: Array<{ id: string; createdAt: string }>;
+      abuseEvents: Array<{ id: string; rule: string; createdAt: string; ip: string | null; metadata: unknown }>;
+    }>(`/operator/analytics/users/${id}/support`);
+    return data;
+  },
+
+  // ---- Billing adjustments ----
+  async listAdjustments(workspaceId: string) {
+    const { data } = await client.get<Array<{
+      id: string;
+      amountCents: number;
+      currency: string;
+      reason: string;
+      periodStart: string | null;
+      periodEnd: string | null;
+      createdAt: string;
+    }>>(`/operator/workspaces/${workspaceId}/adjustments`);
+    return data;
+  },
+  async issueAdjustment(workspaceId: string, body: {
+    amountCents: number;
+    currency?: string;
+    reason: string;
+    periodStart?: string;
+    periodEnd?: string;
+  }) {
+    const { data } = await client.post(`/operator/workspaces/${workspaceId}/adjustments`, body);
+    return data;
+  },
+
+  // ---- Invite codes + waitlist ----
+  async listInviteCodes(limit = 50, offset = 0) {
+    const { data } = await client.get<{
+      rows: Array<{
+        code: string;
+        usesRemaining: number;
+        maxUses: number;
+        expiresAt: string | null;
+        assignedEmail: string | null;
+        note: string | null;
+        createdAt: string;
+      }>;
+      total: number;
+    }>('/operator/invite-codes', { params: { limit, offset } });
+    return data;
+  },
+  async createInviteCode(body: {
+    code?: string;
+    maxUses?: number;
+    expiresAt?: string;
+    assignedEmail?: string;
+    note?: string;
+  }) {
+    const { data } = await client.post('/operator/invite-codes', body);
+    return data;
+  },
+  async deleteInviteCode(code: string) {
+    await client.delete(`/operator/invite-codes/${encodeURIComponent(code)}`);
+  },
+  async listWaitlist(limit = 100, offset = 0) {
+    const { data } = await client.get<{
+      rows: Array<{
+        id: string;
+        email: string;
+        invitedAt: string | null;
+        notes: string | null;
+        createdAt: string;
+        inviteCode: { code: string; usesRemaining: number } | null;
+      }>;
+      total: number;
+    }>('/operator/waitlist', { params: { limit, offset } });
+    return data;
+  },
+  async inviteWaitlistEntry(id: string, maxUses = 1) {
+    const { data } = await client.post(`/operator/waitlist/${id}/invite`, { maxUses });
+    return data;
+  },
+
+  // ---- Abuse ----
+  async listAbuse(acked: boolean | undefined, rule: string | undefined, ip: string | undefined, limit = 100, offset = 0) {
+    const { data } = await client.get<{
+      rows: Array<{
+        id: string;
+        rule: string;
+        ip: string | null;
+        userId: string | null;
+        path: string | null;
+        metadata: unknown;
+        ackedAt: string | null;
+        createdAt: string;
+        user: { email: string; id: string } | null;
+      }>;
+      total: number;
+    }>('/operator/abuse', {
+      params: {
+        acked: acked === undefined ? undefined : String(acked),
+        rule,
+        ip,
+        limit,
+        offset,
+      },
+    });
+    return data;
+  },
+  async ackAbuse(id: string) {
+    await client.post(`/operator/abuse/${id}/ack`);
+  },
+  async ackAbuseByIp(ip: string) {
+    await client.post(`/operator/abuse/ack-ip/${encodeURIComponent(ip)}`);
+  },
+  async listBlockedIps() {
+    const { data } = await client.get<Array<{ ip: string; reason: string | null; createdAt: string }>>(
+      '/operator/abuse/blocked-ips');
+    return data;
+  },
+  async blockIp(ip: string, reason?: string) {
+    const { data } = await client.post('/operator/abuse/block-ip', { ip, reason });
+    return data;
+  },
+  async unblockIp(ip: string) {
+    await client.delete(`/operator/abuse/block-ip/${encodeURIComponent(ip)}`);
+  },
+
+  // ---- Retention ----
+  async listRetention() {
+    const { data } = await client.get<Array<{
+      resource: string;
+      keepDays: number;
+      lastRunAt: string | null;
+      lastRunRowsDeleted: number;
+      updatedAt: string;
+    }>>('/operator/retention');
+    return data;
+  },
+  async updateRetention(resource: string, keepDays: number) {
+    const { data } = await client.patch(`/operator/retention/${resource}`, { keepDays });
+    return data;
+  },
+  async sweepRetention() {
+    const { data } = await client.post<Record<string, number>>('/operator/retention/sweep');
+    return data;
+  },
+
+  // ---- Feature flags ----
+  async listFlags() {
+    const { data } = await client.get<Array<{
+      key: string;
+      description: string | null;
+      rolloutPercent: number;
+      enabledUserIds: string[];
+      enabledWorkspaceIds: string[];
+      disabledUserIds: string[];
+      disabledWorkspaceIds: string[];
+      updatedAt: string;
+    }>>('/operator/flags');
+    return data;
+  },
+  async upsertFlag(body: {
+    key: string;
+    description?: string;
+    rolloutPercent: number;
+    enabledUserIds?: string[];
+    enabledWorkspaceIds?: string[];
+    disabledUserIds?: string[];
+    disabledWorkspaceIds?: string[];
+  }) {
+    const { data } = await client.post('/operator/flags', body);
+    return data;
+  },
+  async deleteFlag(key: string) {
+    await client.delete(`/operator/flags/${encodeURIComponent(key)}`);
+  },
+
+  // ---- Audit export ----
+  auditExportUrl(format: 'csv' | 'jsonl', from?: string, to?: string) {
+    const params = new URLSearchParams({ format });
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    return `/api/operator/audit/export?${params.toString()}`;
+  },
 };
 
 export { client };

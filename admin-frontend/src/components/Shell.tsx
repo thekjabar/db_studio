@@ -1,5 +1,8 @@
 import { NavLink, useNavigate } from 'react-router-dom';
-import { BarChart3, Users, Briefcase, DollarSign, ClipboardList, ShieldCheck, LogOut } from 'lucide-react';
+import {
+  BarChart3, Users, Briefcase, DollarSign, ClipboardList, ShieldCheck, LogOut,
+  MessageSquare, Megaphone, Mail, AlertOctagon, TrendingUp, Ticket, Database, Flag,
+} from 'lucide-react';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -8,9 +11,17 @@ import { useModal } from '@/components/modal-provider';
 
 const nav = [
   { to: '/', label: 'Dashboard', icon: BarChart3, end: true },
+  { to: '/analytics', label: 'Analytics', icon: TrendingUp },
   { to: '/users', label: 'Users', icon: Users },
   { to: '/workspaces', label: 'Workspaces', icon: Briefcase },
   { to: '/billing', label: 'Billing', icon: DollarSign },
+  { to: '/feedback', label: 'Feedback', icon: MessageSquare },
+  { to: '/announcements', label: 'Announcements', icon: Megaphone },
+  { to: '/email-templates', label: 'Email templates', icon: Mail },
+  { to: '/invites', label: 'Invites', icon: Ticket },
+  { to: '/abuse', label: 'Abuse', icon: AlertOctagon },
+  { to: '/flags', label: 'Feature flags', icon: Flag },
+  { to: '/retention', label: 'Retention', icon: Database },
   { to: '/audit', label: 'Audit log', icon: ClipboardList },
   { to: '/operators', label: 'Operators', icon: ShieldCheck },
 ];

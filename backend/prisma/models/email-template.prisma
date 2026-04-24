@@ -1,0 +1,21 @@
+/// Operator-editable email bodies. Every transactional email the app
+/// sends looks up a row by `name`; if missing, the sender falls back to
+/// a hardcoded default so a wiped row never breaks login emails.
+model EmailTemplate {
+  /// Logical name: welcome, password_reset, email_verification,
+  /// subscription_past_due, invoice, feedback_reply.
+  name         String   @id
+  subject      String
+  bodyHtml     String
+  bodyText     String
+  /// Human-readable list of variable names the template accepts, e.g.
+  /// ["appName", "verificationUrl", "recipientName"]. The operator UI
+  /// shows these as autocomplete hints; unknown vars are rendered as the
+  /// literal `{{unknown}}` at send time so typos are visible.
+  variables    String[] @default([])
+  /// Operator who last edited this template. Null on bootstrap when the
+  /// row is auto-created from the default.
+  updatedByOperatorId String?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+}

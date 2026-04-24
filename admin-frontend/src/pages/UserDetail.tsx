@@ -1,7 +1,7 @@
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, Ban, CheckCircle2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Ban, CheckCircle2, Trash2, Activity, LifeBuoy } from 'lucide-react';
 import { api, relativeDate } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -148,6 +148,104 @@ export default function UserDetail() {
           )}
         </Card>
       </div>
+
+      <UserAnalyticsSection userId={user.id} />
+      <SupportTimelineSection userId={user.id} />
+    </div>
+  );
+}
+
+function UserAnalyticsSection({ userId }: { userId: string }) {
+  const q = useQuery({ queryKey: ['user-series', userId], queryFn: () => api.userSeries(userId, 30) });
+  if (!q.data) return null;
+  const max = q.data.series.reduce((m, d) => Math.max(m, d.logins, d.queries, d.aiCalls), 1);
+  const label = q.data.classification.replace('_', ' ');
+
+  return (
+    <div>
+      <h2 className="text-sm font-medium mb-2 flex items-center gap-2">
+        <Activity className="h-4 w-4" /> Activity (last 30 days)
+        <Badge
+          variant={q.data.classification === 'active' ? 'outline' : q.data.classification === 'dormant' ? 'destructive' : 'secondary'}
+          className="ml-2 capitalize"
+        >
+          {label}
+        </Badge>
+      </h2>
+      <Card className="p-4">
+        <div className="flex items-end gap-px h-32">
+          {q.data.series.map((d) => (
+            <div
+              key={d.day}
+              title={`${d.day}\nlogins: ${d.logins}\nqueries: ${d.queries}\nAI: ${d.aiCalls}`}
+              className="flex-1 flex flex-col justify-end gap-px min-w-[4px]"
+            >
+              <div style={{ height: `${(d.aiCalls / max) * 100}%` }} className="bg-emerald-500/70" />
+              <div style={{ height: `${(d.queries / max) * 100}%` }} className="bg-primary/60" />
+              <div style={{ height: `${(d.logins / max) * 100}%` }} className="bg-primary/30" />
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-primary/30" /> Logins</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-primary/60" /> Queries</span>
+          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500/70" /> AI calls</span>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function SupportTimelineSection({ userId }: { userId: string }) {
+  const q = useQuery({ queryKey: ['user-support', userId], queryFn: () => api.userSupport(userId) });
+  if (!q.data) return null;
+  const { failedLogins, suspendedLogins, abuseEvents } = q.data;
+  const empty = failedLogins.length === 0 && suspendedLogins.length === 0 && abuseEvents.length === 0;
+  return (
+    <div>
+      <h2 className="text-sm font-medium mb-2 flex items-center gap-2">
+        <LifeBuoy className="h-4 w-4" /> Support timeline
+      </h2>
+      {empty ? (
+        <Card className="p-4 text-sm text-muted-foreground">No recent issues for this user. 🎉</Card>
+      ) : (
+        <div className="space-y-3">
+          {failedLogins.length > 0 && (
+            <Card className="p-3">
+              <div className="text-xs font-medium">Failed logins ({failedLogins.length})</div>
+              <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {failedLogins.slice(0, 10).map((r) => (
+                  <li key={r.id}>
+                    {new Date(r.createdAt).toLocaleString()} — {r.ip ?? 'unknown IP'}
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+          {suspendedLogins.length > 0 && (
+            <Card className="p-3">
+              <div className="text-xs font-medium">Attempts while suspended ({suspendedLogins.length})</div>
+              <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {suspendedLogins.slice(0, 10).map((r) => (
+                  <li key={r.id}>{new Date(r.createdAt).toLocaleString()}</li>
+                ))}
+              </ul>
+            </Card>
+          )}
+          {abuseEvents.length > 0 && (
+            <Card className="p-3">
+              <div className="text-xs font-medium">Abuse/quota events ({abuseEvents.length})</div>
+              <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {abuseEvents.slice(0, 10).map((r) => (
+                  <li key={r.id}>
+                    {new Date(r.createdAt).toLocaleString()} — <span className="font-mono">{r.rule}</span>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+        </div>
+      )}
     </div>
   );
 }

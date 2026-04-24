@@ -1,0 +1,33 @@
+/// Invite codes gate signups when the operator wants controlled onboarding
+/// (beta launches, private preview). Check lives in AuthService.signup;
+/// a global flag (`REQUIRE_INVITE_CODE_ON_SIGNUP`) controls enforcement.
+model InviteCode {
+  code          String   @id
+  /// Multi-use codes share the same value across recipients. 0 = unlimited.
+  usesRemaining Int      @default(1)
+  maxUses       Int      @default(1)
+  expiresAt     DateTime?
+  /// Optional pre-assigned email — when set, signup email must match.
+  assignedEmail String?
+  note          String?
+  createdByOperatorId String
+  createdAt     DateTime @default(now())
+  /// Link to Waitlist rows this code was minted from.
+  waitlistId    String?   @unique
+  waitlist      Waitlist? @relation(fields: [waitlistId], references: [id], onDelete: SetNull)
+}
+
+/// Emails collected before the user had a code. The operator can promote
+/// waitlisted entries to active invite codes individually or in batches.
+model Waitlist {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  /// Optional extras an invite-page form can collect (company, use case).
+  metadata       Json?
+  /// Set when an operator issues a code. Doesn't delete the row —
+  /// keeping the waitlist intact is useful for analytics.
+  invitedAt      DateTime?
+  notes          String?
+  createdAt      DateTime @default(now())
+  inviteCode     InviteCode?
+}

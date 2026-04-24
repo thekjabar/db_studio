@@ -1,0 +1,36 @@
+/// One row per throttler hit or suspicious action. Operators review in the
+/// abuse queue, ack individual events, or block the source IP. Cheap to
+/// write (single INSERT from the throttler), pruned by retention.
+model AbuseEvent {
+  id        String   @id @default(cuid())
+  /// Which rule fired: "rate_limit:api", "rate_limit:login",
+  /// "ai_quota_exhausted", "webhook_delivery_failures". Free-form so new
+  /// rules don't need a schema change.
+  rule      String
+  ip        String?
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  path      String?
+  /// Light payload for context (headers of interest, response code).
+  metadata  Json?
+  /// Operator acknowledged — event hidden from the default inbox but kept
+  /// for trend analysis.
+  ackedAt   DateTime?
+  ackedByOperatorId String?
+  createdAt DateTime @default(now())
+
+  @@index([rule])
+  @@index([createdAt])
+  @@index([ip])
+  @@index([userId])
+}
+
+/// IPs the operator has explicitly blocked from any request handling.
+/// Checked at a middleware before auth so blocked IPs can't even attempt
+/// a login. Unblock by deleting the row.
+model BlockedIp {
+  ip        String   @id
+  reason    String?
+  createdByOperatorId String
+  createdAt DateTime @default(now())
+}

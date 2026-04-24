@@ -1728,4 +1728,32 @@ export const api = {
       .then((r) => r.data),
   deleteSavedQuery: (id: string, queryId: string) =>
     http.delete(`/connections/${id}/saved-queries/${queryId}`).then((r) => r.data),
+
+  // ---- Feedback widget ----
+  submitFeedback: (input: {
+    message: string;
+    category: 'BUG' | 'FEATURE' | 'QUESTION' | 'OTHER';
+    sourcePath?: string;
+    email?: string;
+  }) => http.post('/feedback', input).then((r) => r.data),
+
+  // ---- Announcements ----
+  activeAnnouncements: () =>
+    http
+      .get<Array<{
+        id: string;
+        title: string;
+        body: string;
+        severity: 'INFO' | 'WARNING' | 'CRITICAL';
+        startsAt: string;
+        endsAt: string | null;
+        seen: boolean;
+        dismissedAt: string | null;
+      }>>('/announcements/active')
+      .then((r) => r.data),
+  markAnnouncementSeen: (id: string) => http.post(`/announcements/${id}/seen`).then((r) => r.data),
+  dismissAnnouncement: (id: string) => http.post(`/announcements/${id}/dismiss`).then((r) => r.data),
+
+  // ---- Feature flags ----
+  myFlags: () => http.get<Record<string, boolean>>('/flags/my').then((r) => r.data),
 };

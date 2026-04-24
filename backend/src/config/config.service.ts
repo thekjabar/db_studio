@@ -110,6 +110,12 @@ const EnvSchema = z.object({
   // `count() === 0` never triggers again.
   OPERATOR_BOOTSTRAP_EMAIL: z.string().transform((v) => v || undefined).optional(),
   OPERATOR_BOOTSTRAP_PASSWORD: z.string().transform((v) => v || undefined).optional(),
+  // When true, /api/auth/signup requires a valid invite code. Existing users
+  // stay logged in — the gate only blocks new account creation.
+  REQUIRE_INVITE_CODE_ON_SIGNUP: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -237,4 +243,5 @@ export class AppConfigService {
   }
   get operatorBootstrapEmail() { return this.env.OPERATOR_BOOTSTRAP_EMAIL; }
   get operatorBootstrapPassword() { return this.env.OPERATOR_BOOTSTRAP_PASSWORD; }
+  get requireInviteCode() { return this.env.REQUIRE_INVITE_CODE_ON_SIGNUP; }
 }

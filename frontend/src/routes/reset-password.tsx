@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { CheckCircle2, Database, Loader2 } from "lucide-react";
+import { CheckCircle2, Database, Loader2, Eye, EyeOff } from "lucide-react";
 import { api, extractErrorMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,8 @@ export default function ResetPasswordPage() {
   const nav = useNavigate();
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [showPw2, setShowPw2] = useState(false);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
 
@@ -66,25 +68,49 @@ export default function ResetPasswordPage() {
             <form onSubmit={submit} className="space-y-4">
               <div className="space-y-1.5">
                 <Label>New password</Label>
-                <Input
-                  type="password"
-                  required
-                  minLength={8}
-                  autoComplete="new-password"
-                  value={pw}
-                  onChange={(e) => setPw(e.target.value)}
-                  placeholder="At least 8 characters"
-                />
+                <div className="relative">
+                  <Input
+                    type={showPw ? "text" : "password"}
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    value={pw}
+                    onChange={(e) => setPw(e.target.value)}
+                    placeholder="At least 8 characters"
+                    className="pr-9"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPw((v) => !v)}
+                    tabIndex={-1}
+                    aria-label={showPw ? "Hide password" : "Show password"}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
               <div className="space-y-1.5">
                 <Label>Confirm password</Label>
-                <Input
-                  type="password"
-                  required
-                  autoComplete="new-password"
-                  value={pw2}
-                  onChange={(e) => setPw2(e.target.value)}
-                />
+                <div className="relative">
+                  <Input
+                    type={showPw2 ? "text" : "password"}
+                    required
+                    autoComplete="new-password"
+                    value={pw2}
+                    onChange={(e) => setPw2(e.target.value)}
+                    className="pr-9"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPw2((v) => !v)}
+                    tabIndex={-1}
+                    aria-label={showPw2 ? "Hide password" : "Show password"}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showPw2 ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading && <Loader2 className="h-4 w-4 animate-spin" />}

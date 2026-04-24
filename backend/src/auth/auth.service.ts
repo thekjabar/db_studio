@@ -86,6 +86,27 @@ export class AuthService {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) throw new ConflictException('Email already registered');
 
+    // Invite-gate: when REQUIRE_INVITE_CODE_ON_SIGNUP is on, the signup DTO
+    // must carry a valid code. Consume atomically so parallel signups don't
+    // both slip through a single-use code.
+    if ((this.cfg as unknown as { requireInviteCode?: boolean }).requireInviteCode) {
+      const code = dto.inviteCode?.trim().toUpperCase();
+      if (!code) throw new BadRequestException('Invite code required');
+      const row = await this.prisma.inviteCode.findUnique({ where: { code } });
+      if (!row) throw new BadRequestException('Invite code not found');
+      if (row.expiresAt && row.expiresAt < new Date()) throw new BadRequestException('Invite code expired');
+      if (row.assignedEmail && row.assignedEmail.toLowerCase() !== dto.email.toLowerCase()) {
+        throw new BadRequestException('Invite code does not match this email');
+      }
+      if (row.maxUses !== 0) {
+        const claim = await this.prisma.inviteCode.updateMany({
+          where: { code, usesRemaining: { gt: 0 } },
+          data: { usesRemaining: { decrement: 1 } },
+        });
+        if (claim.count === 0) throw new BadRequestException('Invite code already used');
+      }
+    }
+
     const passwordHash = await argon2.hash(dto.password, { type: argon2.argon2id });
     // If this install requires verification, leave emailVerifiedAt null so
     // login is blocked until the user clicks the link. Otherwise auto-verify

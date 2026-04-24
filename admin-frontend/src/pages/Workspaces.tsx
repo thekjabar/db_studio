@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Search, Pencil } from 'lucide-react';
+import { Search, Pencil, DollarSign } from 'lucide-react';
 import { api, money, relativeDate } from '@/lib/api';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,7 @@ export default function Workspaces() {
   const [status, setStatus] = useState<string>('all');
   const [offset, setOffset] = useState(0);
   const [target, setTarget] = useState<OverrideTarget | null>(null);
+  const [creditTarget, setCreditTarget] = useState<{ id: string; name: string } | null>(null);
   const limit = 50;
   const qc = useQueryClient();
 
@@ -112,7 +113,14 @@ export default function Workspaces() {
                 <td className="px-3 py-2 text-xs text-muted-foreground">
                   {w.subscription ? relativeDate(w.subscription.periodEnd) : '—'}
                 </td>
-                <td className="px-3 py-2 text-right">
+                <td className="px-3 py-2 text-right space-x-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCreditTarget({ id: w.id, name: w.name })}
+                  >
+                    <DollarSign className="h-3 w-3" /> Credit
+                  </Button>
                   <Button
                     size="sm"
                     variant="outline"
@@ -164,7 +172,92 @@ export default function Workspaces() {
           setTarget(null);
         }}
       />
+
+      <CreditDialog
+        target={creditTarget}
+        onClose={() => setCreditTarget(null)}
+        onSaved={() => {
+          qc.invalidateQueries({ queryKey: ['workspaces'] });
+          setCreditTarget(null);
+        }}
+      />
     </div>
+  );
+}
+
+function CreditDialog({
+  target,
+  onClose,
+  onSaved,
+}: {
+  target: { id: string; name: string } | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [dollars, setDollars] = useState(5);
+  const [reason, setReason] = useState('');
+  useStateSync(target, () => { setDollars(5); setReason(''); });
+
+  const save = useMutation({
+    mutationFn: () => {
+      if (!target) return Promise.reject(new Error('no target'));
+      return api.issueAdjustment(target.id, {
+        amountCents: -Math.round(dollars * 100),
+        reason,
+      });
+    },
+    onSuccess: () => {
+      toast.success('Credit issued');
+      onSaved();
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) => {
+      toast.error(e.response?.data?.message ?? 'Failed');
+    },
+  });
+
+  return (
+    <Dialog open={!!target} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm">
+        {target && (
+          <>
+            <DialogHeader>
+              <DialogTitle>Issue credit</DialogTitle>
+              <DialogDescription>{target.name}</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label>Amount (USD)</Label>
+                <Input
+                  type="number"
+                  min={0.5}
+                  step={0.5}
+                  value={dollars}
+                  onChange={(e) => setDollars(Math.max(0.01, parseFloat(e.target.value) || 0))}
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Subtracted from the next invoice. Recorded as a negative adjustment.
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Reason</Label>
+                <Textarea
+                  rows={2}
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="e.g. Goodwill credit for outage on 2026-04-22"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={onClose}>Cancel</Button>
+              <Button onClick={() => save.mutate()} disabled={save.isPending || !reason.trim() || dollars <= 0}>
+                Issue ${dollars.toFixed(2)} credit
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

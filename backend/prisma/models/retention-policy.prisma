@@ -1,0 +1,19 @@
+/// Operator-configurable pruning policies. A nightly job reads this table
+/// and deletes rows older than `keepDays` for each declared resource.
+/// Safer than hardcoded retention because an operator can dial it up for
+/// a compliance audit and then back down.
+model RetentionPolicy {
+  /// Which table the policy applies to. Enum-like names checked in the
+  /// sweep job: audit_log, query_history, ai_usage_day, slow_query_log,
+  /// abuse_event, feedback.
+  resource     String   @id
+  keepDays     Int
+  /// Last sweep run — operators use this to verify the job is alive.
+  lastRunAt    DateTime?
+  /// Rows deleted on the last run — surface a non-zero value as a green
+  /// tick, zero as "nothing to prune" (still healthy).
+  lastRunRowsDeleted Int @default(0)
+  updatedByOperatorId String?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+}

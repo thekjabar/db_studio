@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Download } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -35,15 +36,27 @@ export default function Audit() {
           Every operator action. Append-only.
         </p>
       </div>
-      <Select value={action} onValueChange={(v) => { setAction(v); setOffset(0); }}>
-        <SelectTrigger className="w-64">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All actions</SelectItem>
-          {ACTIONS.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
-        </SelectContent>
-      </Select>
+      <div className="flex items-center gap-2 flex-wrap">
+        <Select value={action} onValueChange={(v) => { setAction(v); setOffset(0); }}>
+          <SelectTrigger className="w-64">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All actions</SelectItem>
+            {ACTIONS.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Button variant="outline" asChild>
+          <a href={api.auditExportUrl('csv')} download>
+            <Download className="h-3 w-3" /> Export CSV
+          </a>
+        </Button>
+        <Button variant="outline" asChild>
+          <a href={api.auditExportUrl('jsonl')} download>
+            <Download className="h-3 w-3" /> Export JSONL
+          </a>
+        </Button>
+      </div>
       <Card className="overflow-hidden p-0">
         <table className="w-full text-sm">
           <thead className="bg-muted text-muted-foreground">

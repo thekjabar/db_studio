@@ -39,6 +39,15 @@ import { ApiKeysModule } from './api-keys/api-keys.module';
 import { CommonModule } from './common/common.module';
 import { HealthController } from './common/health.controller';
 import { OperatorModule } from './operator/operator.module';
+import { FeedbackModule } from './feedback/feedback.module';
+import { AnnouncementsModule } from './announcements/announcements.module';
+import { EmailTemplatesModule } from './email-templates/email-templates.module';
+import { UsageAnalyticsModule } from './usage-analytics/usage-analytics.module';
+import { BillingAdjustmentsModule } from './billing-adjustments/billing-adjustments.module';
+import { InviteCodesModule } from './invite-codes/invite-codes.module';
+import { AbuseModule } from './abuse/abuse.module';
+import { RetentionModule } from './retention/retention.module';
+import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
 
 @Module({
   imports: [
@@ -89,6 +98,15 @@ import { OperatorModule } from './operator/operator.module';
     ApiKeysModule,
     CommonModule,
     OperatorModule,
+    FeedbackModule,
+    AnnouncementsModule,
+    EmailTemplatesModule,
+    UsageAnalyticsModule,
+    BillingAdjustmentsModule,
+    InviteCodesModule,
+    AbuseModule,
+    RetentionModule,
+    FeatureFlagsModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

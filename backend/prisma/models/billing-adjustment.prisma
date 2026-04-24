@@ -1,0 +1,27 @@
+/// Manual credits and charge reversals on a workspace's subscription.
+/// Negative `amountCents` = credit (deducted from next invoice); positive
+/// = extra charge (rarely used, but captured for symmetry). Never applied
+/// retroactively — the next billing cycle reads the sum.
+model BillingAdjustment {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Cents. Negative = credit to customer. Clamped at the DTO layer so
+  /// an operator can't accidentally issue a $1M credit from a typo.
+  amountCents Int
+  currency    String   @default("USD")
+  /// Human-readable justification shown in audit UI and customer billing
+  /// history. Required.
+  reason      String
+  /// Which billing period the credit applies to. When null, applies to
+  /// whatever the current open period is at invoice time.
+  periodStart DateTime?
+  periodEnd   DateTime?
+  /// Operator who issued. Audit-restricted delete so history is preserved
+  /// even if the operator account is removed later.
+  operatorId  String
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId])
+  @@index([createdAt])
+}

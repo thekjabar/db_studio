@@ -16,6 +16,7 @@ import { applyDensity } from "@/lib/density";
 import { useRealtimeStatus } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
 import { useModal } from "@/components/modal-provider";
+import { AnnouncementBell } from "@/components/announcements";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Connection } from "@/lib/api";
@@ -119,6 +120,7 @@ export function TopBar({ connection, onOpenPalette, crumbs, onMenuClick }: Props
         >
           <RefreshCw className="h-4 w-4" />
         </Button>
+        <AnnouncementBell />
         <ThemeToggle />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

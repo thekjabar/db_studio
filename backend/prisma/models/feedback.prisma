@@ -1,0 +1,48 @@
+/// Customer-submitted feedback. The floating widget in the customer app
+/// creates rows here; operators triage in the admin inbox. No customer
+/// data beyond the message the user typed — no connection metadata, no
+/// screenshots of their own DB.
+model Feedback {
+  id          String          @id @default(cuid())
+  /// Nullable: if a logged-out user on a public dashboard submits feedback
+  /// we still want it. When present, a Cascade delete removes their row.
+  userId      String?
+  user        User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Email copied at submit time so we can reply even after account deletion.
+  email       String?
+  category    FeedbackCategory @default(OTHER)
+  /// Up to 2000 chars; enforced at the DTO layer.
+  message     String
+  /// URL the user was on when they clicked "Send feedback" — helps triage
+  /// UI bugs without needing impersonation.
+  sourcePath  String?
+  status      FeedbackStatus  @default(NEW)
+  /// Free-form operator-only notes. Not shown to the user. Appended to,
+  /// never overwritten from the UI.
+  internalNotes String?
+  /// Last operator reply text. Stored verbatim so we can resend/rewrite
+  /// without relying on the SMTP provider's archive.
+  replyText    String?
+  repliedAt    DateTime?
+  repliedByOperatorId String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([userId])
+}
+
+enum FeedbackCategory {
+  BUG
+  FEATURE
+  QUESTION
+  OTHER
+}
+
+enum FeedbackStatus {
+  NEW
+  TRIAGED
+  ANSWERED
+  CLOSED
+}

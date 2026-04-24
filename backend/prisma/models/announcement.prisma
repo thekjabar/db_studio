@@ -1,0 +1,49 @@
+/// Operator-composed broadcast shown in the customer app. Can target
+/// everyone or specific users/workspaces/plans. Dismissals are tracked per
+/// user so the banner doesn't keep re-appearing.
+model Announcement {
+  id          String              @id @default(cuid())
+  title       String
+  /// Markdown-ish body. We render it client-side with a strict sanitizer;
+  /// never treat this as trusted HTML because an operator typo shouldn't
+  /// break every customer's session.
+  body        String
+  severity    AnnouncementSeverity @default(INFO)
+  /// All users see it when null. When set, only users matching the
+  /// targeting JSON see it. Shape: { workspaceIds: [...], userIds: [...] }.
+  /// Plan targeting waits until we add plan IDs beyond "per-seat".
+  targeting   Json?
+  /// When the banner becomes visible. Starts now by default so you can
+  /// "post" immediately or schedule.
+  startsAt    DateTime            @default(now())
+  /// Optional end — after this time the announcement is archived and the
+  /// banner disappears for everyone (including users who haven't dismissed).
+  endsAt      DateTime?
+  createdByOperatorId String
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  views       AnnouncementView[]
+
+  @@index([startsAt, endsAt])
+}
+
+enum AnnouncementSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+/// Per-user dismissal record. Without this, re-logins would resurface
+/// already-seen banners.
+model AnnouncementView {
+  id             String       @id @default(cuid())
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seenAt         DateTime     @default(now())
+  dismissedAt    DateTime?
+
+  @@unique([announcementId, userId])
+  @@index([userId])
+}

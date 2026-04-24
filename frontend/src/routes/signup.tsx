@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Database, Loader2 } from "lucide-react";
+import { Database, Loader2, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +16,8 @@ export default function SignupPage() {
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const submit = async (e: FormEvent) => {
@@ -66,11 +68,21 @@ export default function SignupPage() {
             </div>
             <div className="space-y-1.5">
               <Label>Password</Label>
-              <Input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+              <PasswordInput
+                value={password}
+                onChange={setPassword}
+                show={showPassword}
+                onToggle={() => setShowPassword((v) => !v)}
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Confirm password</Label>
-              <Input type="password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+              <PasswordInput
+                value={confirm}
+                onChange={setConfirm}
+                show={showConfirm}
+                onToggle={() => setShowConfirm((v) => !v)}
+              />
             </div>
             <Button type="submit" className="w-full" disabled={loading}>
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -86,6 +98,39 @@ export default function SignupPage() {
           </Link>
         </p>
       </div>
+    </div>
+  );
+}
+
+function PasswordInput({
+  value,
+  onChange,
+  show,
+  onToggle,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  show: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="relative">
+      <Input
+        type={show ? "text" : "password"}
+        required
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="pr-9"
+      />
+      <button
+        type="button"
+        onClick={onToggle}
+        tabIndex={-1}
+        aria-label={show ? "Hide password" : "Show password"}
+        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+      >
+        {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
     </div>
   );
 }

@@ -15,6 +15,13 @@ export class SignupDto {
   @IsString()
   @Length(1, 80)
   displayName?: string;
+
+  /// Invite code. Required only when REQUIRE_INVITE_CODE_ON_SIGNUP is on —
+  /// the service-side gate validates and decrements.
+  @IsOptional()
+  @IsString()
+  @Length(1, 64)
+  inviteCode?: string;
 }
 
 export class LoginDto {

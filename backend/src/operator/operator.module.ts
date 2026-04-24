@@ -24,6 +24,8 @@ import { OperatorOperatorsController } from './operator-operators.controller';
     OperatorOperatorsController,
   ],
   providers: [OperatorAuthService, OperatorAuditService, AiQuotaService, OperatorGuard, SuperOperatorGuard],
-  exports: [OperatorAuditService, OperatorGuard, AiQuotaService],
+  // Re-export JwtModule so modules importing OperatorModule (to use
+  // OperatorGuard) don't also need to register their own JWT provider.
+  exports: [OperatorAuditService, OperatorGuard, AiQuotaService, JwtModule],
 })
 export class OperatorModule {}

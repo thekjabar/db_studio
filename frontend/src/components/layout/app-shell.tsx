@@ -5,6 +5,8 @@ import { api } from "@/lib/api";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./topbar";
 import { useViewport } from "@/lib/use-viewport";
+import { FeedbackWidget } from "@/components/feedback-widget";
+import { AnnouncementBanner } from "@/components/announcements";
 
 export function AppShell() {
   const { id } = useParams<{ id: string }>();
@@ -64,7 +66,9 @@ export function AppShell() {
   }
 
   return (
-    <div className="h-screen w-screen flex bg-background text-foreground overflow-hidden">
+    <div className="h-screen w-screen flex flex-col bg-background text-foreground overflow-hidden">
+      <AnnouncementBanner />
+      <div className="flex-1 flex min-h-0">
       {id && !isMobile && (
         <Sidebar
           connectionId={id}
@@ -111,6 +115,8 @@ export function AppShell() {
           <Outlet context={{ schema, setSchema }} />
         </main>
       </div>
+      </div>
+      <FeedbackWidget />
     </div>
   );
 }

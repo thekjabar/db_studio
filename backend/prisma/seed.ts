@@ -2,19 +2,46 @@ import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import * as argon2 from 'argon2';
+import { randomBytes } from 'node:crypto';
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
 });
 
-// Roles (OWNER / EDITOR / VIEWER) are per-Connection, not per-User —
-// they live on ConnectionMember. These seed users are intended to be
-// assigned those roles on connections created at runtime.
+// Seed passwords MUST come from env in any real deploy. If the env vars
+// aren't set we generate a random password per-user and print it once —
+// never commit defaults. Ship the .env.example with the expected names.
+function passwordFor(role: string, fallbackEnv: string): string {
+  const fromEnv = process.env[fallbackEnv];
+  if (fromEnv && fromEnv.length >= 8) return fromEnv;
+  const generated = randomBytes(12).toString('base64url');
+  console.warn(
+    `  !! ${fallbackEnv} not set — generated a random ${role} password (save this, it won't be shown again).`,
+  );
+  return generated;
+}
+
 const USERS = [
-  { email: 'owner@dbdash.local',   password: 'Owner!2345',  displayName: 'Owner Example' },
-  { email: 'editor@dbdash.local',  password: 'Editor!2345', displayName: 'Editor Example' },
-  { email: 'viewer@dbdash.local',  password: 'Viewer!2345', displayName: 'Viewer Example' },
-  { email: 'demo@dbdash.local',    password: 'Demo!23456',  displayName: 'Demo User' },
+  {
+    email: 'owner@dbdash.local',
+    password: passwordFor('owner', 'SEED_OWNER_PASSWORD'),
+    displayName: 'Owner Example',
+  },
+  {
+    email: 'editor@dbdash.local',
+    password: passwordFor('editor', 'SEED_EDITOR_PASSWORD'),
+    displayName: 'Editor Example',
+  },
+  {
+    email: 'viewer@dbdash.local',
+    password: passwordFor('viewer', 'SEED_VIEWER_PASSWORD'),
+    displayName: 'Viewer Example',
+  },
+  {
+    email: 'demo@dbdash.local',
+    password: passwordFor('demo', 'SEED_DEMO_PASSWORD'),
+    displayName: 'Demo User',
+  },
 ];
 
 async function main() {

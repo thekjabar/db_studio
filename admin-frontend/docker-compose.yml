@@ -1,0 +1,35 @@
+services:
+  admin-frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+    container_name: dbdash-admin-frontend
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_FRONTEND_PORT:-8081}:80"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=64m,mode=0755
+      - /var/run:size=16m,mode=0755
+      - /tmp:size=16m
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 128
+    # Reuses the backend's dbdash network so nginx can reach the API
+    # container by service name. Deploy admin.yourservice.com to this port.
+    networks: [dbdash]
+
+networks:
+  dbdash:
+    name: dbdash-net
+    external: true

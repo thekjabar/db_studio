@@ -15,6 +15,9 @@ model Workspace {
   /// deployments bind workspaces at creation time.
   organizationId String?
   organization   Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  /// Billing attached to this workspace. Null until first created — owner is
+  /// billing contact; seat count derives from WorkspaceMember.
+  subscription   Subscription?
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
 

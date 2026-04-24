@@ -1,0 +1,71 @@
+/// Operator — the humans who manage this SaaS instance (customer support,
+/// billing, incident response). Deliberately a separate table from `User`
+/// so a bug in customer auth cannot grant operator access, and so operator
+/// sessions can be rotated/revoked without touching customer sessions.
+///
+/// Operators NEVER have implicit access to customer database contents
+/// (connection configs, table data, query text). The operator API surface
+/// exposes only counts and metadata.
+model Operator {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  passwordHash    String
+  displayName     String?
+  /// Superuser — can create other operators and change billing settings.
+  /// Non-super operators can view + suspend + manage incidents only.
+  isSuper         Boolean   @default(false)
+  /// Set by another super operator when disabling an account. No JWT
+  /// verifies against a disabled row.
+  disabledAt      DateTime?
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  refreshTokens   OperatorRefreshToken[]
+  auditLogs       OperatorAuditLog[]
+
+  @@index([email])
+}
+
+/// Separate refresh tokens for operators so a compromised customer database
+/// doesn't leak admin session secrets.
+model OperatorRefreshToken {
+  id         String   @id @default(cuid())
+  operatorId String
+  operator   Operator @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  userAgent  String?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([operatorId])
+  @@index([expiresAt])
+}
+
+/// Append-only audit trail of every operator action (suspend user, change
+/// price, override subscription, etc). Never updated, never deleted — if you
+/// need to expire old rows, archive to cold storage first.
+model OperatorAuditLog {
+  id           String   @id @default(cuid())
+  operatorId   String
+  operator     Operator @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+  /// Coarse-grained action name, e.g. "USER_SUSPENDED", "PRICE_CHANGED",
+  /// "SUBSCRIPTION_OVERRIDE", "OPERATOR_CREATED".
+  action       String
+  /// What was affected. Free-form "User:abc123" / "Workspace:xyz" so one
+  /// table covers all subject types without join gymnastics.
+  targetType   String?
+  targetId     String?
+  /// Operator-supplied justification shown on the audit screen. Encourages
+  /// accountability and post-incident review.
+  reason       String?
+  /// JSON blob with before/after diff, IP, user-agent. Kept loose so we
+  /// don't need a migration per new action type.
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([operatorId])
+  @@index([createdAt])
+  @@index([action])
+}

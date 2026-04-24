@@ -91,6 +91,25 @@ const EnvSchema = z.object({
   METRICS_TOKEN: z.string().transform((v) => v || undefined).optional(),
   // Data retention (days). Older rows are pruned by the compliance sweep.
   RETENTION_AUDIT_DAYS: z.coerce.number().int().positive().default(365),
+  // --- Operator panel (admin subdomain) ---
+  // Separate JWT secret so a leak of the customer JWT secret doesn't give
+  // anyone admin access. Required in production; generated short-lived
+  // default in dev so `pnpm dev` works without extra setup.
+  OPERATOR_JWT_SECRET: z
+    .string()
+    .min(32, 'OPERATOR_JWT_SECRET must be >=32 chars')
+    .default('dev-operator-secret-change-me-0000000000000000'),
+  OPERATOR_JWT_TTL: z.string().default('30m'),
+  OPERATOR_REFRESH_TTL: z.string().default('1d'),
+  // Origins allowed to hit /api/operator — typically the admin.* subdomain.
+  // Kept separate from FRONTEND_ORIGIN so a CORS relax on the customer app
+  // doesn't accidentally open the operator API.
+  OPERATOR_ORIGIN: z.string().default('http://localhost:5174'),
+  // Bootstrap: when both set and no operators exist yet, the API seeds a
+  // super-operator on first boot. Safe because after bootstrap the check
+  // `count() === 0` never triggers again.
+  OPERATOR_BOOTSTRAP_EMAIL: z.string().transform((v) => v || undefined).optional(),
+  OPERATOR_BOOTSTRAP_PASSWORD: z.string().transform((v) => v || undefined).optional(),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -210,4 +229,12 @@ export class AppConfigService {
   get vaultTransitKey() { return this.env.VAULT_TRANSIT_KEY; }
   get metricsToken() { return this.env.METRICS_TOKEN; }
   get retentionAuditDays() { return this.env.RETENTION_AUDIT_DAYS; }
+  get operatorJwtSecret() { return this.env.OPERATOR_JWT_SECRET; }
+  get operatorJwtTtl() { return this.env.OPERATOR_JWT_TTL; }
+  get operatorRefreshTtl() { return this.env.OPERATOR_REFRESH_TTL; }
+  get operatorOrigins(): string[] {
+    return this.env.OPERATOR_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
+  }
+  get operatorBootstrapEmail() { return this.env.OPERATOR_BOOTSTRAP_EMAIL; }
+  get operatorBootstrapPassword() { return this.env.OPERATOR_BOOTSTRAP_PASSWORD; }
 }

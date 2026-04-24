@@ -58,14 +58,15 @@ async function bootstrap() {
   );
   app.use(cookieParser());
 
+  // CORS accepts both customer origins (FRONTEND_ORIGIN) and operator
+  // origins (OPERATOR_ORIGIN). Kept in one allow-list because splitting
+  // CORS by URL path requires a custom middleware; instead we rely on
+  // OperatorGuard to reject non-operator tokens on /api/operator/*.
+  const allowedOrigins = [...config.frontendOrigins, ...config.operatorOrigins];
   app.enableCors({
-    origin: config.frontendOrigins,
+    origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    // Make custom response headers readable from the browser. Without this,
-    // fetch/xhr silently strip anything outside the CORS-safelisted set —
-    // which breaks the backup progress UI (it reads the estimate + filename
-    // from headers set by the streaming response).
     exposedHeaders: [
       'Content-Disposition',
       'X-Dbdash-Estimate-Bytes',

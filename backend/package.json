@@ -23,7 +23,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:bootstrap": "prisma bootstrap",
-    "prisma:seed": "prisma db seed"
+    "prisma:seed": "prisma db seed",
+    "operator:create": "ts-node scripts/create-operator.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",

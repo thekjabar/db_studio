@@ -11,6 +11,7 @@ import { AppConfigService } from '../config/config.service';
 import { ConnectionsService } from '../connections/connections.service';
 import { RbacService } from '../rbac/rbac.service';
 import { AiProviderFactory } from './providers/ai-provider.factory';
+import { AiQuotaService } from '../operator/ai-quota.service';
 
 /**
  * Persistent AI chat: conversation scoped to a connection. Each turn we
@@ -30,6 +31,7 @@ export class AiChatService {
     private readonly connections: ConnectionsService,
     private readonly rbac: RbacService,
     private readonly providers: AiProviderFactory,
+    private readonly quota: AiQuotaService,
   ) {}
 
   async list(userId: string, connectionId: string) {
@@ -81,6 +83,10 @@ export class AiChatService {
     if (!content) throw new BadRequestException('Message required');
     if (content.length > 4000) throw new BadRequestException('Message too long');
     await this.rbac.require(userId, input.connectionId, Role.VIEWER);
+    // Billing gate: 402 if user has hit their daily allowance. Runs after
+    // validation so malformed requests don't consume a call, but before we
+    // persist anything or call the model.
+    await this.quota.consume(userId);
 
     // Get or create the chat. First message becomes the title.
     let chatId = input.chatId;

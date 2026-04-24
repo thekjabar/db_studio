@@ -6,9 +6,10 @@ import { AiChatController } from './ai-chat.controller';
 import { AiProviderFactory } from './providers/ai-provider.factory';
 import { ConnectionsModule } from '../connections/connections.module';
 import { RbacModule } from '../rbac/rbac.module';
+import { OperatorModule } from '../operator/operator.module';
 
 @Module({
-  imports: [ConnectionsModule, RbacModule],
+  imports: [ConnectionsModule, RbacModule, OperatorModule],
   controllers: [AiController, AiChatController],
   providers: [AiService, AiChatService, AiProviderFactory],
 })

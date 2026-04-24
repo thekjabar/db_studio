@@ -38,6 +38,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 import { ApiKeysModule } from './api-keys/api-keys.module';
 import { CommonModule } from './common/common.module';
 import { HealthController } from './common/health.controller';
+import { OperatorModule } from './operator/operator.module';
 
 @Module({
   imports: [
@@ -87,6 +88,7 @@ import { HealthController } from './common/health.controller';
     WebhooksModule,
     ApiKeysModule,
     CommonModule,
+    OperatorModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

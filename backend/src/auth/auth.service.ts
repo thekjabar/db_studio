@@ -144,6 +144,17 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    // Suspended accounts can't log in, even with correct credentials. This
+    // is the operator-panel-controlled block — see OperatorUsersController.
+    if (user.suspendedAt) {
+      await this.audit.log({ userId: user.id, action: 'LOGIN_SUSPENDED', ...meta });
+      throw new ForbiddenException(
+        user.suspendedReason
+          ? `Account suspended: ${user.suspendedReason}`
+          : 'Account suspended. Contact support to restore access.',
+      );
+    }
+
     if (user.totpSecret?.enabled) {
       if (!dto.totpCode) throw new UnauthorizedException('TOTP code required');
       const secret = await this.crypto.decrypt(user.totpSecret.secretCt, `totp:${user.id}`);

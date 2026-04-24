@@ -4,8 +4,10 @@ import { AppConfigService } from '../config/config.service';
 import { ConnectionsService } from '../connections/connections.service';
 import { AiProviderFactory } from './providers/ai-provider.factory';
 import { pickRelevantTables } from './ai-chat.service';
+import { AiQuotaService } from '../operator/ai-quota.service';
 
 interface GenerateArgs {
+  userId: string;
   connectionId: string;
   prompt: string;
   /** Optional schema filter — e.g. "public". When absent, send every schema. */
@@ -25,15 +27,22 @@ export class AiService {
     private readonly cfg: AppConfigService,
     private readonly connections: ConnectionsService,
     private readonly providers: AiProviderFactory,
+    private readonly quota: AiQuotaService,
   ) {}
 
-  async generateSql({ connectionId, prompt, schema }: GenerateArgs): Promise<GeneratedSql> {
+  async generateSql({ userId, connectionId, prompt, schema }: GenerateArgs): Promise<GeneratedSql> {
     const provider = this.providers.primary;
     if (!provider || !provider.enabled) {
       throw new ServiceUnavailableException(
         'AI is disabled on this server — configure at least one provider (ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, …).',
       );
     }
+    // Billing gate: this throws 402 if the user is over their daily cap,
+    // suspended, or belongs to no active workspace. Call BEFORE any
+    // expensive work so we don't pay a provider for a request we'll
+    // refuse to deliver.
+    await this.quota.consume(userId);
+
     const clean = prompt.trim();
     if (!clean) throw new BadRequestException('Prompt is required');
     if (clean.length > 4_000) throw new BadRequestException('Prompt too long');

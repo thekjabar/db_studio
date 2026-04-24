@@ -1,0 +1,78 @@
+/// Singleton holding the current global pricing. Row with id="singleton"
+/// is the one we always read. Never delete; update in place and audit-log
+/// every change. Put all prices in cents to avoid floating-point drift.
+model BillingSettings {
+  id                     String   @id @default("singleton")
+  /// Monthly price per seat (= per workspace member). USD cents.
+  pricePerSeatCents      Int      @default(1000)
+  currency               String   @default("USD")
+  /// Daily free AI calls every non-suspended user gets as part of their seat.
+  dailyFreeAiCalls       Int      @default(10)
+  /// How many extra calls per day one top-up pack grants for the month.
+  aiTopUpCallsPerPack    Int      @default(10)
+  /// Monthly price of one top-up pack. USD cents.
+  aiTopUpPriceCents      Int      @default(100)
+  /// Last operator who changed settings — for audit display.
+  updatedByOperatorId    String?
+  updatedAt              DateTime @updatedAt
+  createdAt              DateTime @default(now())
+}
+
+/// Per-workspace subscription. The workspace owner is the billing contact.
+/// Seat count is derived from WorkspaceMember (not stored) so it can never
+/// drift from reality — billing periods snapshot it at close.
+model Subscription {
+  id                 String             @id @default(cuid())
+  workspaceId        String             @unique
+  workspace          Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  status             SubscriptionStatus @default(TRIALING)
+  /// When the current billing period started. Renewed monthly by the
+  /// scheduler. Manual overrides also set this to "now".
+  periodStart        DateTime           @default(now())
+  /// End of the current billing period. Access ends here if unpaid.
+  periodEnd          DateTime
+  /// Operator-supplied override — when non-null, this wins over normal
+  /// billing automation. E.g. "comp for 3 months during onboarding".
+  manualOverrideNote String?
+  /// AI top-up packs active for the current period. Each pack = one month
+  /// of (aiTopUpCallsPerPack) extra calls/day for every user in the
+  /// workspace. Persisted on the subscription so the AI guard can read it
+  /// in one query.
+  aiTopUpPacks       Int                @default(0)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([status])
+  @@index([periodEnd])
+}
+
+enum SubscriptionStatus {
+  /// Initial state — not yet paid. Full access during trial window.
+  TRIALING
+  /// Paid and current.
+  ACTIVE
+  /// Payment failed; grace period before SUSPENDED.
+  PAST_DUE
+  /// Access revoked. Reads still work (so they can export) but no AI,
+  /// no new connections, no queries on user data.
+  SUSPENDED
+  /// Customer cancelled; access ends at periodEnd.
+  CANCELLED
+}
+
+/// Per-user per-day AI call counter. Upsert on every AI call. Cheap to
+/// query (single row lookup by (userId, day)) and easy to prune monthly.
+model AiUsageDay {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Calendar day in UTC formatted YYYY-MM-DD. String, not DateTime, so
+  /// the uniqueness constraint is timezone-proof.
+  day       String
+  callsUsed Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, day])
+  @@index([day])
+}

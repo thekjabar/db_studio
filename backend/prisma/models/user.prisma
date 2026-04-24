@@ -13,6 +13,16 @@ model User {
   /// self-host has an admin out of the box. Subsequent admins must be
   /// granted by an existing admin (or via direct SQL).
   isAdmin         Boolean           @default(false)
+  /// Account lifecycle controlled by operators. Suspended users can't log in,
+  /// can't use AI, and workspaces they own stop accruing usage. Never
+  /// decrypted/joined with customer data — managed from the operator panel.
+  suspendedAt     DateTime?
+  /// Free-form reason shown to the operator (not the user) when looking at
+  /// audit history. E.g. "payment failed 3x", "ToS violation: scraping".
+  suspendedReason String?
+  /// Per-day AI usage counters. Daily free allowance + workspace top-up packs
+  /// both feed into the guard at request time.
+  aiUsage         AiUsageDay[]
   totpSecret      TotpSecret?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt

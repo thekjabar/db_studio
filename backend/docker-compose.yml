@@ -138,6 +138,12 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
       SLOW_QUERY_THRESHOLD_MS: ${SLOW_QUERY_THRESHOLD_MS:-1000}
       SLOW_QUERY_RETENTION: ${SLOW_QUERY_RETENTION:-10000}
+      OPERATOR_JWT_SECRET: ${OPERATOR_JWT_SECRET:-dev-operator-secret-change-me-0000000000000000}
+      OPERATOR_JWT_TTL: ${OPERATOR_JWT_TTL:-30m}
+      OPERATOR_REFRESH_TTL: ${OPERATOR_REFRESH_TTL:-1d}
+      OPERATOR_ORIGIN: ${OPERATOR_ORIGIN:-http://localhost:5174,http://localhost:8081}
+      OPERATOR_BOOTSTRAP_EMAIL: ${OPERATOR_BOOTSTRAP_EMAIL:-}
+      OPERATOR_BOOTSTRAP_PASSWORD: ${OPERATOR_BOOTSTRAP_PASSWORD:-}
     entrypoint: ["/usr/bin/tini", "--", "sh", "-c", "node_modules/.bin/prisma migrate deploy && exec node dist/main.js"]
     ports:
       - "${API_PORT:-3000}:3000"

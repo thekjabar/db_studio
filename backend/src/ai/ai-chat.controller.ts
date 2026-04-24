@@ -3,6 +3,7 @@ import { IsOptional, IsString, Length } from 'class-validator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
 import { AiChatService } from './ai-chat.service';
+import { AiQuotaService } from '../operator/ai-quota.service';
 
 class SendMessageDto {
   @IsOptional() @IsString() chatId?: string;
@@ -13,7 +14,15 @@ class SendMessageDto {
 @Controller('ai/chats')
 @UseGuards(JwtAuthGuard)
 export class AiChatController {
-  constructor(private readonly svc: AiChatService) {}
+  constructor(
+    private readonly svc: AiChatService,
+    private readonly quota: AiQuotaService,
+  ) {}
+
+  @Get('quota')
+  quotaStatus(@CurrentUser() user: AuthUser) {
+    return this.quota.status(user.id);
+  }
 
   @Get()
   list(@CurrentUser() user: AuthUser, @Query('connectionId') connectionId: string) {

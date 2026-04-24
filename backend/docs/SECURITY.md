@@ -201,7 +201,105 @@ Unlock at boot with a key from a TPM, a remote unlock service (dracut
 
 ---
 
-## Layer 5 — Client-held keys (optional, per-connection)
+## Layer 5 — Operational hardening (shrink the RCE blast radius)
+
+No cryptographic layer survives its own process being pwned — once an
+attacker is running code inside the API, they can ask your own code to
+decrypt things. What you *can* do is make that foothold expensive to
+obtain and useless to keep. All of this is defense in depth; individually
+each step costs little, together they turn an RCE from "game over" into
+"contained incident."
+
+### Container-level hardening (already in compose)
+
+The `backend/docker-compose.yml` and `frontend/docker-compose.yml`
+files ship with:
+
+- **`read_only: true` rootfs** — the attacker can't drop a persistent
+  binary or rewrite the app. A `tmpfs` mounts `/tmp` (scratch space for
+  pg_dump, Node sourcemaps) and is wiped on every restart.
+- **`cap_drop: [ALL]`** — strip every Linux capability. Services add
+  back only what they need (`NET_BIND_SERVICE` for nginx on port 80,
+  `CHOWN/FOWNER/SETUID/SETGID` for Postgres startup). This kills whole
+  classes of privilege-escalation exploits.
+- **`security_opt: [no-new-privileges:true]`** — the kernel refuses
+  to honor setuid bits inside the container, so an attacker can't
+  chain through a suid binary.
+- **Non-root user** — the API already runs as `node`, nginx as `app`.
+  Combined with the above, the container is effectively unprivileged.
+- **`mem_limit` / `pids_limit`** — bounds so a runaway or DoS can't
+  saturate the host.
+- **Postgres port bound to 127.0.0.1** — only processes on the host
+  can connect, not anything on the network.
+
+None of this requires action from you — `docker compose up` gives you
+all of it. But if you deploy to Kubernetes, mirror these settings in
+your pod spec (`securityContext.readOnlyRootFilesystem`, `capabilities.drop: ALL`,
+`allowPrivilegeEscalation: false`, `runAsNonRoot: true`).
+
+### Short-lived KMS credentials
+
+The longer an attacker can use the API's KMS credentials, the more rows
+they can decrypt. Bound the window:
+
+- **AWS**: deploy on an EC2 instance or ECS task with an IAM role. The
+  credentials are short-lived STS tokens (default ~6 hours) that auto-rotate.
+  Don't use long-lived access keys in env vars.
+- **GCP**: use Workload Identity (GKE) or the attached VM service account.
+  Again, short-lived tokens.
+- **Vault**: use AppRole with a 15-minute token TTL + renewal sidecar.
+  Static `VAULT_TOKEN` in `.env` is convenient for dev; don't ship it.
+
+An attacker with a stolen credential then has minutes to exfiltrate,
+not years. Combined with KMS audit logs, you catch the breach in near
+real time.
+
+### Rate-limit KMS unwraps
+
+AWS KMS allows throttling via `kms:DescribeKey` quotas and request-count
+alarms. Set an alarm for **>50 `Decrypt` calls per minute** — your app
+only unwraps when a user runs a query, so 500 decrypts/min means
+something is wrong. Page on it.
+
+### Alert on anomalous patterns
+
+Wire these alerts (we don't enforce them, but you should watch for them):
+
+- **Bulk decrypt**: > 10x normal `Decrypt` volume in 5-min window → page.
+- **Failed login spikes**: per-email > 50 in 10 min, per-IP > 500 in 10 min.
+- **New admin actions from new IP**: workspace-owner action from an IP
+  that hasn't seen that user before.
+- **Audit-log deletion attempts**: the audit table should be append-only;
+  a DELETE is a red flag.
+
+### Dependency hygiene
+
+An RCE almost always enters through a vulnerable dependency. Minimum:
+
+- **Renovate or Dependabot** on both `backend/package.json` and
+  `frontend/package.json`. Merge patch/minor weekly.
+- **`pnpm audit`** in CI — fail the build on high/critical.
+- **Pin Docker base images by digest**, not tag. `node:22-bookworm-slim`
+  changes; `node:22-bookworm-slim@sha256:abc123...` doesn't.
+- **Rebuild and redeploy monthly** even if nothing has changed in your
+  code — to pick up base-image CVE patches.
+
+### Runtime monitoring (optional, high-leverage)
+
+For hosted deployments consider:
+
+- **[Falco](https://falco.org/)** or AWS GuardDuty Runtime Monitoring —
+  detects "process spawned a shell" and "outbound network connection to
+  new IP" inside containers. Near-instant RCE detection.
+- **eBPF-based tools** (Cilium Tetragon, Datadog Cloud Workload Security)
+  for deeper syscall-level visibility.
+
+These are overkill for single-tenant self-host but table-stakes for
+multi-tenant SaaS.
+
+---
+
+## Layer 6 — Client-held keys (optional, per-connection)
 
 See [CLIENT_HELD_KEYS.md](CLIENT_HELD_KEYS.md). Users encrypt a
 connection's credentials in the browser with a passphrase. The server
@@ -225,6 +323,13 @@ scheduled queries and webhooks for that connection.
 | `COOKIE_SECURE=true` in production | |
 | Sentry DSN set so decryption failures alert you | |
 | Periodic restore test from an encrypted backup | |
+| Running containers have `read_only: true`, `cap_drop: [ALL]`, `no-new-privileges` | |
+| Postgres port bound to `127.0.0.1`, not `0.0.0.0` | |
+| Short-lived KMS credentials (IAM role / Workload Identity / Vault AppRole) — no long-lived keys in env | |
+| Renovate / Dependabot merging patch & minor weekly | |
+| CloudWatch / Stackdriver alarm on >50 `Decrypt` calls/min | |
+| Monthly rebuild/redeploy to pick up base-image CVE patches | |
+| Docker base images pinned by digest (prod) | |
 
 ---
 

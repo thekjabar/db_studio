@@ -11,6 +11,28 @@ services:
     restart: unless-stopped
     ports:
       - "${FRONTEND_PORT:-8080}:80"
+    # Defense in depth — an XSS-exploitable static-asset proxy shouldn't
+    # become a pivot point. nginx writes logs to stdout (already set in
+    # nginx.conf) and keeps its worker cache in tmpfs.
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=64m,mode=0755
+      - /var/run:size=16m,mode=0755
+      - /tmp:size=16m
+    cap_drop:
+      - ALL
+    # nginx needs these two to bind port 80 and drop privs to the `app` user.
+    # If you change EXPOSE to 8080+ in the Dockerfile, NET_BIND_SERVICE can be
+    # dropped too.
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 128
     # Join the network created by backend/docker-compose.yml so nginx can
     # reach the `api` service by name. The backend stack must be up first.
     networks: [dbdash]

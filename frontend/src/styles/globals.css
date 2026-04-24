@@ -156,3 +156,140 @@ body {
     radial-gradient(ellipse 60% 40% at 80% 90%, rgba(62, 207, 142, 0.08), transparent 60%),
     hsl(var(--background));
 }
+
+/* Landing hero demo helpers. */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes packetFlow {
+  from { transform: translateX(0); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  to   { transform: translateX(var(--packet-distance, 300px)); opacity: 0; }
+}
+
+/* Pulse around the hero card whenever the act changes. Starts bright,
+   fades to nothing over 1.2s. React re-triggers it via `key={act}`. */
+@keyframes heroActGlow {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Slow ambient orb drift — subtle parallax behind the hero. */
+@keyframes heroOrbDrift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25%      { transform: translate(20px, -15px) scale(1.05); }
+  50%      { transform: translate(-10px, 20px) scale(0.95); }
+  75%      { transform: translate(15px, 10px) scale(1.02); }
+}
+
+/* Feature-chip drift: slow sideways float with a tiny bob. Offsets per
+   chip via animation-delay so the motion never syncs up. */
+@keyframes heroChipDrift {
+  0%   { transform: translateX(0) translateY(0); opacity: 0.65; }
+  50%  { transform: translateX(30px) translateY(-6px); opacity: 0.9; }
+  100% { transform: translateX(0) translateY(0); opacity: 0.65; }
+}
+
+/* Landing page backdrop — dot grid drift + light rays sweeping. These run
+   forever so we keep them cheap: only CSS, no JS, only `background-position`
+   and `transform` / `opacity` which the compositor can handle. */
+@keyframes landingGridDrift {
+  0%   { background-position: 0 0; }
+  100% { background-position: 280px 280px; }
+}
+
+@keyframes landingRaySweep {
+  0%   { transform: translateX(-40%) rotate(-8deg); opacity: 0; }
+  10%  { opacity: 1; }
+  50%  { opacity: 0.9; }
+  90%  { opacity: 1; }
+  100% { transform: translateX(40%) rotate(-8deg); opacity: 0; }
+}
+
+/* Marquee: infinite horizontal scroll for the integration logos strip.
+   We translate by -50% because the content is duplicated and we want a
+   seamless wrap. */
+@keyframes landingMarquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+/* Light-streak pulse: a line sweeps along an SVG path. Used in the
+   how-it-works connector diagram so the "flow" between steps is visible. */
+@keyframes landingStreakFlow {
+  0%   { stroke-dashoffset: 200; opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+/* SQL editor toolbar's scrollable zone: keep it scrollable (trackpad swipe,
+   shift+wheel, keyboard arrows) but hide the scrollbar visually. Firefox
+   uses `scrollbar-width: none`; WebKit uses the pseudo-element. */
+.sql-toolbar-scroll {
+  scrollbar-width: none;
+}
+.sql-toolbar-scroll::-webkit-scrollbar {
+  display: none;
+  height: 0;
+  width: 0;
+}
+
+/* Feature-card hover gradient border. A conic gradient sits behind each
+   card (via ::before) and only shows on hover. The 1px of padding on the
+   outer div lets it peek through exactly at the border ring. */
+.feature-card-gradient::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--angle, 0deg),
+    transparent 0deg,
+    rgba(62, 207, 142, 0.55) 30deg,
+    transparent 60deg,
+    transparent 360deg
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  animation: featureCardSpin 4s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+.feature-card-gradient > * {
+  position: relative;
+  z-index: 1;
+}
+.feature-card-gradient:hover::before {
+  opacity: 1;
+}
+@keyframes featureCardSpin {
+  to { --angle: 360deg; }
+}
+/* Register so --angle animates. */
+@property --angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+/* Respect reduced-motion for all the landing animations above. Apply
+   globally so any new keyframe we add is covered without ceremony. */
+@media (prefers-reduced-motion: reduce) {
+  .landing-backdrop *,
+  .landing-animations * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* When someone asks for less motion, freeze the demo to final frame. */
+@media (prefers-reduced-motion: reduce) {
+  .landing-hero-respect-rm * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

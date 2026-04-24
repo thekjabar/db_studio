@@ -374,48 +374,67 @@ export default function SqlRoute() {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
+        {/* Toolbar split into two zones:
+            - Left (pinned, never scrolls): Run + Limit. These are the
+              must-always-see controls — hiding them would be hostile UX.
+            - Right (horizontally scrollable): every secondary action. The
+              scrollbar is hidden visually; users scroll by trackpad swipe,
+              shift+wheel, or keyboard arrows. No wrap, no clipping. */}
         <div className="flex items-center gap-2 px-4 py-2 border-b border-border">
-          <Button
-            size="sm"
-            onClick={async () => {
-              if (!sql.trim()) return;
-              if (maxRows === 0) {
-                const ok = await modal.confirm({
-                  title: "Run without a row cap?",
-                  description:
-                    "Unbounded SELECT on a large table can freeze the browser and stress the database. Continue?",
-                  confirmLabel: "Run anyway",
-                  destructive: true,
-                });
-                if (!ok) return;
-              }
-              run.mutate({ sql });
-            }}
-            disabled={run.isPending || !sql.trim()}
-          >
-            {run.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-            Run
-            <kbd className="ml-1 rounded border border-border bg-background/30 px-1 text-[10px]">Ctrl ↵</kbd>
-          </Button>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span>Limit</span>
-            <Select
-              value={String(maxRows)}
-              onValueChange={(v) => setMaxRows(parseInt(v, 10))}
+          {/* Pinned zone */}
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              size="sm"
+              onClick={async () => {
+                if (!sql.trim()) return;
+                if (maxRows === 0) {
+                  const ok = await modal.confirm({
+                    title: "Run without a row cap?",
+                    description:
+                      "Unbounded SELECT on a large table can freeze the browser and stress the database. Continue?",
+                    confirmLabel: "Run anyway",
+                    destructive: true,
+                  });
+                  if (!ok) return;
+                }
+                run.mutate({ sql });
+              }}
+              disabled={run.isPending || !sql.trim()}
             >
-              <SelectTrigger className="h-7 w-28 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="100">100</SelectItem>
-                <SelectItem value="500">500</SelectItem>
-                <SelectItem value="1000">1,000</SelectItem>
-                <SelectItem value="5000">5,000</SelectItem>
-                <SelectItem value="10000">10,000</SelectItem>
-                <SelectItem value="0">No cap</SelectItem>
-              </SelectContent>
-            </Select>
+              {run.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              Run
+              <kbd className="ml-1 rounded border border-border bg-background/30 px-1 text-[10px]">Ctrl ↵</kbd>
+            </Button>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span>Limit</span>
+              <Select
+                value={String(maxRows)}
+                onValueChange={(v) => setMaxRows(parseInt(v, 10))}
+              >
+                <SelectTrigger className="h-7 w-28 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="100">100</SelectItem>
+                  <SelectItem value="500">500</SelectItem>
+                  <SelectItem value="1000">1,000</SelectItem>
+                  <SelectItem value="5000">5,000</SelectItem>
+                  <SelectItem value="10000">10,000</SelectItem>
+                  <SelectItem value="0">No cap</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
+
+          {/* Divider between pinned + scrollable zones so the split reads as
+              intentional instead of accidental spacing. */}
+          <div className="h-6 w-px bg-border shrink-0 mx-1" />
+
+          {/* Scrollable zone — all secondary actions. `min-w-0` is critical
+              on a flex child that should shrink below its content width;
+              without it, `overflow-x-auto` has nothing to clip and the row
+              blows past the parent. */}
+          <div className="flex items-center gap-2 min-w-0 flex-1 overflow-x-auto sql-toolbar-scroll [&>*]:shrink-0 whitespace-nowrap">
           <Button size="sm" variant="outline" onClick={() => setAiOpen(true)}>
             <Sparkles className="h-3.5 w-3.5" /> Ask AI
           </Button>
@@ -534,6 +553,7 @@ export default function SqlRoute() {
               {result.durationMs}ms
             </span>
           )}
+          </div>
         </div>
 
         <div className="h-2/5 min-h-45 border-b border-border">

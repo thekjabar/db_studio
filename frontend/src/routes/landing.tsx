@@ -1,103 +1,24 @@
 import { Link } from "react-router-dom";
-import {
-  ArrowRight,
-  BookOpen,
-  Camera,
-  Database,
-  History,
-  Key,
-  LayoutDashboard,
-  Mail,
-  Send,
-  ShieldCheck,
-  Sparkles,
-  Table2,
-  Timer,
-  Webhook,
-  Workflow,
-} from "lucide-react";
+import { ArrowRight, Database, Sparkles } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/lib/auth-store";
+import { LandingHeroDemo } from "@/components/landing-hero-demo";
+import { AnimatedBackdrop } from "@/components/animated-backdrop";
+import { LandingHowItWorks } from "@/components/landing-how-it-works";
+import { LandingStats } from "@/components/landing-stats";
+import { LandingMarquee } from "@/components/landing-marquee";
+import { LandingShowcase } from "@/components/landing-showcase";
+import { LandingFeatureCards } from "@/components/landing-feature-cards";
+import { ScrollReveal } from "@/components/scroll-reveal";
 
-const features = [
-  {
-    icon: Table2,
-    title: "Every dialect, one UI",
-    body: "Postgres, MySQL, SQL Server, SQLite. Same keyboard shortcuts, same data grid, same joins across them in a single query.",
-  },
-  {
-    icon: Sparkles,
-    title: "AI SQL assistant",
-    body: "Describe what you want. Get back a query you can read, edit, and share. Schema passed as context so suggestions actually hit real tables.",
-  },
-  {
-    icon: LayoutDashboard,
-    title: "Dashboards from queries",
-    body: "Pin a saved query to a chart. Line, bar, area, pie. No drag-and-drop report builder — just SQL in, chart out.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "Role-based access",
-    body: "Workspaces, per-connection roles (owner/editor/viewer), per-table grants, column masking. No surprises in prod.",
-  },
-  {
-    icon: Timer,
-    title: "Scheduled queries",
-    body: "Cron your SQL, email the CSV. Slow-query log captures anything over a threshold, grouped by shape.",
-  },
-  {
-    icon: Webhook,
-    title: "Webhooks",
-    body: "POST JSON when a watched row changes. HMAC-signed, retried with backoff.",
-  },
-  {
-    icon: Workflow,
-    title: "Multi-DB joins",
-    body: "Join tables across two connections with DuckDB under the hood. Query MySQL + Postgres + SQLite in the same SELECT.",
-  },
-  {
-    icon: Key,
-    title: "API keys",
-    body: "Scripts talk to the same engine your UI talks to. Scoped, revocable, rate-limited.",
-  },
-  {
-    icon: BookOpen,
-    title: "Audit + revert",
-    body: "Every row change is logged with before/after. One click to roll back a bad UPDATE.",
-  },
-  {
-    icon: ShieldCheck,
-    title: "SSO for workspaces",
-    body: "Bring your own IdP. OpenID Connect for Okta, Azure AD, Google Workspace, Auth0, Keycloak — configured per workspace.",
-  },
-  {
-    icon: History,
-    title: "Team query history",
-    body: "See what the team ran, when, and against which connection. Filter by user, action, or SQL text. Open any query back in the editor.",
-  },
-  {
-    icon: Camera,
-    title: "Diff-mode migrations",
-    body: "Snapshot your schema before a change, then generate the ALTER statements that take it to the current live state.",
-  },
-  {
-    icon: Send,
-    title: "One-click result delivery",
-    body: "Send any query's result to email, Slack, or an HTTPS webhook — without scheduling it. CSV for email, previewed tables for Slack.",
-  },
-  {
-    icon: Mail,
-    title: "Self-serve password + email",
-    body: "Password reset, email verification, per-email login cooldown, and SMTP-aware fallback for single-user self-hosts.",
-  },
-];
 
 export default function LandingPage() {
   const accessToken = useAuth((s) => s.accessToken);
   const isAuthed = !!accessToken;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="relative min-h-screen bg-background text-foreground overflow-x-hidden">
+      <AnimatedBackdrop />
       <header className="h-14 flex items-center justify-between px-6 border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-20">
         <Link to="/" className="flex items-center gap-2 font-semibold">
           <Database className="h-5 w-5 text-primary" />
@@ -131,83 +52,124 @@ export default function LandingPage() {
         </div>
       </header>
 
-      {/* Hero */}
-      <section className="max-w-5xl mx-auto px-6 py-20 sm:py-28 text-center">
-        <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground mb-6">
-          <Sparkles className="h-3 w-3" />
-          Every tool a DB admin actually needs, in one place
-        </div>
-        <h1 className="text-4xl sm:text-6xl font-semibold tracking-tight">
-          The database studio for teams who
-          <br />
-          <span className="text-primary">don't want five tools</span>.
-        </h1>
-        <p className="mt-6 text-lg text-muted-foreground max-w-2xl mx-auto">
-          Browse, query, schedule, back up, and share work across Postgres, MySQL, SQL Server, and
-          SQLite. One interface, role-aware, with an AI that actually knows your schema.
-        </p>
-        <div className="mt-8 flex items-center justify-center gap-3 flex-wrap">
-          {isAuthed ? (
-            <Link
-              to="/connections"
-              className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-5 py-2.5 text-sm font-medium"
-            >
-              Go to your connections <ArrowRight className="h-4 w-4" />
-            </Link>
-          ) : (
-            <>
-              <Link
-                to="/signup"
-                className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-5 py-2.5 text-sm font-medium"
-              >
-                Get started free <ArrowRight className="h-4 w-4" />
-              </Link>
-              <Link
-                to="/login"
-                className="inline-flex items-center gap-2 border border-border hover:bg-accent rounded-md px-5 py-2.5 text-sm"
-              >
-                Sign in
-              </Link>
-            </>
-          )}
-        </div>
-      </section>
-
-      {/* Feature grid */}
-      <section className="max-w-6xl mx-auto px-6 pb-20">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {features.map((f) => (
-            <div
-              key={f.title}
-              className="rounded-lg border border-border bg-card p-5 hover:border-primary/40 transition-colors"
-            >
-              <div className="h-8 w-8 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center mb-3">
-                <f.icon className="h-4 w-4 text-primary" />
-              </div>
-              <div className="font-semibold mb-1">{f.title}</div>
-              <div className="text-sm text-muted-foreground">{f.body}</div>
+      {/* Hero — two-column layout on desktop: copy on the left, live demo on the right.
+          On mobile the demo stacks below the copy so it's still visible without scrolling
+          past an empty header. */}
+      <section className="relative overflow-hidden">
+        {/* Ambient gradient behind the hero — same recipe as the app shell's
+            gradient-bg utility but without importing it, since the landing
+            surface should stay a bit more muted. */}
+        <div
+          aria-hidden
+          className="absolute inset-0 -z-10"
+          style={{
+            background:
+              "radial-gradient(ellipse 70% 40% at 20% 20%, rgba(62,207,142,0.15), transparent 60%), radial-gradient(ellipse 60% 50% at 90% 80%, rgba(62,207,142,0.08), transparent 60%)",
+          }}
+        />
+        <div className="max-w-6xl mx-auto px-6 py-16 sm:py-24 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-12 items-center">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground mb-6">
+              <Sparkles className="h-3 w-3" />
+              Every tool a DB admin actually needs, in one place
             </div>
-          ))}
-        </div>
-      </section>
+            <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight">
+              The database studio for teams who
+              {" "}
+              <span className="text-primary">don't want five tools</span>.
+            </h1>
+            <p className="mt-6 text-base sm:text-lg text-muted-foreground max-w-xl">
+              Browse, query, schedule, back up, and share work across Postgres, MySQL, SQL Server,
+              and SQLite. One interface, role-aware, with an AI that actually knows your schema.
+            </p>
+            <div className="mt-8 flex items-center gap-3 flex-wrap">
+              {isAuthed ? (
+                <Link
+                  to="/connections"
+                  className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-5 py-2.5 text-sm font-medium"
+                >
+                  Go to your connections <ArrowRight className="h-4 w-4" />
+                </Link>
+              ) : (
+                <>
+                  <Link
+                    to="/signup"
+                    className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-5 py-2.5 text-sm font-medium"
+                  >
+                    Get started free <ArrowRight className="h-4 w-4" />
+                  </Link>
+                  <Link
+                    to="/login"
+                    className="inline-flex items-center gap-2 border border-border hover:bg-accent rounded-md px-5 py-2.5 text-sm"
+                  >
+                    Sign in
+                  </Link>
+                </>
+              )}
+            </div>
+            <div className="mt-6 flex items-center gap-4 text-[11px] text-muted-foreground">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Live demo →
+              </span>
+              <span>Postgres · MySQL · SQL Server · SQLite</span>
+            </div>
+          </div>
 
-      {/* Call out */}
-      <section className="max-w-5xl mx-auto px-6 pb-24">
-        <div className="rounded-xl border border-border bg-gradient-to-br from-primary/10 via-card to-card p-8 sm:p-12 text-center">
-          <h2 className="text-2xl sm:text-3xl font-semibold">Open source. Self-hostable.</h2>
-          <p className="mt-3 text-muted-foreground max-w-xl mx-auto">
-            Run it in your infra, point it at your databases, give your team access. Connection
-            credentials are encrypted with AES-256-GCM and never leave your server.
-          </p>
-          <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
-            <Link
-              to={isAuthed ? "/connections" : "/signup"}
-              className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-5 py-2.5 text-sm font-medium"
-            >
-              {isAuthed ? "Open the app" : "Start using it"}
-            </Link>
+          <div className="landing-hero-respect-rm">
+            <LandingHeroDemo />
           </div>
         </div>
+      </section>
+
+      {/* Stats strip — count-up numbers that animate on scroll. */}
+      <LandingStats />
+
+      {/* Integration marquee — horizontally scrolling pill list. */}
+      <LandingMarquee />
+
+      {/* How it works — 3-step vertical flow with animated connectors. */}
+      <LandingHowItWorks />
+
+      {/* Product showcase — side-by-side reveals alternating sides. */}
+      <LandingShowcase />
+
+      {/* Feature cards — 12 cards in a responsive grid, each with its own
+          scroll-reveal and hover gradient-border. */}
+      <LandingFeatureCards />
+
+      {/* Closing call-out */}
+      <section className="landing-animations max-w-5xl mx-auto px-6 py-24">
+        <ScrollReveal from="up">
+          <div className="relative rounded-2xl border border-border bg-linear-to-br from-primary/15 via-card to-card p-8 sm:p-14 text-center overflow-hidden">
+            {/* Decorative grid tile inside the card — a subtle visual echo of
+                the page backdrop so the card reads as part of the same surface. */}
+            <div
+              aria-hidden
+              className="absolute inset-0 opacity-[0.12] pointer-events-none"
+              style={{
+                backgroundImage:
+                  "radial-gradient(rgba(62,207,142,0.6) 1px, transparent 1px)",
+                backgroundSize: "24px 24px",
+              }}
+            />
+            <h2 className="relative text-3xl sm:text-4xl font-semibold tracking-tight">
+              Open source. Self-hostable. <span className="text-primary">Yours.</span>
+            </h2>
+            <p className="relative mt-4 text-muted-foreground max-w-xl mx-auto">
+              Run it in your infra, point it at your databases, give your team access. Connection
+              credentials are encrypted with AES-256-GCM and never leave your server.
+            </p>
+            <div className="relative mt-8 flex items-center justify-center gap-3 flex-wrap">
+              <Link
+                to={isAuthed ? "/connections" : "/signup"}
+                className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-6 py-3 text-sm font-medium shadow-lg shadow-primary/20"
+              >
+                {isAuthed ? "Open the app" : "Start using it"} <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </div>
+        </ScrollReveal>
       </section>
 
       <footer className="border-t border-border text-xs text-muted-foreground py-6 text-center">

@@ -81,10 +81,10 @@ export class SsoService {
     // Require a secret on first creation; on updates it's optional (unchanged).
     let secretCt = existing?.clientSecretCt ?? Buffer.alloc(0);
     if (input.clientSecret && input.clientSecret.trim()) {
-      secretCt = Buffer.from(
-        this.crypto.encrypt(input.clientSecret, `sso:${workspaceId}`),
-        'base64',
-      );
+      // Store the envelope as UTF-8 bytes. v2 envelopes contain a `v2:provider:...`
+      // prefix plus base64, so we can't naively treat the whole blob as base64.
+      const envelope = await this.crypto.encrypt(input.clientSecret, `sso:${workspaceId}`);
+      secretCt = Buffer.from(envelope, 'utf8');
     } else if (!existing) {
       throw new BadRequestException('Client secret is required for new SSO configs');
     }
@@ -166,10 +166,14 @@ export class SsoService {
     if (!ws?.sso?.enabled) throw new NotFoundException('SSO not configured');
 
     const meta = await this.fetchMetadata(ws.sso.issuerUrl);
-    const clientSecret = this.crypto.decrypt(
-      Buffer.from(ws.sso.clientSecretCt).toString('base64'),
-      `sso:${ws.id}`,
-    );
+    // Read the stored envelope. Historic rows (pre-v2) were stored as raw
+    // base64 bytes of the old single-key ciphertext; new rows are UTF-8 bytes
+    // of the v2 envelope string. We try UTF-8 first (cheap peek: v2 rows start
+    // with the literal "v2:" chars), fall back to base64 for legacy rows.
+    const raw = Buffer.from(ws.sso.clientSecretCt);
+    const asUtf8 = raw.toString('utf8');
+    const envelope = asUtf8.startsWith('v2:') ? asUtf8 : raw.toString('base64');
+    const clientSecret = await this.crypto.decrypt(envelope, `sso:${ws.id}`);
 
     const tokenRes = await fetch(meta.token_endpoint, {
       method: 'POST',

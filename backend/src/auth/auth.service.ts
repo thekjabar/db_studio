@@ -139,7 +139,7 @@ export class AuthService {
 
     if (user.totpSecret?.enabled) {
       if (!dto.totpCode) throw new UnauthorizedException('TOTP code required');
-      const secret = this.crypto.decrypt(user.totpSecret.secretCt, `totp:${user.id}`);
+      const secret = await this.crypto.decrypt(user.totpSecret.secretCt, `totp:${user.id}`);
       const ok = authenticator.check(dto.totpCode, secret);
       if (!ok) {
         await this.audit.log({ userId: user.id, action: 'LOGIN_FAILED', ...meta });
@@ -203,7 +203,7 @@ export class AuthService {
     if (!user) throw new UnauthorizedException();
     const secret = authenticator.generateSecret();
     const otpauth = authenticator.keyuri(user.email, this.cfg.totpIssuer, secret);
-    const ct = this.crypto.encrypt(secret, `totp:${userId}`);
+    const ct = await this.crypto.encrypt(secret, `totp:${userId}`);
     await this.prisma.totpSecret.upsert({
       where: { userId },
       create: { userId, secretCt: ct, enabled: false },
@@ -216,7 +216,7 @@ export class AuthService {
   async confirmTotp(userId: string, dto: EnableTotpDto, meta: ReqMeta): Promise<void> {
     const rec = await this.prisma.totpSecret.findUnique({ where: { userId } });
     if (!rec) throw new BadRequestException('No pending TOTP enrollment');
-    const secret = this.crypto.decrypt(rec.secretCt, `totp:${userId}`);
+    const secret = await this.crypto.decrypt(rec.secretCt, `totp:${userId}`);
     if (!authenticator.check(dto.code, secret)) {
       throw new UnauthorizedException('Invalid TOTP code');
     }
@@ -233,7 +233,7 @@ export class AuthService {
     if (!user.passwordHash) throw new BadRequestException('Account has no password (OAuth-only)');
     const ok = await argon2.verify(user.passwordHash, dto.password).catch(() => false);
     if (!ok) throw new UnauthorizedException('Invalid password');
-    const secret = this.crypto.decrypt(user.totpSecret.secretCt, `totp:${userId}`);
+    const secret = await this.crypto.decrypt(user.totpSecret.secretCt, `totp:${userId}`);
     if (!authenticator.check(dto.code, secret)) {
       throw new UnauthorizedException('Invalid TOTP code');
     }

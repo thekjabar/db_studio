@@ -82,7 +82,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     client.join(key);
 
     if (conn.dialect === Dialect.POSTGRES) {
-      const creds = this.crypto.decryptJson<ConnectionCredentials>(conn.credentialsCt, `conn:${conn.id}`);
+      const creds = await this.crypto.decryptJson<ConnectionCredentials>(conn.credentialsCt, `conn:${conn.id}`);
       const pg = new PgClient({
         host: creds.host, port: creds.port ?? 5432,
         user: creds.user, password: creds.password, database: creds.database,

@@ -139,7 +139,7 @@ export class ConnectionsService implements OnModuleDestroy {
     // Enforce per-workspace connection cap before creating.
     await this.quota.assertCanCreateConnection(workspaceId);
 
-    const credCt = this.crypto.encryptJson(dto.credentials, 'conn:new');
+    const credCt = await this.crypto.encryptJson(dto.credentials, 'conn:new');
     const created = await this.prisma.connection.create({
       data: {
         name: dto.name, dialect: dto.dialect, credentialsCt: credCt,
@@ -150,7 +150,7 @@ export class ConnectionsService implements OnModuleDestroy {
       },
     });
     // Re-encrypt with purpose bound to id.
-    const rebound = this.crypto.encryptJson(dto.credentials, PURPOSE(created.id));
+    const rebound = await this.crypto.encryptJson(dto.credentials, PURPOSE(created.id));
     const final = await this.prisma.connection.update({
       where: { id: created.id }, data: { credentialsCt: rebound },
     });
@@ -204,13 +204,13 @@ export class ConnectionsService implements OnModuleDestroy {
       data.workspaceId = dto.workspaceId;
     }
     if (dto.credentials) {
-      const current = this.crypto.decryptJson<ConnectionCredentials>(existing.credentialsCt, PURPOSE(id));
+      const current = await this.crypto.decryptJson<ConnectionCredentials>(existing.credentialsCt, PURPOSE(id));
       // Start from current, apply provided fields, then strip the tunnel if client sent ssh:null.
       const merged = { ...current, ...(dto.credentials as ConnectionCredentials) };
       if ((dto.credentials as { ssh?: unknown }).ssh === null) {
         delete merged.ssh;
       }
-      data.credentialsCt = this.crypto.encryptJson(merged, PURPOSE(id));
+      data.credentialsCt = await this.crypto.encryptJson(merged, PURPOSE(id));
     }
     const updated = await this.prisma.connection.update({ where: { id }, data });
     // Credentials, readOnly or timeout might have changed — drop cached pools.
@@ -254,7 +254,7 @@ export class ConnectionsService implements OnModuleDestroy {
     const key = this.cacheKey(id, readOnly);
     let entry = this.driverCache.get(key);
     if (!entry) {
-      const raw = this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
+      const raw = await this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
       const { creds, tunnel } = await this.maybeOpenTunnel(raw);
       try {
         const driver = this.factory.create(c.dialect as Dialect, creds, {
@@ -290,7 +290,7 @@ export class ConnectionsService implements OnModuleDestroy {
     // or recently-updated connection. It also uses a fresh driver so the raw
     // error bubbles up (cached driver's close() is a no-op).
     const c = await this.get(id);
-    const raw = this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
+    const raw = await this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
     const { creds, tunnel } = await this.maybeOpenTunnel(raw);
     const drv = this.factory.create(c.dialect as Dialect, creds, {
       readOnly: c.readOnly,

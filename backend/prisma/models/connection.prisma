@@ -6,6 +6,15 @@ model Connection {
   credentialsCt    String
   readOnly         Boolean            @default(false)
   statementTimeoutMs Int              @default(30000)
+  /// When true, `credentialsCt` was encrypted client-side with a key derived
+  /// from a user passphrase. The server cannot decrypt these credentials on
+  /// its own — the user must supply the derived key with each request. This
+  /// disables scheduled queries and webhooks for the connection.
+  clientHeldKey    Boolean            @default(false)
+  /// Argon2id salt used for the client-side key derivation. Null unless
+  /// `clientHeldKey=true`. Safe to expose over the API — a salt without the
+  /// passphrase gives an attacker nothing.
+  clientKeyKdfSalt String?
   ownerId          String
   owner            User               @relation("OwnedConnections", fields: [ownerId], references: [id], onDelete: Cascade)
   workspaceId      String?

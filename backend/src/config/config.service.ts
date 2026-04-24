@@ -59,6 +59,17 @@ const EnvSchema = z.object({
   // `pretty` is human-friendly for local dev; `json` emits one JSON object
   // per log line so Logtail/Datadog/Loki can parse without regex wrangling.
   LOG_FORMAT: z.enum(['pretty', 'json']).default('pretty'),
+  // Key-management provider for envelope encryption. `local` uses the
+  // ENCRYPTION_KEY env var as the master key (fine for self-host); the
+  // others call out to a real KMS so the master key never sits on this host.
+  KMS_PROVIDER: z.enum(['local', 'aws', 'gcp', 'vault']).default('local'),
+  // Provider-specific config — all optional, only the relevant ones are read.
+  AWS_KMS_KEY_ID: z.string().transform((v) => v || undefined).optional(),
+  AWS_REGION: z.string().transform((v) => v || undefined).optional(),
+  GCP_KMS_KEY_NAME: z.string().transform((v) => v || undefined).optional(),
+  VAULT_ADDR: z.string().transform((v) => v || undefined).optional(),
+  VAULT_TOKEN: z.string().transform((v) => v || undefined).optional(),
+  VAULT_TRANSIT_KEY: z.string().transform((v) => v || undefined).optional(),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -152,4 +163,11 @@ export class AppConfigService {
     return this.env.REQUIRE_EMAIL_VERIFICATION || this.emailEnabled;
   }
   get logFormat() { return this.env.LOG_FORMAT; }
+  get kmsProvider() { return this.env.KMS_PROVIDER; }
+  get awsKmsKeyId() { return this.env.AWS_KMS_KEY_ID; }
+  get awsRegion() { return this.env.AWS_REGION; }
+  get gcpKmsKeyName() { return this.env.GCP_KMS_KEY_NAME; }
+  get vaultAddr() { return this.env.VAULT_ADDR; }
+  get vaultToken() { return this.env.VAULT_TOKEN; }
+  get vaultTransitKey() { return this.env.VAULT_TRANSIT_KEY; }
 }

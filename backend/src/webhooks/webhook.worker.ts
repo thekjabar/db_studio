@@ -62,7 +62,7 @@ export class WebhookWorker implements OnModuleInit, OnModuleDestroy {
 
     try {
       const body = JSON.stringify(payload);
-      const secret = this.crypto.decrypt(w.secretCt, PURPOSE(w.id));
+      const secret = await this.crypto.decrypt(w.secretCt, PURPOSE(w.id));
       const signature = createHmac('sha256', secret).update(body).digest('hex');
 
       const controller = new AbortController();

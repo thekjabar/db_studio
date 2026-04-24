@@ -160,7 +160,7 @@ export class BackupService {
       throw new BadRequestException('Invalid schema name');
     }
 
-    const rawCreds = this.crypto.decryptJson<ConnectionCredentials>(conn.credentialsCt, PURPOSE(connectionId));
+    const rawCreds = await this.crypto.decryptJson<ConnectionCredentials>(conn.credentialsCt, PURPOSE(connectionId));
     if (!rawCreds.host || !rawCreds.port) {
       throw new BadRequestException('Connection is missing host/port');
     }

@@ -86,7 +86,7 @@ export class FederatedService {
           `Source "${s.alias}" is MSSQL — federated joins against SQL Server aren't supported yet. Use Postgres, MySQL, or SQLite sources.`,
         );
       }
-      const creds = this.crypto.decryptJson<ConnectionCredentials>(conn.credentialsCt, PURPOSE(conn.id));
+      const creds = await this.crypto.decryptJson<ConnectionCredentials>(conn.credentialsCt, PURPOSE(conn.id));
       if (creds.ssh) {
         throw new BadRequestException(
           `Source "${s.alias}" uses an SSH tunnel. Federated queries need a direct network path to each source.`,

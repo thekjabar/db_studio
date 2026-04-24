@@ -9,8 +9,25 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-dbdash}
     volumes:
       - db_data:/var/lib/postgresql/data
+    # Only expose Postgres on the host when explicitly requested — default
+    # binds to 127.0.0.1 so only this host can reach it, not the network.
+    # Drop the `ports:` line entirely in prod unless you really need remote
+    # psql access. Other containers reach it via the dbdash network.
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    # Postgres needs CHOWN / FOWNER / SETUID / SETGID to drop privs to the
+    # `postgres` user on startup, and DAC_READ_SEARCH for its file layout.
+    # Everything else is dropped.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+      - SETUID
+      - SETGID
+      - DAC_READ_SEARCH
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dbdash} -d ${POSTGRES_DB:-dbdash}"]
       interval: 5s
@@ -27,6 +44,10 @@ services:
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     volumes:
       - redis_data:/data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -45,6 +66,27 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    # Defense in depth: shrink the container's attack surface so an RCE
+    # can't pivot off the host or escalate.
+    #   - read_only rootfs: attacker can't drop a persistent binary.
+    #   - tmpfs /tmp: pg_dump and Node need a writable scratch dir — scoped
+    #     and wiped on restart.
+    #   - cap_drop ALL: strip every Linux capability (CAP_NET_RAW, SETUID,
+    #     etc). The app only needs to bind an unprivileged port, which
+    #     non-root already allows without caps.
+    #   - no-new-privileges: process can never gain more caps via setuid
+    #     binaries. Neutralizes the sudo-style attack class.
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Bounded resources so a runaway process (or DoS) can't take the host
+    # down. Tune for your workload.
+    mem_limit: 1g
+    pids_limit: 256
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -105,26 +147,61 @@ services:
       PGHOST: db
       RETENTION_DAYS: ${DB_BACKUP_RETENTION_DAYS:-14}
       SCHEDULE_CRON: ${DB_BACKUP_CRON:-0 2 * * *}
+      # When set, backups are encrypted with age (https://age-encryption.org)
+      # before being written to /backups. The corresponding private key
+      # (`age-keygen -o key.txt`) should NEVER live on this host — keep it
+      # somewhere an operator can retrieve to decrypt at restore time.
+      # Multiple comma-separated recipients supported (e.g. two-admin quorum).
+      # Leave unset to keep the old plaintext .sql.gz behaviour.
+      BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
     volumes:
       - app_backups:/backups
-    # Install a minimal cron (busybox) + a backup script, then run crond.
-    # Heredoc keeps the whole thing in one compose file; for larger setups
-    # the script would move into its own Dockerfile.
+    cap_drop:
+      - ALL
+    # apk needs SETUID/SETGID to install age at container start; if you
+    # bake age into a custom image instead these can be dropped too.
+    cap_add:
+      - SETUID
+      - SETGID
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+    # Install busybox cron + age + a backup script, then run crond.
+    # age is pulled from the alpine community repo (~1MB) so we don't need a
+    # custom Dockerfile for this feature.
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -eu
         mkdir -p /backups
+        apk add --no-cache age >/dev/null 2>&1 || true
         cat > /usr/local/bin/do-backup.sh <<'EOF'
         #!/bin/sh
         set -eu
         stamp=$$(date -u +%Y%m%dT%H%M%SZ)
-        out="/backups/dbdash-$$stamp.sql.gz"
-        echo "[backup] starting $$out"
-        pg_dump --format=plain --no-owner --no-privileges | gzip -9 > "$$out.tmp"
-        mv "$$out.tmp" "$$out"
-        echo "[backup] done $$(stat -c%s "$$out") bytes"
-        find /backups -name 'dbdash-*.sql.gz' -type f -mtime +$$RETENTION_DAYS -delete || true
+        if [ -n "$$BACKUP_AGE_RECIPIENT" ]; then
+          # Encrypted path: stream pg_dump | gzip | age → .sql.gz.age
+          out="/backups/dbdash-$$stamp.sql.gz.age"
+          echo "[backup] starting $$out (age-encrypted)"
+          # Build -r flags for each comma-separated recipient.
+          set -- ""
+          IFS=','; for r in $$BACKUP_AGE_RECIPIENT; do
+            set -- "$$@" -r "$$r"
+          done; unset IFS
+          # Drop the leading empty arg from the shift trick above.
+          shift
+          pg_dump --format=plain --no-owner --no-privileges | gzip -9 | age "$$@" -o "$$out.tmp"
+          mv "$$out.tmp" "$$out"
+          echo "[backup] done $$(stat -c%s "$$out") bytes"
+          find /backups -name 'dbdash-*.sql.gz.age' -type f -mtime +$$RETENTION_DAYS -delete || true
+        else
+          out="/backups/dbdash-$$stamp.sql.gz"
+          echo "[backup] starting $$out (PLAINTEXT — set BACKUP_AGE_RECIPIENT to encrypt)"
+          pg_dump --format=plain --no-owner --no-privileges | gzip -9 > "$$out.tmp"
+          mv "$$out.tmp" "$$out"
+          echo "[backup] done $$(stat -c%s "$$out") bytes"
+          find /backups -name 'dbdash-*.sql.gz' -type f -mtime +$$RETENTION_DAYS -delete || true
+        fi
         EOF
         chmod +x /usr/local/bin/do-backup.sh
         echo "$$SCHEDULE_CRON /usr/local/bin/do-backup.sh >> /backups/cron.log 2>&1" > /etc/crontabs/root

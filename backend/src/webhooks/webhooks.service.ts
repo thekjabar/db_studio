@@ -73,7 +73,7 @@ export class WebhooksService {
     const secret = randomBytes(32).toString('base64url');
     // Encrypt at write time. We use a random purpose since the webhook id
     // doesn't exist yet; we'll re-encrypt with the id-bound purpose after create.
-    const tempCt = this.crypto.encrypt(secret, 'webhook:new');
+    const tempCt = await this.crypto.encrypt(secret, 'webhook:new');
     const row = await this.prisma.webhook.create({
       data: {
         connectionId,
@@ -87,7 +87,7 @@ export class WebhooksService {
         enabled: input.enabled ?? true,
       },
     });
-    const finalCt = this.crypto.encrypt(secret, PURPOSE(row.id));
+    const finalCt = await this.crypto.encrypt(secret, PURPOSE(row.id));
     const updated = await this.prisma.webhook.update({
       where: { id: row.id },
       data: { secretCt: finalCt },
@@ -127,7 +127,7 @@ export class WebhooksService {
     if (patch.tableName !== undefined) data.tableName = patch.tableName;
     if (patch.events !== undefined) data.events = patch.events;
     if (patch.enabled !== undefined) data.enabled = patch.enabled;
-    if (patch.secret) data.secretCt = this.crypto.encrypt(patch.secret, PURPOSE(id));
+    if (patch.secret) data.secretCt = await this.crypto.encrypt(patch.secret, PURPOSE(id));
 
     const updated = await this.prisma.webhook.update({ where: { id }, data });
     return this.sanitize(updated);

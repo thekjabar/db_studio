@@ -326,7 +326,7 @@ scheduled queries and webhooks for that connection.
 | Running containers have `read_only: true`, `cap_drop: [ALL]`, `no-new-privileges` | |
 | Postgres port bound to `127.0.0.1`, not `0.0.0.0` | |
 | Short-lived KMS credentials (IAM role / Workload Identity / Vault AppRole) — no long-lived keys in env | |
-| Renovate / Dependabot merging patch & minor weekly | |
+| Renovate / Dependabot merging patch & minor weekly (`.github/dependabot.yml` ships configured) | |
 | CloudWatch / Stackdriver alarm on >50 `Decrypt` calls/min | |
 | Monthly rebuild/redeploy to pick up base-image CVE patches | |
 | Docker base images pinned by digest (prod) | |

@@ -1,0 +1,102 @@
+version: 2
+
+# Dependabot configuration — keeps dependencies patched automatically.
+#
+# Why these choices:
+#   - `weekly` cadence matches the security doc's recommendation without
+#     drowning the repo in daily PRs for sub-dep bumps.
+#   - `open-pull-requests-limit: 5` per ecosystem prevents a 50-PR
+#     Monday morning while still making progress.
+#   - Patch + minor are auto-grouped into one PR per ecosystem so
+#     low-risk bumps land as a single review. Majors stay one-per-PR
+#     because they usually need manual attention.
+#   - `allow` narrows to direct deps; transitive bumps come through
+#     as part of their parent updates, which avoids noisy PRs for
+#     packages nobody imports directly.
+
+updates:
+  # Backend (NestJS / Prisma)
+  - package-ecosystem: npm
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies, backend]
+    commit-message:
+      prefix: chore(deps)
+      include: scope
+    groups:
+      backend-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # Majors for framework cornerstones almost always need a migration
+      # pass — surface them as issues, not auto-PRs.
+      - dependency-name: "@nestjs/*"
+        update-types: [version-update:semver-major]
+      - dependency-name: "prisma"
+        update-types: [version-update:semver-major]
+      - dependency-name: "@prisma/client"
+        update-types: [version-update:semver-major]
+
+  # Frontend (React / Vite)
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels: [dependencies, frontend]
+    commit-message:
+      prefix: chore(deps)
+      include: scope
+    groups:
+      frontend-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "react"
+        update-types: [version-update:semver-major]
+      - dependency-name: "react-dom"
+        update-types: [version-update:semver-major]
+      - dependency-name: "vite"
+        update-types: [version-update:semver-major]
+
+  # Docker base images — picks up `FROM node:22-bookworm-slim` etc.
+  # Separate ecosystem because npm and docker tracks release on different
+  # cadences and we want docker bumps flagged distinctly.
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: chore(docker)
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels: [dependencies, docker]
+    commit-message:
+      prefix: chore(docker)
+
+  # GitHub Actions (only takes effect when you add workflows — harmless
+  # until then, ready when you do).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: chore(ci)

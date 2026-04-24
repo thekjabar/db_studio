@@ -10,11 +10,19 @@ import { PermissionsController } from './permissions.controller';
 import { PermissionsService } from './permissions.service';
 import { ColumnMasksController } from './column-masks.controller';
 import { ColumnMasksService } from './column-masks.service';
+import { RowFiltersController } from './row-filters.controller';
+import { RowFiltersService } from './row-filters.service';
 
 @Module({
   imports: [DriversModule, RbacModule, forwardRef(() => AuditModule), forwardRef(() => WebhooksModule)],
-  controllers: [ConnectionsController, IntrospectionController, PermissionsController, ColumnMasksController],
-  providers: [ConnectionsService, PermissionsService, ColumnMasksService],
+  controllers: [
+    ConnectionsController,
+    IntrospectionController,
+    PermissionsController,
+    ColumnMasksController,
+    RowFiltersController,
+  ],
+  providers: [ConnectionsService, PermissionsService, ColumnMasksService, RowFiltersService],
   exports: [ConnectionsService],
 })
 export class ConnectionsModule {}

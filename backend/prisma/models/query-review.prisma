@@ -1,0 +1,37 @@
+/// A SQL execution request that needs approval before it can run.
+/// Flow:
+///   1. User with EDITOR role submits a destructive query → status=PENDING.
+///   2. Connection OWNER (or another OWNER) reviews → APPROVED or REJECTED.
+///   3. If APPROVED, the requester can execute it once within a time window.
+///      Executed requests move to EXECUTED. Rejected or expired requests
+///      stay as a record.
+///
+/// Scoped per-connection so the approval gate tracks the connection's
+/// RBAC model rather than introducing its own.
+model QueryReviewRequest {
+  id             String     @id @default(cuid())
+  connectionId   String
+  connection     Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  requesterId    String
+  requester      User       @relation("ReviewRequests", fields: [requesterId], references: [id], onDelete: Cascade)
+  reviewerId     String?
+  reviewer       User?      @relation("Reviews", fields: [reviewerId], references: [id], onDelete: SetNull)
+  /// Raw SQL the requester wants to run. Stored verbatim.
+  sqlText        String     @db.Text
+  /// Classifier output at submission time (SELECT / DML / DDL / DESTRUCTIVE).
+  classification String
+  /// Optional free-form justification the requester attaches.
+  reason         String?
+  /// Optional reviewer comment attached at approve/reject.
+  reviewComment  String?
+  status         ReviewStatus @default(PENDING)
+  approvedAt     DateTime?
+  executedAt     DateTime?
+  /// Rows affected when finally run — populated for post-mortem audit.
+  executedRowsAffected Int?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@index([connectionId, status, createdAt(sort: Desc)])
+  @@index([requesterId, createdAt(sort: Desc)])
+}

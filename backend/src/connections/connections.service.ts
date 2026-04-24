@@ -194,6 +194,7 @@ export class ConnectionsService implements OnModuleDestroy {
       name: dto.name ?? existing.name,
       readOnly: dto.readOnly ?? existing.readOnly,
       statementTimeoutMs: dto.statementTimeoutMs ?? existing.statementTimeoutMs,
+      requireReview: dto.requireReview ?? existing.requireReview,
     };
     if (dto.workspaceId !== undefined) {
       // Verify the caller is a member of the destination workspace.
@@ -220,9 +221,72 @@ export class ConnectionsService implements OnModuleDestroy {
   }
 
   async remove(id: string, userId: string, meta: { ip?: string; userAgent?: string }) {
+    // Capture the name before we delete so the audit record is human-readable.
+    const row = await this.prisma.connection.findUnique({
+      where: { id },
+      select: { name: true },
+    });
     await this.invalidate(id);
+    // Audit FIRST — once the Connection row is gone, the FK forbids writing a
+    // record that references its id. We log with connectionId=null + keep the
+    // original id in metadata so the trail survives the deletion.
+    await this.audit.log({
+      userId,
+      connectionId: null,
+      action: 'CONNECTION_DELETED',
+      metadata: { connectionId: id, name: row?.name ?? null },
+      ...meta,
+    });
     await this.prisma.connection.delete({ where: { id } });
-    await this.audit.log({ userId, connectionId: id, action: 'CONNECTION_DELETED', ...meta });
+  }
+
+  /** Set the replica credentials list. Pass `[]` or null to clear. */
+  async setReplicas(
+    id: string,
+    userId: string,
+    replicas: ConnectionCredentials[] | null,
+  ) {
+    await this.get(id); // verify exists
+    const ct = replicas && replicas.length > 0
+      ? await this.crypto.encryptJson(replicas, PURPOSE(id) + ':replicas')
+      : null;
+    await this.prisma.connection.update({ where: { id }, data: { replicasCt: ct } });
+    // Drop cached driver entries for this connection — readOnly pools may
+    // now resolve to different hosts. Cheapest: clear matches by id prefix.
+    for (const key of this.driverCache.keys()) {
+      if (key.startsWith(id + ':')) {
+        const entry = this.driverCache.get(key);
+        if (entry && entry.inUse === 0) {
+          this.driverCache.delete(key);
+          void entry.driver.close?.().catch(() => {});
+          void entry.tunnel?.close?.().catch(() => {});
+        }
+      }
+    }
+    void userId;
+    return { ok: true as const, count: replicas?.length ?? 0 };
+  }
+
+  /** Return summary info about configured replicas (host/port/label only —
+   *  never the password). */
+  async listReplicas(id: string): Promise<{ label?: string; host?: string; port?: number }[]> {
+    const c = await this.get(id);
+    if (!c.replicasCt) return [];
+    try {
+      const raw = await this.crypto.decryptJson<ConnectionCredentials[]>(
+        c.replicasCt,
+        PURPOSE(id) + ':replicas',
+      );
+      return raw.map((r) => ({
+        host: r.host,
+        port: r.port,
+        // `label` isn't in ConnectionCredentials; if users store one in
+        // `extra.label` we surface it.
+        label: (r.extra as Record<string, unknown> | undefined)?.label as string | undefined,
+      }));
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -248,13 +312,29 @@ export class ConnectionsService implements OnModuleDestroy {
     return { creds: tunneled, tunnel };
   }
 
-  async buildDriver(id: string, overrides: { readOnly?: boolean } = {}): Promise<IDatabaseDriver> {
+  async buildDriver(
+    id: string,
+    overrides: { readOnly?: boolean; preferReplica?: boolean } = {},
+  ): Promise<IDatabaseDriver> {
     const c = await this.get(id);
     const readOnly = overrides.readOnly ?? c.readOnly;
-    const key = this.cacheKey(id, readOnly);
+    // Replica routing only kicks in for read-only drivers (viewer role or
+    // explicit read-only connection). Writes always hit the primary.
+    const wantsReplica = overrides.preferReplica && readOnly && c.replicasCt;
+    const replicaIdx = wantsReplica ? await this.pickReplicaIndex(c.id) : null;
+    const key = this.cacheKey(id, readOnly) + (replicaIdx == null ? '' : `:r${replicaIdx}`);
     let entry = this.driverCache.get(key);
     if (!entry) {
-      const raw = await this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
+      let raw: ConnectionCredentials;
+      if (replicaIdx != null && c.replicasCt) {
+        const replicas = await this.crypto.decryptJson<ConnectionCredentials[]>(
+          c.replicasCt,
+          PURPOSE(id) + ':replicas',
+        );
+        raw = replicas[replicaIdx] ?? (await this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id)));
+      } else {
+        raw = await this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
+      }
       const { creds, tunnel } = await this.maybeOpenTunnel(raw);
       try {
         const driver = this.factory.create(c.dialect as Dialect, creds, {
@@ -266,6 +346,11 @@ export class ConnectionsService implements OnModuleDestroy {
       } catch (err) {
         // Driver init failed — tear down the tunnel so we don't leak the SSH session.
         if (tunnel) await tunnel.close().catch(() => {});
+        // If a replica failed, fall back once to the primary so one bad
+        // replica doesn't take the whole read surface down.
+        if (replicaIdx != null) {
+          return this.buildDriver(id, { readOnly, preferReplica: false });
+        }
         throw err;
       }
     }
@@ -280,9 +365,33 @@ export class ConnectionsService implements OnModuleDestroy {
     });
   }
 
+  /** Round-robin replica selection. Reads the current creds once to count
+   *  replicas, then picks `seq % len`. Simple and stateless; a smarter
+   *  implementation could track per-replica error rates. */
+  private replicaSeq = new Map<string, number>();
+  private async pickReplicaIndex(connectionId: string): Promise<number | null> {
+    const c = await this.get(connectionId);
+    if (!c.replicasCt) return null;
+    try {
+      const replicas = await this.crypto.decryptJson<ConnectionCredentials[]>(
+        c.replicasCt,
+        PURPOSE(connectionId) + ':replicas',
+      );
+      if (!Array.isArray(replicas) || replicas.length === 0) return null;
+      const next = (this.replicaSeq.get(connectionId) ?? 0) + 1;
+      this.replicaSeq.set(connectionId, next);
+      return next % replicas.length;
+    } catch {
+      return null;
+    }
+  }
+
   async buildDriverForRole(id: string, role: Role): Promise<IDatabaseDriver> {
-    // Viewer -> always read-only, irrespective of connection setting.
-    return this.buildDriver(id, { readOnly: role === Role.VIEWER ? true : undefined });
+    // Viewer -> always read-only + prefer replica, irrespective of connection setting.
+    return this.buildDriver(id, {
+      readOnly: role === Role.VIEWER ? true : undefined,
+      preferReplica: role === Role.VIEWER,
+    });
   }
 
   async test(id: string, userId: string, meta: { ip?: string; userAgent?: string }) {

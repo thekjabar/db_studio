@@ -1,0 +1,23 @@
+/// Operator-authored incident entry displayed on the public `/status` page.
+/// Lifecycle: INVESTIGATING → IDENTIFIED → MONITORING → RESOLVED. The public
+/// page shows the latest status + a timeline of updates (stored as an array
+/// of {at, status, message} objects in `updates`).
+model Incident {
+  id           String         @id @default(cuid())
+  title        String
+  status       IncidentStatus @default(INVESTIGATING)
+  severity     IncidentSeverity @default(MINOR)
+  /// Freeform "what's affected" text (e.g. "API, scheduled queries").
+  impact       String?
+  /// Shape: [{ at: ISO8601, status: IncidentStatus, message: string }]
+  updates      Json           @default("[]")
+  startedAt    DateTime       @default(now())
+  resolvedAt   DateTime?
+  createdById  String?
+  createdBy    User?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([resolvedAt])
+  @@index([startedAt(sort: Desc)])
+}

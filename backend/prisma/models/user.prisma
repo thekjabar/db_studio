@@ -34,6 +34,15 @@ model User {
   passwordResets   PasswordReset[]
   schemaSnapshots  SchemaSnapshot[]
   dashboards       Dashboard[]
+  reviewRequests   QueryReviewRequest[] @relation("ReviewRequests")
+  reviewsDone      QueryReviewRequest[] @relation("Reviews")
+  notebooks        Notebook[]
+  rowFilters       RowFilter[]
+  schemaDocs       SchemaDoc[]
+  incidents        Incident[]
+  ownedOrganizations Organization[]       @relation("OwnedOrganizations")
+  organizationMembers OrganizationMember[]
+  aiChats          AiChat[]
 
   @@unique([oauthProvider, oauthId])
   @@index([email])

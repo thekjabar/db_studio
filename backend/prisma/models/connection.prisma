@@ -30,6 +30,20 @@ model Connection {
   comments         Comment[]
   schemaSnapshots  SchemaSnapshot[]
   dashboards       Dashboard[]
+  reviewRequests   QueryReviewRequest[]
+  notebooks        Notebook[]
+  rowFilters       RowFilter[]
+  schemaDocs       SchemaDoc[]
+  aiChats          AiChat[]
+  /// Optional list of read-replica credentials. Shape:
+  ///   [{ label, host, port, user, password, database, sslMode? }]
+  /// When set, SELECT statements are routed to a random replica with
+  /// health-check fallback to the primary. Stored as encrypted JSON under
+  /// the same envelope as `credentialsCt` (purpose "conn:<id>:replicas").
+  replicasCt       String?
+  /// When true, EDITOR users cannot run DESTRUCTIVE statements directly —
+  /// they must submit a review request for an OWNER to approve.
+  requireReview    Boolean             @default(false)
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 

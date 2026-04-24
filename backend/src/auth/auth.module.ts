@@ -19,6 +19,7 @@ import { PasswordResetService } from './password-reset.service';
 import { LoginCooldownService } from './login-cooldown.service';
 import { SsoService } from './sso.service';
 import { SsoController } from './sso.controller';
+import { SessionsController } from './sessions.controller';
 import { CryptoModule } from '../crypto/crypto.module';
 
 // Strategies are only registered when their envs are set. Passport's OAuth2
@@ -64,7 +65,7 @@ const githubStrategyProvider: Provider = {
     SchedulerModule,
     CryptoModule,
   ],
-  controllers: [AuthController, OAuthController, SsoController],
+  controllers: [AuthController, OAuthController, SsoController, SessionsController],
   providers: [
     AuthService,
     EmailVerificationService,

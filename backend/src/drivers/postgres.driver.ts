@@ -214,6 +214,12 @@ export class PostgresDriver implements IDatabaseDriver {
         where.push(`${quotePg(f.column)} ${op.toUpperCase()} $${params.length}`);
       }
     }
+    // extraPredicate: pre-validated row-level filter. Wrapped in parens so
+    // OR inside it can't tear into user filters. Appended after user filters
+    // so EXPLAIN / error messages point at the user's choices first.
+    if (q.extraPredicate && q.extraPredicate.trim()) {
+      where.push(`(${q.extraPredicate})`);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const orderSql = (q.orderBy ?? [])

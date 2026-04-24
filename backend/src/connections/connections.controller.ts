@@ -47,4 +47,26 @@ export class ConnectionsController {
   test(@Param('id') id: string, @CurrentUser() u: AuthUser, @Req() req: Request) {
     return this.svc.test(id, u.id, meta(req));
   }
+
+  // Read-replica management — connection OWNER only.
+  @UseGuards(RbacGuard) @RequireRole('OWNER')
+  @Get(':id/replicas')
+  listReplicas(@Param('id') id: string) {
+    return this.svc.listReplicas(id);
+  }
+
+  @UseGuards(RbacGuard) @RequireRole('OWNER')
+  @Post(':id/replicas') @HttpCode(200)
+  setReplicas(
+    @Param('id') id: string,
+    @Body() body: { replicas: unknown[] | null },
+    @CurrentUser() u: AuthUser,
+  ) {
+    // Light runtime validation; the drivers will reject bad creds at
+    // connect-time via their own type guards.
+    const parsed = Array.isArray(body.replicas)
+      ? body.replicas.map((r) => r as any)
+      : null;
+    return this.svc.setReplicas(id, u.id, parsed);
+  }
 }

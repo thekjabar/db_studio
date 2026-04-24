@@ -1,0 +1,33 @@
+/// A persistent AI conversation scoped to a single connection. Users
+/// iterate on queries across turns ("now group by week", "drop nulls") and
+/// the model sees conversation history + schema as context.
+model AiChat {
+  id           String      @id @default(cuid())
+  connectionId String
+  connection   Connection  @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// First user message, truncated, for the sidebar.
+  title        String
+  messages     AiMessage[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([connectionId, userId, updatedAt(sort: Desc)])
+}
+
+model AiMessage {
+  id        String   @id @default(cuid())
+  chatId    String
+  chat      AiChat   @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  /// 'user' | 'assistant' — use a string (not enum) so we can grow roles
+  /// later (tool, system) without a migration.
+  role      String
+  content   String   @db.Text
+  /// When the assistant included SQL it wants surfaced as a runnable block,
+  /// we store it separately so the UI can render a "Run" button.
+  sqlBlock  String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([chatId, createdAt])
+}

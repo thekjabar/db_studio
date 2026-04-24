@@ -11,6 +11,7 @@ import { InsertRowDto, UpdateRowDto, DeleteRowDto, BulkDeleteRowsDto, BulkUpdate
 import { AuditService } from '../audit/audit.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { ColumnMasksService } from './column-masks.service';
+import { RowFiltersService } from './row-filters.service';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
 import { Role, WebhookEvent } from '@prisma/client';
 
@@ -26,6 +27,7 @@ export class IntrospectionController {
     private readonly audit: AuditService,
     private readonly webhooks: WebhooksService,
     private readonly masks: ColumnMasksService,
+    private readonly rowFilters: RowFiltersService,
   ) {}
 
   private roleFromReq(req: Request): Role {
@@ -77,11 +79,19 @@ export class IntrospectionController {
       return { column: c, direction: (d === 'desc' ? 'desc' : 'asc') as 'asc' | 'desc' };
     });
     const filters = filtersRaw ? JSON.parse(filtersRaw) : [];
+    // Row filter: connection owner bypasses (our "no filter for the owner"
+    // policy, same as column masks). Everyone else gets the predicate
+    // appended server-side so it can't be skipped by fiddling with the URL.
+    const conn = await this.svc.get(id);
+    const extraPredicate =
+      conn.ownerId === u.id
+        ? undefined
+        : (await this.rowFilters.forUser(u.id, id, schema, name)) ?? undefined;
     const q: TableDataQuery = {
       schema, table: name,
       limit: Math.min(parseInt(limit, 10) || 50, 1000),
       offset: parseInt(offset, 10) || 0,
-      orderBy, filters,
+      orderBy, filters, extraPredicate,
     };
     const drv = await this.svc.buildDriverForRole(id, this.roleFromReq(req));
     try {

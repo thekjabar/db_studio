@@ -47,6 +47,7 @@ export class UpdateConnectionDto {
   @IsOptional() @IsBoolean() readOnly?: boolean;
   @IsOptional() @IsInt() @Min(1000) @Max(600_000) statementTimeoutMs?: number;
   @IsOptional() @IsString() workspaceId?: string;
+  @IsOptional() @IsBoolean() requireReview?: boolean;
 }
 
 export class TableDataFilterDto {

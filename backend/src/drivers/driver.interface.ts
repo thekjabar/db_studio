@@ -95,6 +95,10 @@ export interface TableDataQuery {
   offset: number;
   orderBy?: { column: string; direction: 'asc' | 'desc' }[];
   filters?: { column: string; op: string; value: unknown }[];
+  /** Pre-validated predicate appended as `(...) AND <filters>`. Used for
+   *  row-level access controls. Drivers MUST NOT parameterize this — the
+   *  caller has already validated it against a strict whitelist. */
+  extraPredicate?: string;
 }
 
 export interface TableDataResult {

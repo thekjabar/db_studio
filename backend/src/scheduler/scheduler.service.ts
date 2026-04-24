@@ -1,9 +1,10 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { RbacService } from '../rbac/rbac.service';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { QueuesService } from './queues.service';
 import { QuotaService } from '../common/quota.service';
+import type { AlertCondition } from './alert-evaluator';
 
 // Very light cron validation — 5 space-separated fields. bullmq/cron-parser
 // will reject invalid patterns at enqueue time with a clearer message.
@@ -16,6 +17,9 @@ export interface CreateScheduleInput {
   timezone?: string;
   sqlText: string;
   emailTo: string[];
+  slackWebhook?: string;
+  alertCondition?: AlertCondition | null;
+  alertCooldownMin?: number | null;
   enabled?: boolean;
 }
 
@@ -25,6 +29,9 @@ export interface UpdateScheduleInput {
   timezone?: string | null;
   sqlText?: string;
   emailTo?: string[];
+  slackWebhook?: string | null;
+  alertCondition?: AlertCondition | null;
+  alertCooldownMin?: number | null;
   enabled?: boolean;
 }
 
@@ -87,6 +94,9 @@ export class SchedulerService {
     await this.rbac.require(userId, input.connectionId, Role.EDITOR);
     await this.quota.assertCanCreateSchedule(userId);
 
+    if (input.slackWebhook && !/^https:\/\/hooks\.slack\.com\//.test(input.slackWebhook)) {
+      throw new BadRequestException('Slack webhook must be a hooks.slack.com URL');
+    }
     const row = await this.prisma.scheduledQuery.create({
       data: {
         connectionId: input.connectionId,
@@ -96,6 +106,9 @@ export class SchedulerService {
         timezone: input.timezone ?? null,
         sqlText: input.sqlText,
         emailTo: input.emailTo.join(','),
+        slackWebhook: input.slackWebhook ?? null,
+        alertCondition: (input.alertCondition ?? undefined) as Prisma.InputJsonValue | undefined,
+        alertCooldownMin: input.alertCooldownMin ?? null,
         enabled: input.enabled ?? true,
       },
     });
@@ -107,6 +120,9 @@ export class SchedulerService {
     await this.assertCanManage(userId, id);
     if (patch.cron && !CRON_RE.test(patch.cron)) throw new BadRequestException('Invalid cron expression');
 
+    if (patch.slackWebhook && !/^https:\/\/hooks\.slack\.com\//.test(patch.slackWebhook)) {
+      throw new BadRequestException('Slack webhook must be a hooks.slack.com URL');
+    }
     const updated = await this.prisma.scheduledQuery.update({
       where: { id },
       data: {
@@ -115,6 +131,11 @@ export class SchedulerService {
         ...(patch.timezone !== undefined && { timezone: patch.timezone }),
         ...(patch.sqlText !== undefined && { sqlText: patch.sqlText }),
         ...(patch.emailTo !== undefined && { emailTo: patch.emailTo.join(',') }),
+        ...(patch.slackWebhook !== undefined && { slackWebhook: patch.slackWebhook }),
+        ...(patch.alertCondition !== undefined && {
+          alertCondition: (patch.alertCondition ?? Prisma.DbNull) as unknown as Prisma.InputJsonValue,
+        }),
+        ...(patch.alertCooldownMin !== undefined && { alertCooldownMin: patch.alertCooldownMin }),
         ...(patch.enabled !== undefined && { enabled: patch.enabled }),
       },
     });

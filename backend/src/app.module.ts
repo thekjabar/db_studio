@@ -26,6 +26,13 @@ import { MigrationExportModule } from './migration-export/migration-export.modul
 import { ExportsModule } from './exports/exports.module';
 import { AdminModule } from './admin/admin.module';
 import { DashboardsModule } from './dashboards/dashboards.module';
+import { HealthMonitorModule } from './health-monitor/health-monitor.module';
+import { QueryReviewModule } from './query-review/query-review.module';
+import { NotebooksModule } from './notebooks/notebooks.module';
+import { SchemaDocsModule } from './schema-docs/schema-docs.module';
+import { StatusModule } from './status/status.module';
+import { ComplianceModule } from './compliance/compliance.module';
+import { OrganizationsModule } from './organizations/organizations.module';
 import { RedisModule } from './redis/redis.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { ApiKeysModule } from './api-keys/api-keys.module';
@@ -69,6 +76,13 @@ import { HealthController } from './common/health.controller';
     ExportsModule,
     AdminModule,
     DashboardsModule,
+    HealthMonitorModule,
+    QueryReviewModule,
+    NotebooksModule,
+    SchemaDocsModule,
+    StatusModule,
+    ComplianceModule,
+    OrganizationsModule,
     RedisModule,
     WebhooksModule,
     ApiKeysModule,

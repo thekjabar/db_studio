@@ -168,6 +168,9 @@ export class MssqlDriver implements IDatabaseDriver {
         params.push({ name: p, type: TYPES.NVarChar, value: String(f.value) });
       }
     }
+    if (q.extraPredicate && q.extraPredicate.trim()) {
+      where.push(`(${q.extraPredicate})`);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const orderSql = (q.orderBy ?? []).map((o) => {
       whitelistIdent(o.column, names);

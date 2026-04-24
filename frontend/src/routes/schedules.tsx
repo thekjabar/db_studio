@@ -305,6 +305,14 @@ function NewScheduleDialog({
   const [timezone, setTimezone] = useState("");
   const [sqlText, setSqlText] = useState("SELECT 1;");
   const [emailToRaw, setEmailToRaw] = useState("");
+  const [slackWebhook, setSlackWebhook] = useState("");
+  const [alertMode, setAlertMode] = useState<"always" | "alert">("always");
+  const [alertOp, setAlertOp] = useState<
+    "gt" | "gte" | "lt" | "lte" | "eq" | "neq" | "rows_gt" | "rows_eq"
+  >("rows_gt");
+  const [alertColumn, setAlertColumn] = useState("");
+  const [alertValue, setAlertValue] = useState("0");
+  const [alertCooldown, setAlertCooldown] = useState("15");
   const [submitting, setSubmitting] = useState(false);
 
   const reset = () => {
@@ -314,6 +322,12 @@ function NewScheduleDialog({
     setTimezone("");
     setSqlText("SELECT 1;");
     setEmailToRaw("");
+    setSlackWebhook("");
+    setAlertMode("always");
+    setAlertOp("rows_gt");
+    setAlertColumn("");
+    setAlertValue("0");
+    setAlertCooldown("15");
   };
 
   const submit = async (e: FormEvent) => {
@@ -326,6 +340,18 @@ function NewScheduleDialog({
       toast.error("Add at least one recipient email");
       return;
     }
+    const alertCondition =
+      alertMode === "alert"
+        ? {
+            op: alertOp,
+            value: Number(alertValue) || 0,
+            ...(alertOp.startsWith("rows_") ? {} : { column: alertColumn }),
+          }
+        : null;
+    if (alertCondition && !alertCondition.op.startsWith("rows_") && !alertCondition.column) {
+      toast.error("Pick a column for the alert condition");
+      return;
+    }
     setSubmitting(true);
     try {
       await api.createSchedule({
@@ -335,9 +361,12 @@ function NewScheduleDialog({
         timezone: timezone || undefined,
         sqlText,
         emailTo,
+        slackWebhook: slackWebhook.trim() || undefined,
+        alertCondition,
+        alertCooldownMin: alertMode === "alert" ? Number(alertCooldown) || null : null,
         enabled: true,
       });
-      toast.success("Schedule created");
+      toast.success(alertMode === "alert" ? "Alert created" : "Schedule created");
       qc.invalidateQueries({ queryKey: ["schedules"] });
       reset();
       onOpenChange(false);
@@ -405,7 +434,7 @@ function NewScheduleDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label>Recipients</Label>
+            <Label>Email recipients</Label>
             <Input
               required
               value={emailToRaw}
@@ -413,6 +442,88 @@ function NewScheduleDialog({
               placeholder="you@example.com, team@example.com"
             />
           </div>
+          <div className="space-y-1.5">
+            <Label>Slack webhook (optional)</Label>
+            <Input
+              value={slackWebhook}
+              onChange={(e) => setSlackWebhook(e.target.value)}
+              placeholder="https://hooks.slack.com/services/..."
+              className="font-mono text-xs"
+            />
+          </div>
+
+          <div className="rounded border border-border bg-muted/30 p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <Label className="m-0">Mode</Label>
+              <Select value={alertMode} onValueChange={(v) => setAlertMode(v as typeof alertMode)}>
+                <SelectTrigger className="h-8 text-xs w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="always">Always notify (classic)</SelectItem>
+                  <SelectItem value="alert">Notify only on alert</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {alertMode === "alert" && (
+              <>
+                <div className="grid grid-cols-[1fr_110px_110px] gap-2 items-end">
+                  <div>
+                    <Label className="text-[11px]">Column (blank for row-count ops)</Label>
+                    <Input
+                      value={alertColumn}
+                      onChange={(e) => setAlertColumn(e.target.value)}
+                      placeholder="e.g. count"
+                      className="h-8 text-xs"
+                      disabled={alertOp.startsWith("rows_")}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[11px]">Operator</Label>
+                    <Select value={alertOp} onValueChange={(v) => setAlertOp(v as typeof alertOp)}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="gt">&gt;</SelectItem>
+                        <SelectItem value="gte">&gt;=</SelectItem>
+                        <SelectItem value="lt">&lt;</SelectItem>
+                        <SelectItem value="lte">&lt;=</SelectItem>
+                        <SelectItem value="eq">=</SelectItem>
+                        <SelectItem value="neq">!=</SelectItem>
+                        <SelectItem value="rows_gt">rows &gt;</SelectItem>
+                        <SelectItem value="rows_eq">rows =</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label className="text-[11px]">Value</Label>
+                    <Input
+                      type="number"
+                      value={alertValue}
+                      onChange={(e) => setAlertValue(e.target.value)}
+                      className="h-8 text-xs"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-[11px]">Cooldown (min)</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={1440}
+                    value={alertCooldown}
+                    onChange={(e) => setAlertCooldown(e.target.value)}
+                    className="h-8 text-xs w-32"
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    After firing, wait at least this many minutes before alerting again on the same condition.
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+
           <DialogFooter className="pt-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button type="submit" disabled={submitting || !connectionId}>

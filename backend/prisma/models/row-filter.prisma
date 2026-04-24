@@ -1,0 +1,29 @@
+/// Row-level access filter. For (user, connection, schema, table) tuples
+/// where a filter exists, the table-browse + edit paths auto-append a
+/// WHERE predicate so the user only sees rows matching the filter. The
+/// predicate is stored as a template with a single placeholder `:userId`
+/// that resolves to the current user's id at query time, supporting the
+/// common "tenant_id = my id" pattern without user-editable SQL injection
+/// surface.
+///
+/// NOT applied to raw SQL (/query) — that's an EDITOR-tier interface where
+/// the user already can write any WHERE they want. Row filters are about
+/// scoping the row-browse surface for VIEWER-role team members.
+model RowFilter {
+  id           String     @id @default(cuid())
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  schemaName   String
+  tableName    String
+  /// Whitelisted predicate template. Allowed tokens:
+  ///   identifiers, numbers, string literals, = < > <= >= <> IN () AND OR,
+  ///   `:userId` placeholder. Validated on save; stored verbatim.
+  predicate    String
+  createdAt    DateTime   @default(now())
+
+  @@unique([connectionId, userId, schemaName, tableName])
+  @@index([connectionId, schemaName, tableName])
+  @@index([userId])
+}

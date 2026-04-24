@@ -18,6 +18,12 @@ import ErRoute from "@/routes/connection/er";
 import SchemaRoute from "@/routes/connection/schema";
 import AuditRoute from "@/routes/connection/audit";
 import QueryHistoryRoute from "@/routes/connection/query-history";
+import DbHealthRoute from "@/routes/connection/db-health";
+import ReviewRequestsRoute from "@/routes/connection/review-requests";
+import RowFiltersRoute from "@/routes/connection/row-filters";
+import SchemaDocsRoute from "@/routes/connection/schema-docs";
+import AiChatRoute from "@/routes/connection/ai-chat";
+import MigrationBuilderRoute from "@/routes/connection/migration-builder";
 import SavedRoute from "@/routes/connection/saved";
 import PermissionsRoute from "@/routes/connection/permissions";
 import BackupRoute from "@/routes/connection/backup";
@@ -32,6 +38,10 @@ import AdminRoute from "@/routes/admin";
 import DashboardsListRoute from "@/routes/dashboards";
 import DashboardDetailRoute from "@/routes/dashboard-detail";
 import PublicDashboardRoute from "@/routes/public-dashboard";
+import NotebooksListRoute from "@/routes/notebooks";
+import NotebookDetailRoute from "@/routes/notebook-detail";
+import StatusPage from "@/routes/status";
+import SessionsRoute from "@/routes/sessions";
 import LandingPage from "@/routes/landing";
 import NotFoundPage from "@/routes/not-found";
 import { Loader2 } from "lucide-react";
@@ -186,6 +196,31 @@ export default function App() {
       />
       {/* Public share URL — no auth required */}
       <Route path="/d/:token" element={<PublicDashboardRoute />} />
+      <Route path="/status" element={<StatusPage />} />
+      <Route
+        path="/sessions"
+        element={
+          <Protected>
+            <SessionsRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/notebooks"
+        element={
+          <Protected>
+            <NotebooksListRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/notebooks/:id"
+        element={
+          <Protected>
+            <NotebookDetailRoute />
+          </Protected>
+        }
+      />
       <Route
         path="/c/:id"
         element={
@@ -202,6 +237,12 @@ export default function App() {
         <Route path="schema" element={<SchemaRoute />} />
         <Route path="audit" element={<AuditRoute />} />
         <Route path="query-history" element={<QueryHistoryRoute />} />
+        <Route path="db-health" element={<DbHealthRoute />} />
+        <Route path="reviews" element={<ReviewRequestsRoute />} />
+        <Route path="row-filters" element={<RowFiltersRoute />} />
+        <Route path="docs" element={<SchemaDocsRoute />} />
+        <Route path="ai" element={<AiChatRoute />} />
+        <Route path="migrate" element={<MigrationBuilderRoute />} />
         <Route path="saved" element={<SavedRoute />} />
         <Route path="permissions" element={<PermissionsRoute />} />
         <Route path="backup" element={<BackupRoute />} />

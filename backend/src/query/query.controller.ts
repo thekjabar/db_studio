@@ -11,7 +11,10 @@ import { RbacGuard } from '../rbac/rbac.guard';
 import { RequireRole } from '../rbac/rbac.decorator';
 import { SqlClassifierService } from './sql-classifier.service';
 import { ExplainService, ExplainMode } from './explain.service';
+import { PerfInsightsService } from './perf-insights.service';
+import { QueryCostService } from './query-cost.service';
 import { SlowQueryService } from '../slow-query/slow-query.service';
+import { QueryReviewService } from '../query-review/query-review.service';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
 
 class RunQueryDto {
@@ -25,6 +28,12 @@ class RunQueryDto {
    * SQL has no existing LIMIT clause.
    */
   @IsOptional() @IsInt() @Min(0) @Max(1_000_000) maxRows?: number;
+  /**
+   * When set, this run consumes an APPROVED QueryReviewRequest. The SQL
+   * in the request must match `sql` byte-for-byte — otherwise we'd allow
+   * bypassing approval by swapping the body.
+   */
+  @IsOptional() @IsString() @Length(0, 200) reviewRequestId?: string;
 }
 
 /**
@@ -75,7 +84,10 @@ export class QueryController {
     private readonly audit: AuditService,
     private readonly classifier: SqlClassifierService,
     private readonly explain: ExplainService,
+    private readonly perf: PerfInsightsService,
+    private readonly cost: QueryCostService,
     private readonly slow: SlowQueryService,
+    private readonly review: QueryReviewService,
   ) {}
 
   @Throttle({ heavy: { limit: 30, ttl: 60_000 } })
@@ -86,6 +98,26 @@ export class QueryController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.explain.explain(user.id, id, dto.sql, dto.mode ?? 'plan');
+  }
+
+  @Throttle({ heavy: { limit: 30, ttl: 60_000 } })
+  @Post('insights') @HttpCode(200) @RequireRole('VIEWER')
+  async insights(
+    @Param('id') id: string,
+    @Body() dto: ExplainQueryDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.perf.analyze(user.id, id, dto.sql);
+  }
+
+  @Throttle({ heavy: { limit: 60, ttl: 60_000 } })
+  @Post('estimate') @HttpCode(200) @RequireRole('VIEWER')
+  async estimate(
+    @Param('id') id: string,
+    @Body() dto: ExplainQueryDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.cost.estimate(user.id, id, dto.sql);
   }
 
   @Throttle({ heavy: { limit: 30, ttl: 60_000 } })
@@ -111,6 +143,31 @@ export class QueryController {
     }
     if (conn.readOnly && cls.kind !== 'SELECT') {
       throw new ForbiddenException('Connection is read-only');
+    }
+
+    // Review gate: when the connection requires review for destructive ops,
+    // an EDITOR can't run them directly — they need an approved
+    // QueryReviewRequest (submitted, approved by an OWNER, executed once).
+    // OWNER bypasses the gate; VIEWER already gated above.
+    const requiresReview =
+      conn.requireReview === true &&
+      (cls.kind === 'DESTRUCTIVE' || cls.kind === 'DDL') &&
+      role !== Role.OWNER;
+    if (requiresReview) {
+      if (!dto.reviewRequestId) {
+        throw new ForbiddenException({
+          code: 'REVIEW_REQUIRED',
+          message: 'This connection requires approval for this statement. Submit a review request.',
+          classification: cls,
+        });
+      }
+      const rr = await this.review.fetchRunnable(user.id, dto.reviewRequestId);
+      if (rr.connectionId !== id) {
+        throw new ForbiddenException('Review request belongs to a different connection');
+      }
+      if (rr.sqlText !== dto.sql) {
+        throw new ForbiddenException('Review request SQL differs from the submitted statement');
+      }
     }
 
     // Apply row cap only to SELECT statements that don't already cap themselves.
@@ -149,6 +206,11 @@ export class QueryController {
         rowCount: rows.length,
         rowsAffected: res.rowCount ?? null,
       });
+      if (dto.reviewRequestId && requiresReview) {
+        // Consume the review request — any subsequent run attempt with the
+        // same id will 400.
+        await this.review.markExecuted(dto.reviewRequestId, res.rowCount ?? null);
+      }
       return {
         ...res,
         rows,

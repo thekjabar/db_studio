@@ -14,6 +14,21 @@ model ScheduledQuery {
   sqlText        String
   /// Comma-separated list of recipient email addresses.
   emailTo        String
+  /// Optional Slack incoming-webhook URL. When set, a Slack message is
+  /// posted in addition to (or instead of) email.
+  slackWebhook   String?
+  /// When set, this schedule behaves as an alert: the SQL's result is
+  /// evaluated against the condition and notifications only fire when
+  /// the condition matches. Null means "always notify" (plain schedule).
+  /// Shape: { column: string, op: 'gt'|'gte'|'lt'|'lte'|'eq'|'neq'|'rows_gt'|'rows_eq', value: number }
+  alertCondition Json?
+  /// Suppress duplicate alerts: once fired, wait at least this many minutes
+  /// before re-evaluating. Avoids paging on every cron tick while a metric
+  /// stays above threshold.
+  alertCooldownMin Int?
+  /// Last time an alert fired (evaluated to true + notified). Used with
+  /// `alertCooldownMin` to decide whether to fire again.
+  lastAlertedAt  DateTime?
   enabled        Boolean  @default(true)
   lastRunAt      DateTime?
   lastStatus     ScheduledRunStatus?
@@ -40,6 +55,10 @@ model ScheduledQueryRun {
   resultPreview    Json?
   emailDelivered   Boolean  @default(false)
   emailError       String?
+  /// For alert-type schedules: did the condition match on this run?
+  alertTriggered   Boolean  @default(false)
+  /// Free-form summary of the condition evaluation (e.g. "count=123 > 100").
+  alertSummary     String?
 
   @@index([scheduleId, startedAt(sort: Desc)])
 }

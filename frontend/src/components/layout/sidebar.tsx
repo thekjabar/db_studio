@@ -20,6 +20,10 @@ import {
   FileCode2,
   Webhook,
   History,
+  Activity,
+  Filter,
+  BookMarked,
+  Sparkles,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -170,6 +174,12 @@ export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSche
         <NavItem to={`/c/${connectionId}/audit`} icon={<FileClock className="h-3.5 w-3.5" />} label="Audit log" />
         <NavItem to={`/c/${connectionId}/query-history`} icon={<History className="h-3.5 w-3.5" />} label="Query history" />
         <NavItem to={`/c/${connectionId}/slow-queries`} icon={<Timer className="h-3.5 w-3.5" />} label="Slow queries" />
+        <NavItem to={`/c/${connectionId}/db-health`} icon={<Activity className="h-3.5 w-3.5" />} label="DB health" />
+        <NavItem to={`/c/${connectionId}/reviews`} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Query reviews" />
+        <NavItem to={`/c/${connectionId}/row-filters`} icon={<Filter className="h-3.5 w-3.5" />} label="Row filters" />
+        <NavItem to={`/c/${connectionId}/docs`} icon={<BookMarked className="h-3.5 w-3.5" />} label="Docs" />
+        <NavItem to={`/c/${connectionId}/ai`} icon={<Sparkles className="h-3.5 w-3.5" />} label="AI chat" />
+        <NavItem to={`/c/${connectionId}/migrate`} icon={<FileCode2 className="h-3.5 w-3.5" />} label="Migration builder" />
         <NavItem to={`/c/${connectionId}/permissions`} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Permissions" />
         <NavItem to={`/c/${connectionId}/backup`} icon={<Archive className="h-3.5 w-3.5" />} label="Backup" />
         <NavItem to={`/c/${connectionId}/migration-export`} icon={<FileCode2 className="h-3.5 w-3.5" />} label="Migration export" />

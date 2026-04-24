@@ -1,0 +1,33 @@
+/// Team-authored documentation for a table or column. Surfaced in the ER
+/// diagram, data browser, and schema tree. Not pushed to the source DB —
+/// kept in app state so it survives schema changes and isn't restricted by
+/// the DB user's privileges.
+///
+/// Keyed by `(connectionId, schema, table, column?)`. A null `columnName`
+/// means the doc is at the table level; a non-null value docs a specific
+/// column. One row per target.
+model SchemaDoc {
+  id           String     @id @default(cuid())
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  schemaName   String
+  tableName    String
+  /// Empty string for table-level docs; a column name for column-level docs.
+  /// We use `''` rather than NULL so Prisma's composite-unique lookup works
+  /// without driver adapter NULL semantics. Treated as "no column" at the
+  /// UI boundary.
+  columnName   String     @default("")
+  /// Markdown body. Rendered with the same tiny renderer we use in notebooks.
+  description  String?
+  /// Comma-separated tags (e.g. "pii,regulated,audit").
+  tags         String?
+  /// Optional email pointer — who owns this table / column.
+  ownerEmail   String?
+  updatedById  String?
+  updatedBy    User?      @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([connectionId, schemaName, tableName, columnName])
+  @@index([connectionId, schemaName, tableName])
+}

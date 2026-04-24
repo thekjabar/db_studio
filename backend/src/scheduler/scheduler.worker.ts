@@ -15,6 +15,7 @@ import {
   type EmailJobData,
   type ExecJobData,
 } from './scheduler.constants';
+import { evaluateAlert, type AlertCondition } from './alert-evaluator';
 
 const MAX_PREVIEW_ROWS = 50;
 const MAX_EMAIL_ROWS = 10_000;
@@ -146,6 +147,18 @@ export class SchedulerWorker implements OnModuleInit, OnModuleDestroy {
         const durationMs = Date.now() - started;
         const preview = rows.slice(0, MAX_PREVIEW_ROWS);
 
+        // Alert evaluation: if an alertCondition is set, we only notify on a
+        // positive match (and respect cooldown). With no condition the
+        // schedule behaves as a classic "mail me the result" job.
+        const condition = (schedule.alertCondition as AlertCondition | null | undefined) ?? null;
+        const outcome = evaluateAlert(condition, rows);
+        const inCooldown =
+          !!condition &&
+          outcome.triggered &&
+          schedule.lastAlertedAt != null &&
+          schedule.alertCooldownMin != null &&
+          Date.now() - schedule.lastAlertedAt.getTime() < schedule.alertCooldownMin * 60_000;
+
         await this.prisma.scheduledQueryRun.update({
           where: { id: run.id },
           data: {
@@ -154,33 +167,62 @@ export class SchedulerWorker implements OnModuleInit, OnModuleDestroy {
             rowCount: rows.length,
             durationMs,
             resultPreview: preview as unknown as Prisma.InputJsonValue,
+            alertTriggered: !!condition && outcome.triggered,
+            alertSummary: condition ? outcome.summary : null,
           },
         });
+
+        // Only update lastAlertedAt when we actually fired a notification —
+        // otherwise cooldown math gets broken when a flap-n-recover burst
+        // triggers condition but stays inside the cooldown window.
+        const willNotify = !condition || (outcome.triggered && !inCooldown);
         await this.prisma.scheduledQuery.update({
           where: { id: scheduleId },
-          data: { lastRunAt: new Date(), lastStatus: ScheduledRunStatus.SUCCESS },
+          data: {
+            lastRunAt: new Date(),
+            lastStatus: ScheduledRunStatus.SUCCESS,
+            ...(willNotify && condition ? { lastAlertedAt: new Date() } : {}),
+          },
         });
 
-        // Queue an email job — decoupling exec from email means SMTP flakiness
-        // doesn't burn query-execution retries.
+        if (!willNotify) {
+          // Alert condition unmet (or suppressed) — silent run. The run row is
+          // still recorded so users can see the recent-history chart.
+          return;
+        }
+
+        // Dispatch notifications. Email uses the existing bullmq email queue.
+        // Slack posts inline — it's a single HTTPS call, not worth a separate
+        // queue. If Slack fails we log and continue so it doesn't prevent the
+        // email path from firing.
         const recipients = schedule.emailTo
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean);
+        const subjectPrefix = condition ? '[DB Studio alert]' : '[DB Studio]';
+        const subject = condition
+          ? `${subjectPrefix} ${schedule.name} — ${outcome.summary}`
+          : `${subjectPrefix} ${schedule.name} — ${rows.length} rows`;
+        const body = condition
+          ? `Alert "${schedule.name}" fired.\n\nCondition matched: ${outcome.summary}\nRows: ${rows.length}\nDuration: ${durationMs}ms\n`
+          : `Scheduled query "${schedule.name}" completed successfully.\n\nRows: ${rows.length}\nDuration: ${durationMs}ms\n` +
+            (rows.length > MAX_EMAIL_ROWS ? `Note: only first ${MAX_EMAIL_ROWS} rows attached.\n` : '');
+
         if (recipients.length > 0 && this.email.enabled) {
           const csv = toCsv(rows.slice(0, MAX_EMAIL_ROWS));
           await this.queues.enqueueEmail({
             scheduleId,
             runId: run.id,
             to: recipients,
-            subject: `[DB Studio] ${schedule.name} — ${rows.length} rows`,
-            body:
-              `Scheduled query "${schedule.name}" completed successfully.\n\n` +
-              `Rows: ${rows.length}\n` +
-              `Duration: ${durationMs}ms\n` +
-              (rows.length > MAX_EMAIL_ROWS ? `Note: only first ${MAX_EMAIL_ROWS} rows attached.\n` : ''),
+            subject,
+            body,
             csv,
             filename: `${schedule.name.replace(/[^a-z0-9-_]+/gi, '_')}.csv`,
+          });
+        }
+        if (schedule.slackWebhook) {
+          await this.postSlack(schedule.slackWebhook, schedule.name, body, rows).catch((err) => {
+            this.log.warn(`Slack post failed for ${scheduleId}: ${(err as Error).message}`);
           });
         }
       } finally {
@@ -220,6 +262,44 @@ export class SchedulerWorker implements OnModuleInit, OnModuleDestroy {
         data: { emailError: message.slice(0, 2000) },
       });
       throw err;
+    }
+  }
+
+  /** POST a short markdown summary to a Slack incoming webhook. */
+  private async postSlack(
+    webhook: string,
+    name: string,
+    body: string,
+    rows: Record<string, unknown>[],
+  ): Promise<void> {
+    // Preview a few rows as a compact markdown block so responders have
+    // context without clicking through. Cap at 10 rows to stay under
+    // Slack's 40kb message size.
+    const preview = rows.slice(0, 10);
+    const sample = preview.length
+      ? '```\n' +
+        preview
+          .map((r) => JSON.stringify(r))
+          .join('\n')
+          .slice(0, 2500) +
+        '\n```'
+      : '_(no rows)_';
+    const payload = {
+      text: name,
+      blocks: [
+        { type: 'header', text: { type: 'plain_text', text: name } },
+        { type: 'section', text: { type: 'mrkdwn', text: body } },
+        { type: 'section', text: { type: 'mrkdwn', text: sample } },
+      ],
+    };
+    const res = await fetch(webhook, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`Slack ${res.status}: ${text.slice(0, 200)}`);
     }
   }
 }

@@ -1,0 +1,45 @@
+/// Top-level tenant entity — sits above Workspaces. A single deployment of
+/// DB Studio can host multiple orgs; users belong to one or more orgs via
+/// OrganizationMember, and Workspaces are optionally scoped to an org.
+///
+/// Existing personal workspaces predate orgs, so `orgId` is nullable
+/// everywhere — "no org" means the workspace is personal / team-lite,
+/// the same behavior the app had before this model landed. New paid
+/// deployments create an Org and bind their Workspaces to it.
+model Organization {
+  id            String               @id @default(cuid())
+  name          String
+  /// URL slug. Unique across the instance.
+  slug          String               @unique
+  /// Owner: the user who created it; responsible for billing.
+  ownerId       String
+  owner         User                 @relation("OwnedOrganizations", fields: [ownerId], references: [id], onDelete: Cascade)
+  /// Billing contact email. Receives invoices / payment notifications.
+  billingEmail  String?
+  /// When true, members must sign in via the org's SSO (no password login,
+  /// no OAuth against personal accounts). Enforced in AuthService.
+  enforceSso    Boolean              @default(false)
+  /// How many members the plan allows. Null = unmetered (self-host).
+  seatLimit     Int?
+  members       OrganizationMember[]
+  workspaces    Workspace[]
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@index([ownerId])
+}
+
+/// Org membership + role. Reuses the Role enum — OWNER is org-wide admin,
+/// EDITOR can invite members + create workspaces, VIEWER sees org dashboard.
+model OrganizationMember {
+  id              String       @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role            Role         @default(VIEWER)
+  createdAt       DateTime     @default(now())
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}

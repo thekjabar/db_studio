@@ -74,6 +74,8 @@ const EnvSchema = z.object({
   // to disable the endpoint entirely (returns 404). Generate with:
   //   node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
   METRICS_TOKEN: z.string().transform((v) => v || undefined).optional(),
+  // Data retention (days). Older rows are pruned by the compliance sweep.
+  RETENTION_AUDIT_DAYS: z.coerce.number().int().positive().default(365),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -175,4 +177,5 @@ export class AppConfigService {
   get vaultToken() { return this.env.VAULT_TOKEN; }
   get vaultTransitKey() { return this.env.VAULT_TRANSIT_KEY; }
   get metricsToken() { return this.env.METRICS_TOKEN; }
+  get retentionAuditDays() { return this.env.RETENTION_AUDIT_DAYS; }
 }

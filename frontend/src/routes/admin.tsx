@@ -31,7 +31,7 @@ import { Switch } from "@/components/ui/switch";
 import { DialectBadge } from "@/components/dialect-badge";
 import type { Dialect } from "@/lib/api";
 
-type Tab = "overview" | "users";
+type Tab = "overview" | "users" | "incidents";
 
 export default function AdminRoute() {
   const user = useAuth((s) => s.user);
@@ -72,9 +72,14 @@ export default function AdminRoute() {
           <TabButton active={tab === "users"} onClick={() => setTab("users")}>
             <Users className="h-3.5 w-3.5" /> Users
           </TabButton>
+          <TabButton active={tab === "incidents"} onClick={() => setTab("incidents")}>
+            <Activity className="h-3.5 w-3.5" /> Incidents
+          </TabButton>
         </div>
 
-        {tab === "overview" ? <OverviewTab /> : <UsersTab />}
+        {tab === "overview" && <OverviewTab />}
+        {tab === "users" && <UsersTab />}
+        {tab === "incidents" && <IncidentsTab />}
       </div>
     </div>
   );
@@ -392,6 +397,223 @@ function UsersTab() {
         You can't demote yourself from this screen. To remove the last admin, promote another user
         first, then sign in as them.
       </p>
+    </div>
+  );
+}
+
+function IncidentsTab() {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const list = useQuery({
+    queryKey: ["admin-incidents"],
+    queryFn: () => api.adminListIncidents(),
+  });
+  const del = useMutation({
+    mutationFn: (id: string) => api.adminDeleteIncident(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin-incidents"] });
+      toast.success("Deleted");
+    },
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-muted-foreground">
+          Events shown on the public <code>/status</code> page.
+        </div>
+        <Button size="sm" onClick={() => setOpen(true)}>
+          New incident
+        </Button>
+      </div>
+      <div className="rounded-md border border-border bg-card divide-y divide-border">
+        {list.data?.map((i) => (
+          <IncidentRow
+            key={i.id}
+            incident={i}
+            onChanged={() => qc.invalidateQueries({ queryKey: ["admin-incidents"] })}
+            onDelete={() => del.mutate(i.id)}
+          />
+        ))}
+        {list.data?.length === 0 && (
+          <div className="p-6 text-center text-sm text-muted-foreground">
+            No incidents on record.
+          </div>
+        )}
+      </div>
+      {open && <NewIncidentDialog onClose={() => setOpen(false)} />}
+    </div>
+  );
+}
+
+function IncidentRow({
+  incident,
+  onChanged,
+  onDelete,
+}: {
+  incident: {
+    id: string;
+    title: string;
+    status: "INVESTIGATING" | "IDENTIFIED" | "MONITORING" | "RESOLVED";
+    severity: "MINOR" | "MAJOR" | "CRITICAL";
+    impact: string | null;
+    updates: { at: string; status: string; message: string }[];
+    startedAt: string;
+    resolvedAt: string | null;
+  };
+  onChanged: () => void;
+  onDelete: () => void;
+}) {
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [status, setStatus] = useState<typeof incident.status>(incident.status);
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const submit = async () => {
+    if (!message.trim()) {
+      toast.error("Message required");
+      return;
+    }
+    setSending(true);
+    try {
+      await api.adminAddIncidentUpdate(incident.id, { status, message });
+      setMessage("");
+      setUpdateOpen(false);
+      onChanged();
+    } catch (e) {
+      toast.error(extractErrorMessage(e));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="p-3 space-y-2">
+      <div className="flex items-center gap-2 text-sm">
+        <Badge variant={incident.severity === "CRITICAL" ? "destructive" : incident.severity === "MAJOR" ? "warning" : "secondary"}>
+          {incident.severity}
+        </Badge>
+        <Badge variant="secondary" className="text-[10px]">
+          {incident.status}
+        </Badge>
+        <span className="font-semibold truncate flex-1">{incident.title}</span>
+        <span className="text-[11px] text-muted-foreground">
+          {format(new Date(incident.startedAt), "MMM d HH:mm")}
+        </span>
+        {!incident.resolvedAt ? (
+          <Button size="sm" variant="outline" onClick={() => setUpdateOpen((v) => !v)}>
+            Update
+          </Button>
+        ) : null}
+        <button
+          onClick={onDelete}
+          className="text-muted-foreground hover:text-destructive p-1"
+          title="Delete"
+        >
+          ×
+        </button>
+      </div>
+      {incident.updates.length > 0 && (
+        <div className="text-[11px] font-mono space-y-0.5">
+          {incident.updates.slice().reverse().slice(0, 3).map((u, i) => (
+            <div key={i}>
+              <span className="text-muted-foreground">{format(new Date(u.at), "MMM d HH:mm")}</span>{" "}
+              <span className="text-primary">[{u.status}]</span> {u.message}
+            </div>
+          ))}
+        </div>
+      )}
+      {updateOpen && (
+        <div className="flex items-center gap-2 pt-1">
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value as typeof status)}
+            className="text-xs px-2 py-1 rounded border border-border bg-background"
+          >
+            <option value="INVESTIGATING">Investigating</option>
+            <option value="IDENTIFIED">Identified</option>
+            <option value="MONITORING">Monitoring</option>
+            <option value="RESOLVED">Resolved</option>
+          </select>
+          <Input
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            placeholder="Update message"
+            className="h-8 text-xs flex-1"
+          />
+          <Button size="sm" onClick={submit} disabled={sending}>
+            {sending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Post
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NewIncidentDialog({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const [title, setTitle] = useState("");
+  const [severity, setSeverity] = useState<"MINOR" | "MAJOR" | "CRITICAL">("MINOR");
+  const [impact, setImpact] = useState("");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const submit = async () => {
+    if (!title.trim() || !message.trim()) {
+      toast.error("Title + initial update required");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.adminCreateIncident({
+        title,
+        severity,
+        impact: impact || undefined,
+        message,
+      });
+      toast.success("Created");
+      qc.invalidateQueries({ queryKey: ["admin-incidents"] });
+      onClose();
+    } catch (e) {
+      toast.error(extractErrorMessage(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-card rounded-md border border-border w-full max-w-md p-4 space-y-3">
+        <h3 className="font-semibold">New incident</h3>
+        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" />
+        <div className="grid grid-cols-2 gap-2">
+          <select
+            value={severity}
+            onChange={(e) => setSeverity(e.target.value as typeof severity)}
+            className="text-xs px-2 py-2 rounded border border-border bg-background"
+          >
+            <option value="MINOR">Minor</option>
+            <option value="MAJOR">Major</option>
+            <option value="CRITICAL">Critical</option>
+          </select>
+          <Input value={impact} onChange={(e) => setImpact(e.target.value)} placeholder="Impact (optional)" />
+        </div>
+        <Input
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          placeholder="Initial update — what we know"
+        />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={saving}>
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Create
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

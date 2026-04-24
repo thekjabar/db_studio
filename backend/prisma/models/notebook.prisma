@@ -1,0 +1,29 @@
+/// A SQL notebook: an ordered list of markdown + SQL cells. Think Jupyter
+/// but for database ops. Scoped to a single connection so RBAC reuses the
+/// connection's role model — a VIEWER sees it, an EDITOR runs cells.
+///
+/// Cells are stored as a JSON array (see docstring on `cells`) rather than a
+/// separate DashboardTile-style child table. Notebooks are usually edited as
+/// a unit (reorder, insert, delete), so one PATCH request with the whole
+/// array is simpler than the CRUD-per-cell alternative and avoids tile-sized
+/// row counts on a typical team (20 cells × 50 notebooks × 10 users = 10k
+/// rows, still tiny, but the churn is all at once).
+model Notebook {
+  id           String     @id @default(cuid())
+  name         String
+  description  String?
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  ownerId      String
+  owner        User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  /// Shape: [{ id, kind: 'md'|'sql', source: string, title?: string }]
+  /// `id` is a client-generated cuid (so reorders keep identity across
+  /// saves). `title` is shown in the outline pane. Run state is NOT
+  /// persisted — every load starts fresh.
+  cells        Json       @default("[]")
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([connectionId])
+  @@index([ownerId])
+}

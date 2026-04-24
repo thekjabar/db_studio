@@ -57,6 +57,9 @@ export class SqliteDriver implements IDatabaseDriver {
       if (op === 'is null' || op === 'is not null') where.push(`${quoteSqlite(f.column)} ${op.toUpperCase()}`);
       else { where.push(`${quoteSqlite(f.column)} ${op.toUpperCase()} ?`); params.push(f.value); }
     }
+    if (q.extraPredicate && q.extraPredicate.trim()) {
+      where.push(`(${q.extraPredicate})`);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const orderSql = (q.orderBy ?? []).map((o) => {
       whitelistIdent(o.column, names);

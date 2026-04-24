@@ -94,6 +94,7 @@ export interface Connection {
   sslMode?: string;
   readOnly?: boolean;
   statementTimeoutMs?: number;
+  requireReview?: boolean;
   workspaceId?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -250,6 +251,13 @@ export interface Dashboard {
   tiles: DashboardTile[];
 }
 
+export interface NotebookCell {
+  id: string;
+  kind: "md" | "sql";
+  source: string;
+  title?: string;
+}
+
 export interface PublicDashboard {
   id: string;
   name: string;
@@ -322,12 +330,34 @@ export interface ScheduledQuery {
   sqlText: string;
   /** Comma-separated on the wire; UI treats it as a list. */
   emailTo: string;
+  slackWebhook: string | null;
+  alertCondition: AlertCondition | null;
+  alertCooldownMin: number | null;
+  lastAlertedAt: string | null;
   enabled: boolean;
   lastRunAt: string | null;
   lastStatus: ScheduledRunStatus | null;
   nextRunAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type AlertOp =
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte"
+  | "eq"
+  | "neq"
+  | "rows_gt"
+  | "rows_gte"
+  | "rows_lt"
+  | "rows_eq";
+
+export interface AlertCondition {
+  column?: string;
+  op: AlertOp;
+  value: number;
 }
 
 export interface CreateScheduleInput {
@@ -337,6 +367,9 @@ export interface CreateScheduleInput {
   timezone?: string;
   sqlText: string;
   emailTo: string[];
+  slackWebhook?: string;
+  alertCondition?: AlertCondition | null;
+  alertCooldownMin?: number | null;
   enabled?: boolean;
 }
 
@@ -773,7 +806,15 @@ export const api = {
       )
       .then((r) => r.data),
 
-  runQuery: (id: string, body: { sql: string; confirmDestructive?: boolean; maxRows?: number }) =>
+  runQuery: (
+    id: string,
+    body: {
+      sql: string;
+      confirmDestructive?: boolean;
+      maxRows?: number;
+      reviewRequestId?: string;
+    },
+  ) =>
     http.post<QueryResult>(`/connections/${id}/query`, body).then((r) => r.data),
 
   exportResult: (
@@ -1329,6 +1370,332 @@ export const api = {
   runPublicDashboardTile: (token: string, tileId: string) =>
     http
       .post<QueryResult>(`/public/dashboards/${token}/tiles/${tileId}/run`)
+      .then((r) => r.data),
+
+  listAiChats: (connectionId: string) =>
+    http
+      .get<{ id: string; title: string; createdAt: string; updatedAt: string }[]>(
+        "/ai/chats",
+        { params: { connectionId } },
+      )
+      .then((r) => r.data),
+  getAiChat: (id: string) =>
+    http
+      .get<{
+        id: string;
+        title: string;
+        messages: {
+          id: string;
+          role: "user" | "assistant";
+          content: string;
+          sqlBlock: string | null;
+          createdAt: string;
+        }[];
+      }>(`/ai/chats/${id}`)
+      .then((r) => r.data),
+  sendAiChatMessage: (body: { chatId?: string; connectionId: string; content: string }) =>
+    http
+      .post<{
+        chatId: string;
+        message: {
+          id: string;
+          role: "assistant";
+          content: string;
+          sqlBlock: string | null;
+          createdAt: string;
+        };
+      }>("/ai/chats/messages", body)
+      .then((r) => r.data),
+  deleteAiChat: (id: string) =>
+    http.delete<{ ok: true }>(`/ai/chats/${id}`).then((r) => r.data),
+
+  listSessions: () =>
+    http
+      .get<
+        {
+          id: string;
+          userAgent: string | null;
+          ip: string | null;
+          createdAt: string;
+          expiresAt: string;
+          current: boolean;
+        }[]
+      >("/auth/sessions")
+      .then((r) => r.data),
+  revokeSession: (id: string) =>
+    http.delete<{ ok: true }>(`/auth/sessions/${id}`).then((r) => r.data),
+  revokeOtherSessions: () =>
+    http.delete<{ revoked: number }>("/auth/sessions").then((r) => r.data),
+
+  publicStatus: () =>
+    http
+      .get<{
+        overall: "operational" | "degraded" | "outage";
+        asOf: string;
+        components: {
+          name: string;
+          status: "ok" | "degraded" | "down";
+          detail?: string;
+        }[];
+        activeIncidents: {
+          id: string;
+          title: string;
+          status: "INVESTIGATING" | "IDENTIFIED" | "MONITORING" | "RESOLVED";
+          severity: "MINOR" | "MAJOR" | "CRITICAL";
+          startedAt: string;
+          updates: { at: string; status: string; message: string }[];
+        }[];
+        recentIncidents: {
+          id: string;
+          title: string;
+          severity: "MINOR" | "MAJOR" | "CRITICAL";
+          startedAt: string;
+          resolvedAt: string;
+        }[];
+      }>("/status")
+      .then((r) => r.data),
+  adminListIncidents: () =>
+    http
+      .get<
+        {
+          id: string;
+          title: string;
+          status: "INVESTIGATING" | "IDENTIFIED" | "MONITORING" | "RESOLVED";
+          severity: "MINOR" | "MAJOR" | "CRITICAL";
+          impact: string | null;
+          updates: { at: string; status: string; message: string }[];
+          startedAt: string;
+          resolvedAt: string | null;
+          createdBy: { email: string; displayName: string | null } | null;
+        }[]
+      >("/admin/incidents")
+      .then((r) => r.data),
+  adminCreateIncident: (body: {
+    title: string;
+    severity?: "MINOR" | "MAJOR" | "CRITICAL";
+    impact?: string;
+    message: string;
+  }) => http.post("/admin/incidents", body).then((r) => r.data),
+  adminAddIncidentUpdate: (
+    id: string,
+    body: { status: "INVESTIGATING" | "IDENTIFIED" | "MONITORING" | "RESOLVED"; message: string },
+  ) => http.post(`/admin/incidents/${id}/updates`, body).then((r) => r.data),
+  adminDeleteIncident: (id: string) =>
+    http.delete(`/admin/incidents/${id}`).then((r) => r.data),
+
+  listSchemaDocs: (connectionId: string, schema?: string, table?: string) =>
+    http
+      .get<
+        {
+          id: string;
+          schemaName: string;
+          tableName: string;
+          columnName: string;
+          description: string | null;
+          tags: string | null;
+          ownerEmail: string | null;
+          updatedAt: string;
+          updatedBy: { email: string; displayName: string | null } | null;
+        }[]
+      >(`/connections/${connectionId}/schema-docs`, {
+        params: {
+          ...(schema ? { schema } : {}),
+          ...(table ? { table } : {}),
+        },
+      })
+      .then((r) => r.data),
+  upsertSchemaDoc: (
+    connectionId: string,
+    body: {
+      schemaName: string;
+      tableName: string;
+      columnName?: string;
+      description?: string;
+      tags?: string;
+      ownerEmail?: string;
+    },
+  ) => http.post(`/connections/${connectionId}/schema-docs`, body).then((r) => r.data),
+  deleteSchemaDoc: (connectionId: string, docId: string) =>
+    http.delete(`/connections/${connectionId}/schema-docs/${docId}`).then((r) => r.data),
+
+  listRowFilters: (connectionId: string) =>
+    http
+      .get<
+        {
+          id: string;
+          userId: string;
+          email: string;
+          displayName: string | null;
+          schemaName: string;
+          tableName: string;
+          predicate: string;
+          createdAt: string;
+        }[]
+      >(`/connections/${connectionId}/row-filters`)
+      .then((r) => r.data),
+  upsertRowFilter: (
+    connectionId: string,
+    body: { email: string; schemaName: string; tableName: string; predicate: string },
+  ) =>
+    http.post(`/connections/${connectionId}/row-filters`, body).then((r) => r.data),
+  deleteRowFilter: (connectionId: string, filterId: string) =>
+    http.delete(`/connections/${connectionId}/row-filters/${filterId}`).then((r) => r.data),
+
+  listNotebooks: (connectionId?: string) =>
+    http
+      .get<
+        {
+          id: string;
+          name: string;
+          description: string | null;
+          connectionId: string;
+          updatedAt: string;
+          owner: { id: string; email: string; displayName: string | null };
+        }[]
+      >("/notebooks", { params: connectionId ? { connectionId } : undefined })
+      .then((r) => r.data),
+  getNotebook: (id: string) =>
+    http
+      .get<{
+        id: string;
+        name: string;
+        description: string | null;
+        connectionId: string;
+        ownerId: string;
+        cells: NotebookCell[];
+        createdAt: string;
+        updatedAt: string;
+      }>(`/notebooks/${id}`)
+      .then((r) => r.data),
+  createNotebook: (body: { name: string; description?: string; connectionId: string }) =>
+    http
+      .post<{ id: string; name: string; connectionId: string }>("/notebooks", body)
+      .then((r) => r.data),
+  updateNotebook: (
+    id: string,
+    patch: { name?: string; description?: string | null; cells?: NotebookCell[] },
+  ) => http.patch(`/notebooks/${id}`, patch).then((r) => r.data),
+  deleteNotebook: (id: string) =>
+    http.delete<{ ok: true }>(`/notebooks/${id}`).then((r) => r.data),
+
+  submitReviewRequest: (
+    connectionId: string,
+    body: { sqlText: string; reason?: string },
+  ) =>
+    http
+      .post<{
+        id: string;
+        status: string;
+        classification: string;
+      }>(`/connections/${connectionId}/review-requests`, body)
+      .then((r) => r.data),
+  listReviewRequests: (connectionId: string, status?: string) =>
+    http
+      .get<
+        {
+          id: string;
+          connectionId: string;
+          sqlText: string;
+          classification: string;
+          reason: string | null;
+          reviewComment: string | null;
+          status:
+            | "PENDING"
+            | "APPROVED"
+            | "REJECTED"
+            | "EXECUTED"
+            | "EXPIRED";
+          approvedAt: string | null;
+          executedAt: string | null;
+          createdAt: string;
+          requester: { id: string; email: string; displayName: string | null };
+          reviewer: { id: string; email: string; displayName: string | null } | null;
+        }[]
+      >(`/connections/${connectionId}/review-requests`, {
+        params: status ? { status } : undefined,
+      })
+      .then((r) => r.data),
+  inboxReviewRequests: () =>
+    http
+      .get<
+        {
+          id: string;
+          sqlText: string;
+          classification: string;
+          reason: string | null;
+          createdAt: string;
+          connection: { id: string; name: string; dialect: string };
+          requester: { id: string; email: string; displayName: string | null };
+        }[]
+      >("/review-requests/inbox")
+      .then((r) => r.data),
+  approveReviewRequest: (id: string, comment?: string) =>
+    http
+      .post<{ id: string; status: string }>(`/review-requests/${id}/approve`, { comment })
+      .then((r) => r.data),
+  rejectReviewRequest: (id: string, comment?: string) =>
+    http
+      .post<{ id: string; status: string }>(`/review-requests/${id}/reject`, { comment })
+      .then((r) => r.data),
+
+  estimateCost: (connectionId: string, sql: string) =>
+    http
+      .post<{
+        estimatedRowsScanned: number;
+        plannerCost: number | null;
+        estimatedDurationMs: number;
+        verdict: "fast" | "moderate" | "slow" | "dangerous";
+        warnings: string[];
+      }>(`/connections/${connectionId}/query/estimate`, { sql })
+      .then((r) => r.data),
+
+  perfInsights: (connectionId: string, sql: string) =>
+    http
+      .post<{
+        dialect: Dialect;
+        findings: {
+          severity: "info" | "warn" | "error";
+          title: string;
+          detail: string;
+          nodePath?: string;
+        }[];
+        suggestions: {
+          table: string;
+          columns: string[];
+          reason: string;
+          sql: string;
+          impact?: number;
+        }[];
+        plan: unknown[];
+        totalCost?: number;
+        totalTimeMs?: number;
+      }>(`/connections/${connectionId}/query/insights`, { sql })
+      .then((r) => r.data),
+
+  dbHealthSnapshot: (connectionId: string) =>
+    http
+      .get<{
+        at: string;
+        dialect: Dialect;
+        metrics: {
+          key: string;
+          label: string;
+          value: number | string | null;
+          unit?: string;
+          severity?: "ok" | "warn" | "crit";
+          hint?: string;
+        }[];
+        errors: string[];
+        longRunning: {
+          pid: number | string | null;
+          user: string | null;
+          database: string | null;
+          durationMs: number | null;
+          state: string | null;
+          query: string | null;
+          waitEvent?: string | null;
+        }[];
+      }>(`/connections/${connectionId}/db-health`)
       .then((r) => r.data),
 
   auditRevertPreview: (id: string, entryId: string) =>

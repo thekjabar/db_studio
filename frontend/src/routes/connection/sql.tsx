@@ -15,6 +15,8 @@ import { useModal } from "@/components/modal-provider";
 import { useTheme } from "@/lib/theme-store";
 import { AiQueryDialog } from "@/components/ai-query-dialog";
 import { SendResultDialog } from "@/components/send-result-dialog";
+import { registerSqlCompletions } from "@/lib/sql-completions";
+import type { ErGraph } from "@/lib/api";
 import { useOutletContext } from "react-router-dom";
 import {
   Dialog,
@@ -66,7 +68,15 @@ export default function SqlRoute() {
   }, [sql]);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [explainResult, setExplainResult] = useState<ExplainResult | null>(null);
-  const [resultTab, setResultTab] = useState<"data" | "plan">("data");
+  const [insights, setInsights] = useState<
+    | {
+        dialect: string;
+        findings: { severity: "info" | "warn" | "error"; title: string; detail: string }[];
+        suggestions: { table: string; columns: string[]; reason: string; sql: string }[];
+      }
+    | null
+  >(null);
+  const [resultTab, setResultTab] = useState<"data" | "plan" | "insights">("data");
   // Row-cap for SELECT queries. 0 means "no cap" and triggers a warning before
   // running — raw SELECT * FROM big_table is a common way to freeze the app.
   const [maxRows, setMaxRows] = useState<number>(() => {
@@ -83,6 +93,25 @@ export default function SqlRoute() {
   const [sendOpen, setSendOpen] = useState(false);
   const ctx = useOutletContext<{ schema?: string } | null>();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+
+  // Live schema context fed to Monaco's completion provider. A ref + setter
+  // keeps the provider closure stable — the provider reads the latest ER
+  // via the getter instead of re-registering on every fetch.
+  const erRef = useRef<ErGraph | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    api.getEr(id, ctx?.schema ?? "public")
+      .then((er) => {
+        if (!cancelled) erRef.current = er;
+      })
+      .catch(() => {
+        /* ignore — completions just stay empty */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, ctx?.schema]);
 
   // Re-load history whenever the connection changes (navigating between connections).
   useEffect(() => {
@@ -146,6 +175,45 @@ export default function SqlRoute() {
         toast.error(extractErrorMessage(err));
       }
     },
+  });
+
+  const [estimate, setEstimate] = useState<{
+    estimatedRowsScanned: number;
+    verdict: "fast" | "moderate" | "slow" | "dangerous";
+    estimatedDurationMs: number;
+    warnings: string[];
+  } | null>(null);
+  const estimateMut = useMutation({
+    mutationFn: (sqlText: string) => api.estimateCost(id!, sqlText),
+    onSuccess: (r) => {
+      setEstimate(r);
+      const word =
+        r.verdict === "dangerous"
+          ? "Query looks dangerous"
+          : r.verdict === "slow"
+            ? "Query looks slow"
+            : r.verdict === "moderate"
+              ? "Query looks moderate"
+              : "Query looks fast";
+      toast.info(`${word}: ~${r.estimatedRowsScanned.toLocaleString()} rows, ~${Math.max(1, Math.round(r.estimatedDurationMs))}ms`);
+    },
+    onError: (err) => toast.error(extractErrorMessage(err)),
+  });
+
+  const insightsMut = useMutation({
+    mutationFn: (sqlText: string) => api.perfInsights(id!, sqlText),
+    onSuccess: (r) => {
+      setInsights(r);
+      setResultTab("insights");
+      toast.success(
+        r.suggestions.length > 0
+          ? `${r.suggestions.length} index suggestion(s)`
+          : r.findings.length > 0
+            ? `${r.findings.length} finding(s)`
+            : "No issues detected",
+      );
+    },
+    onError: (err) => toast.error(extractErrorMessage(err)),
   });
 
   const explainMut = useMutation({
@@ -382,6 +450,51 @@ export default function SqlRoute() {
           >
             Analyze
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => sql.trim() && insightsMut.mutate(sql)}
+            disabled={insightsMut.isPending || !sql.trim()}
+            title="Analyze the plan for slow patterns and suggest indexes"
+          >
+            {insightsMut.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="h-3.5 w-3.5" />
+            )}
+            Insights
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => sql.trim() && estimateMut.mutate(sql)}
+            disabled={estimateMut.isPending || !sql.trim()}
+            title="Estimate rows + duration before running"
+          >
+            {estimateMut.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <BarChart3 className="h-3.5 w-3.5" />
+            )}
+            Estimate
+          </Button>
+          {estimate && (
+            <span
+              className={
+                "inline-flex items-center gap-1 text-[11px] font-mono rounded px-2 py-1 " +
+                (estimate.verdict === "dangerous"
+                  ? "bg-destructive/10 text-destructive"
+                  : estimate.verdict === "slow"
+                    ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                    : estimate.verdict === "moderate"
+                      ? "bg-blue-500/10 text-blue-700 dark:text-blue-400"
+                      : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400")
+              }
+              title={estimate.warnings.join(" · ") || "No warnings"}
+            >
+              ~{estimate.estimatedRowsScanned.toLocaleString()} rows
+            </span>
+          )}
           <Button size="sm" variant="outline" onClick={doSave}>
             <Save className="h-3.5 w-3.5" /> Save
           </Button>
@@ -441,6 +554,10 @@ export default function SqlRoute() {
                 monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF,
                 () => formatRef.current(),
               );
+              // Schema-aware completions. We dispose the previous provider
+              // first so navigating between SQL tabs doesn't stack duplicates.
+              const disposable = registerSqlCompletions(monaco, () => erRef.current);
+              editor.onDidDispose(() => disposable.dispose());
             }}
             options={{
               minimap: { enabled: false },
@@ -453,7 +570,7 @@ export default function SqlRoute() {
         </div>
 
         <div className="flex-1 min-h-0 flex flex-col">
-          {(result || explainResult) && (
+          {(result || explainResult || insights) && (
             <div className="flex items-center gap-1 border-b border-border px-2">
               <button
                 type="button"
@@ -485,6 +602,24 @@ export default function SqlRoute() {
                   </span>
                 )}
               </button>
+              <button
+                type="button"
+                onClick={() => setResultTab("insights")}
+                className={
+                  "px-3 py-1.5 text-xs border-b-2 " +
+                  (resultTab === "insights"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground")
+                }
+                disabled={!insights}
+              >
+                Insights
+                {insights && insights.suggestions.length > 0 && (
+                  <span className="ml-1 inline-block rounded-full bg-primary/20 px-1.5 py-0.5 text-[10px] text-primary">
+                    {insights.suggestions.length}
+                  </span>
+                )}
+              </button>
             </div>
           )}
           <div className="flex-1 min-h-0 flex flex-col">
@@ -500,6 +635,8 @@ export default function SqlRoute() {
             <div className="flex-1 min-h-0">
               {resultTab === "plan" && explainResult ? (
                 <ExplainPanel result={explainResult} />
+              ) : resultTab === "insights" && insights ? (
+                <InsightsPanel insights={insights} />
               ) : result ? (
                 <DataGrid
                   columns={result.fields.map((c) => ({ name: c.name, type: c.dataType }))}
@@ -554,6 +691,93 @@ export default function SqlRoute() {
         connectionId={id!}
         sql={sql}
       />
+    </div>
+  );
+}
+
+function InsightsPanel({
+  insights,
+}: {
+  insights: {
+    findings: { severity: "info" | "warn" | "error"; title: string; detail: string }[];
+    suggestions: { table: string; columns: string[]; reason: string; sql: string }[];
+  };
+}) {
+  return (
+    <div className="h-full overflow-auto p-4 space-y-4">
+      {insights.suggestions.length === 0 && insights.findings.length === 0 && (
+        <div className="rounded-md border border-border bg-card p-6 text-center text-sm text-muted-foreground">
+          No obvious performance issues found in the plan.
+        </div>
+      )}
+
+      {insights.suggestions.length > 0 && (
+        <section>
+          <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+            Suggested indexes
+          </div>
+          <div className="space-y-2">
+            {insights.suggestions.map((s, i) => (
+              <div
+                key={i}
+                className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-2"
+              >
+                <div className="text-sm font-medium">
+                  {s.table} ({s.columns.join(", ")})
+                </div>
+                <p className="text-xs text-muted-foreground">{s.reason}</p>
+                <div className="relative">
+                  <pre className="rounded bg-background p-2 text-xs font-mono overflow-x-auto">
+                    {s.sql}
+                  </pre>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(s.sql).then(
+                        () => toast.success("Copied"),
+                        () => toast.error("Copy failed"),
+                      );
+                    }}
+                    className="absolute top-1 right-1 text-[10px] rounded bg-muted px-1.5 py-0.5 hover:bg-accent"
+                  >
+                    Copy
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-2">
+            These are heuristics from the query plan. Always review and test on a staging copy — a
+            wrong index can slow writes without helping reads.
+          </p>
+        </section>
+      )}
+
+      {insights.findings.length > 0 && (
+        <section>
+          <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+            Plan findings
+          </div>
+          <div className="space-y-1.5">
+            {insights.findings.map((f, i) => (
+              <div
+                key={i}
+                className={
+                  "rounded-md border p-3 " +
+                  (f.severity === "error"
+                    ? "border-destructive/40 bg-destructive/5"
+                    : f.severity === "warn"
+                      ? "border-amber-500/40 bg-amber-500/5"
+                      : "border-border bg-card")
+                }
+              >
+                <div className="text-sm font-medium">{f.title}</div>
+                <p className="text-xs text-muted-foreground mt-0.5">{f.detail}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

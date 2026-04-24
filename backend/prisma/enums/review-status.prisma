@@ -1,0 +1,7 @@
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXECUTED
+  EXPIRED
+}

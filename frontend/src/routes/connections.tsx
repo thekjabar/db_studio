@@ -86,6 +86,9 @@ export default function ConnectionsPage() {
           <Link to="/dashboards" className="text-sm text-muted-foreground hover:text-foreground">
             Dashboards
           </Link>
+          <Link to="/notebooks" className="text-sm text-muted-foreground hover:text-foreground">
+            Notebooks
+          </Link>
           <Link to="/schedules" className="text-sm text-muted-foreground hover:text-foreground">
             Schedules
           </Link>

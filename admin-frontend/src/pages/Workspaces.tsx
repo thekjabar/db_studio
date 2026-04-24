@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Search, Pencil, DollarSign } from 'lucide-react';
@@ -360,9 +360,7 @@ function OverrideDialog({
   );
 }
 
-// Tiny helper: run `effect` whenever `deps` reference changes, without needing
-// an extra `useEffect` import — keeps the component body compact.
-import { useEffect } from 'react';
+// Tiny helper: re-run `effect` whenever the `value` reference changes.
 function useStateSync<T>(value: T, effect: () => void) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(effect, [value]);

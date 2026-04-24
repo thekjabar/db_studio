@@ -9,13 +9,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 
-// Dev-only defaults — only populated when Vite is in dev mode so production
-// builds don't ship hardcoded credentials in the HTML source.
-const DEV_DEFAULT_EMAIL = import.meta.env.DEV ? 'admin@dbdash.local' : '';
+// Default sign-in credentials prefilled for convenience. Remove these two
+// constants before the public production launch — they ship in the compiled
+// HTML so anyone viewing source can see them.
+const DEFAULT_EMAIL = 'admin@dbdash.local';
+const DEFAULT_PASSWORD = 'NewAdmin123456';
 
 export default function Login() {
-  const [email, setEmail] = useState(DEV_DEFAULT_EMAIL);
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState(DEFAULT_EMAIL);
+  const [password, setPassword] = useState(DEFAULT_PASSWORD);
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
   const mut = useMutation({

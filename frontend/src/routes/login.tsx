@@ -9,16 +9,18 @@ import { api, extractErrorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth-store";
 import { OAuthButtons } from "@/components/oauth-buttons";
 
-// Dev-only default email. Stripped from production bundles by Vite dead-code
-// elimination so hardcoded credentials don't ship in the compiled HTML.
-const DEV_DEFAULT_EMAIL = import.meta.env.DEV ? "owner@dbdash.local" : "";
+// Default sign-in credentials prefilled for convenience. Remove these two
+// constants before the public production launch — they ship in the compiled
+// HTML so anyone viewing source can see them.
+const DEFAULT_EMAIL = "owner@dbdash.local";
+const DEFAULT_PASSWORD = "Owner!2345";
 
 export default function LoginPage() {
   const nav = useNavigate();
   const { setAuth } = useAuth();
   const [sp, setSp] = useSearchParams();
-  const [email, setEmail] = useState(DEV_DEFAULT_EMAIL);
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState(DEFAULT_EMAIL);
+  const [password, setPassword] = useState(DEFAULT_PASSWORD);
   const [showPassword, setShowPassword] = useState(false);
   const [totpCode, setTotpCode] = useState("");
   const [needsTotp, setNeedsTotp] = useState(false);

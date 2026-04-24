@@ -19,7 +19,21 @@ createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <ModalProvider>
           <App />
-          <Toaster richColors closeButton />
+          <Toaster
+            theme="dark"
+            richColors
+            closeButton
+            position="bottom-right"
+            toastOptions={{
+              // Pin toasts to the app's dark card palette so they never
+              // flash white on reload regardless of system preference.
+              style: {
+                background: 'hsl(var(--card))',
+                color: 'hsl(var(--foreground))',
+                border: '1px solid hsl(var(--border))',
+              },
+            }}
+          />
         </ModalProvider>
       </BrowserRouter>
     </QueryClientProvider>

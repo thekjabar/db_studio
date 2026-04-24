@@ -2,6 +2,16 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { ArrowLeft, Ban, CheckCircle2, Trash2, Activity, LifeBuoy } from 'lucide-react';
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+} from 'recharts';
 import { api, relativeDate } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -158,8 +168,9 @@ export default function UserDetail() {
 function UserAnalyticsSection({ userId }: { userId: string }) {
   const q = useQuery({ queryKey: ['user-series', userId], queryFn: () => api.userSeries(userId, 30) });
   if (!q.data) return null;
-  const max = q.data.series.reduce((m, d) => Math.max(m, d.logins, d.queries, d.aiCalls), 1);
   const label = q.data.classification.replace('_', ' ');
+  const data = q.data.series;
+  const tickInterval = Math.max(0, Math.ceil(data.length / 10) - 1);
 
   return (
     <div>
@@ -173,23 +184,72 @@ function UserAnalyticsSection({ userId }: { userId: string }) {
         </Badge>
       </h2>
       <Card className="p-4">
-        <div className="flex items-end gap-px h-32">
-          {q.data.series.map((d) => (
-            <div
-              key={d.day}
-              title={`${d.day}\nlogins: ${d.logins}\nqueries: ${d.queries}\nAI: ${d.aiCalls}`}
-              className="flex-1 flex flex-col justify-end gap-px min-w-[4px]"
-            >
-              <div style={{ height: `${(d.aiCalls / max) * 100}%` }} className="bg-emerald-500/70" />
-              <div style={{ height: `${(d.queries / max) * 100}%` }} className="bg-primary/60" />
-              <div style={{ height: `${(d.logins / max) * 100}%` }} className="bg-primary/30" />
-            </div>
-          ))}
-        </div>
-        <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-primary/30" /> Logins</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-primary/60" /> Queries</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-500/70" /> AI calls</span>
+        <div className="h-60">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 10, right: 16, left: -16, bottom: 0 }}>
+              <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+              <XAxis
+                dataKey="day"
+                stroke="hsl(var(--muted-foreground))"
+                fontSize={11}
+                tickLine={false}
+                interval={tickInterval}
+                tickFormatter={(iso: string) => {
+                  const d = new Date(iso + 'T00:00:00Z');
+                  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                }}
+              />
+              <YAxis
+                stroke="hsl(var(--muted-foreground))"
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
+                allowDecimals={false}
+                width={36}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: 'hsl(var(--card))',
+                  border: '1px solid hsl(var(--border))',
+                  borderRadius: 8,
+                  fontSize: 12,
+                }}
+                labelStyle={{ color: 'hsl(var(--foreground))', fontWeight: 600 }}
+                labelFormatter={(v) => {
+                  const d = new Date(String(v ?? '') + 'T00:00:00Z');
+                  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} iconType="circle" />
+              <Line
+                type="monotone"
+                dataKey="logins"
+                name="Logins"
+                stroke="hsl(220 15% 55%)"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="queries"
+                name="Queries"
+                stroke="hsl(152 61% 52%)"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+              />
+              <Line
+                type="monotone"
+                dataKey="aiCalls"
+                name="AI calls"
+                stroke="#3ECF8E"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </Card>
     </div>

@@ -7,6 +7,7 @@ import { Copy, Loader2, Play, Plus, Send, Sparkles, Trash2 } from "lucide-react"
 import { api, extractErrorMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { useModal } from "@/components/modal-provider";
 import { cn } from "@/lib/utils";
 
 type Message = {
@@ -22,6 +23,7 @@ export default function AiChatRoute() {
   const [sp, setSp] = useSearchParams();
   const chatId = sp.get("chat");
   const qc = useQueryClient();
+  const modal = useModal();
 
   const listQ = useQuery({
     queryKey: ["ai-chats", id],
@@ -129,7 +131,17 @@ export default function AiChatRoute() {
                 {c.title}
               </Link>
               <button
-                onClick={() => del.mutate(c.id)}
+                onClick={async (e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const ok = await modal.confirm({
+                    title: "Delete chat?",
+                    description: `"${c.title}" will be permanently removed along with all of its messages.`,
+                    confirmLabel: "Delete",
+                    destructive: true,
+                  });
+                  if (ok) del.mutate(c.id);
+                }}
                 className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
               >
                 <Trash2 className="h-3 w-3" />

@@ -241,10 +241,18 @@ export class PostgresDriver implements IDatabaseDriver {
       const EXACT_COUNT_THRESHOLD = 50_000;
 
       // reltuples for the base table — cast to bigint to avoid float rounding.
+      // We need the OID for `$schema.$table`. `::regclass` folds unquoted
+      // identifiers to lowercase, so a MixedCase table like "User" resolves
+      // to the nonexistent "user" and throws. We look it up via catalog
+      // JOIN instead — exact match on name, no case-folding, safe for any
+      // identifier. `reltuples = -1` means the table was never analyzed;
+      // we treat that as "unknown → tiny" so we fall into the exact-count
+      // branch and return real numbers.
       const estRes = await client.query(
-        `SELECT GREATEST(0, reltuples)::bigint AS est
-           FROM pg_class
-          WHERE oid = ($1::text || '.' || $2::text)::regclass`,
+        `SELECT GREATEST(0, c.reltuples)::bigint AS est
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = $1 AND c.relname = $2`,
         [q.schema, q.table],
       );
       const estimate = Number(estRes.rows[0]?.est ?? 0);
@@ -566,14 +574,27 @@ export class PostgresDriver implements IDatabaseDriver {
       [schema ?? null],
     );
     const tFks = Date.now();
+    // `array_agg(...)` inside a scalar subquery is returned by node-postgres
+    // as a string literal (e.g. `{id,user_id}`) rather than a JS array,
+    // because the subquery has no registered array OID. Normalize here so
+    // downstream code can always rely on real arrays.
+    const toStrArray = (v: unknown): string[] => {
+      if (Array.isArray(v)) return v.map(String);
+      if (typeof v === 'string') {
+        const inner = v.replace(/^\{|\}$/g, '').trim();
+        if (!inner) return [];
+        return inner.split(',').map((s) => s.replace(/^"|"$/g, ''));
+      }
+      return [];
+    };
     out.foreignKeys = fkRes.rows.map((x) => ({
       name: x.name,
       schema: x.schema,
       table: x.table,
-      columns: x.columns,
+      columns: toStrArray(x.columns),
       refSchema: x.ref_schema,
       refTable: x.ref_table,
-      refColumns: x.ref_columns,
+      refColumns: toStrArray(x.ref_columns),
       onDelete: x.on_delete,
       onUpdate: x.on_update,
     }));

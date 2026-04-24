@@ -15,6 +15,7 @@ import { api, extractErrorMessage } from "@/lib/api";
 import { applyDensity } from "@/lib/density";
 import { useRealtimeStatus } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
+import { useModal } from "@/components/modal-provider";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Connection } from "@/lib/api";
@@ -31,8 +32,15 @@ export function TopBar({ connection, onOpenPalette, crumbs, onMenuClick }: Props
   const { user, setUser, clear } = useAuth();
   const qc = useQueryClient();
   const nav = useNavigate();
+  const modal = useModal();
 
   const logout = async () => {
+    const ok = await modal.confirm({
+      title: "Log out?",
+      description: "You'll need to sign in again to continue using DB Studio.",
+      confirmLabel: "Log out",
+    });
+    if (!ok) return;
     try {
       await api.logout();
     } catch {

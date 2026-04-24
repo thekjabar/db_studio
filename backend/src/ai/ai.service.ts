@@ -1,8 +1,9 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { Role, Dialect } from '@prisma/client';
 import { AppConfigService } from '../config/config.service';
 import { ConnectionsService } from '../connections/connections.service';
+import { AiProviderFactory } from './providers/ai-provider.factory';
+import { pickRelevantTables } from './ai-chat.service';
 
 interface GenerateArgs {
   connectionId: string;
@@ -20,21 +21,17 @@ export interface GeneratedSql {
 
 @Injectable()
 export class AiService {
-  private client: Anthropic | null = null;
-
   constructor(
     private readonly cfg: AppConfigService,
     private readonly connections: ConnectionsService,
-  ) {
-    if (cfg.aiEnabled) {
-      this.client = new Anthropic({ apiKey: cfg.anthropicApiKey });
-    }
-  }
+    private readonly providers: AiProviderFactory,
+  ) {}
 
   async generateSql({ connectionId, prompt, schema }: GenerateArgs): Promise<GeneratedSql> {
-    if (!this.client) {
+    const provider = this.providers.primary;
+    if (!provider || !provider.enabled) {
       throw new ServiceUnavailableException(
-        'AI is disabled on this server — set ANTHROPIC_API_KEY to enable.',
+        'AI is disabled on this server — configure at least one provider (ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, …).',
       );
     }
     const clean = prompt.trim();
@@ -50,7 +47,7 @@ export class AiService {
       const connRow = await this.connections.get(connectionId);
       dialect = connRow.dialect;
       const er = await drv.introspectForER(schema);
-      schemaCtx = this.renderSchemaContext(er);
+      schemaCtx = this.renderSchemaContext(er, clean);
     } finally {
       await drv.close().catch(() => {});
     }
@@ -75,29 +72,42 @@ ${schemaCtx}
 User request:
 ${clean}`;
 
-    const resp = await this.client.messages.create({
-      model: this.cfg.anthropicModel,
-      max_tokens: 1024,
+    const resp = await provider.generate({
       system,
       messages: [{ role: 'user', content: user }],
+      maxTokens: 1024,
     });
-    const textBlock = resp.content.find((b) => b.type === 'text');
-    if (!textBlock || textBlock.type !== 'text') {
-      throw new ServiceUnavailableException('AI returned no text response');
-    }
-    const raw = textBlock.text.trim();
+    const raw = resp.text.trim();
     const parsed = this.parseResponse(raw);
     if (!parsed.sql) throw new ServiceUnavailableException('AI returned no SQL');
     return parsed;
   }
 
-  private renderSchemaContext(er: { tables: { schema: string; name: string; columns: { name: string; dataType: string; isPrimaryKey: boolean; nullable: boolean }[] }[]; foreignKeys: { schema: string; table: string; columns: string[]; refSchema: string; refTable: string; refColumns: string[] }[] }): string {
-    const lines: string[] = [];
-    // Cap context: huge schemas would blow past model context length.
+  private renderSchemaContext(
+    er: {
+      tables: {
+        schema: string;
+        name: string;
+        columns: { name: string; dataType: string; isPrimaryKey: boolean; nullable: boolean }[];
+      }[];
+      foreignKeys: {
+        schema: string;
+        table: string;
+        columns: string[];
+        refSchema: string;
+        refTable: string;
+        refColumns: string[];
+      }[];
+    },
+    hintText: string,
+  ): string {
     const MAX_TABLES = 60;
-    const MAX_COLS_PER_TABLE = 40;
-    const slice = er.tables.slice(0, MAX_TABLES);
-    for (const t of slice) {
+    const MAX_COLS_PER_TABLE = 60;
+    const tables = pickRelevantTables(er, hintText, MAX_TABLES);
+    const included = new Set(tables.map((t) => `${t.schema}.${t.name}`));
+
+    const lines: string[] = [];
+    for (const t of tables) {
       const cols = t.columns.slice(0, MAX_COLS_PER_TABLE).map((c) => {
         const pk = c.isPrimaryKey ? ' PK' : '';
         const nn = c.nullable ? '' : ' NOT NULL';
@@ -108,14 +118,22 @@ ${clean}`;
       }
       lines.push(`TABLE ${t.schema}.${t.name}:\n${cols.join('\n')}`);
     }
-    if (er.tables.length > MAX_TABLES) {
-      lines.push(`-- ${er.tables.length - MAX_TABLES} more tables omitted for context length.`);
+    const omitted = er.tables.length - tables.length;
+    if (omitted > 0) {
+      lines.push(`-- ${omitted} other table(s) in this database were omitted to stay under token limits.`);
     }
-    if (er.foreignKeys.length) {
+    const relevantFks = er.foreignKeys.filter(
+      (fk) =>
+        included.has(`${fk.schema}.${fk.table}`) &&
+        included.has(`${fk.refSchema}.${fk.refTable}`),
+    );
+    if (relevantFks.length) {
       lines.push('');
       lines.push('FOREIGN KEYS:');
-      for (const fk of er.foreignKeys.slice(0, 100)) {
-        lines.push(`  ${fk.schema}.${fk.table}(${fk.columns.join(',')}) -> ${fk.refSchema}.${fk.refTable}(${fk.refColumns.join(',')})`);
+      for (const fk of relevantFks.slice(0, 300)) {
+        const cols = Array.isArray(fk.columns) ? fk.columns.join(',') : String(fk.columns ?? '');
+        const refCols = Array.isArray(fk.refColumns) ? fk.refColumns.join(',') : String(fk.refColumns ?? '');
+        lines.push(`  ${fk.schema}.${fk.table}(${cols}) -> ${fk.refSchema}.${fk.refTable}(${refCols})`);
       }
     }
     return lines.join('\n');

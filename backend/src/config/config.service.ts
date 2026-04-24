@@ -25,6 +25,21 @@ const EnvSchema = z.object({
   // so `??` fallbacks kick in downstream.
   ANTHROPIC_API_KEY: z.string().transform((v) => v || undefined).optional(),
   ANTHROPIC_MODEL: z.string().default('claude-haiku-4-5-20251001'),
+  // Provider switch. 'auto' (default) picks the first provider with a key
+  // configured: Anthropic → Gemini → OpenAI → Groq → OpenRouter → Ollama.
+  // Pin explicitly when you want to guarantee a specific backend.
+  AI_PROVIDER: z
+    .enum(['auto', 'anthropic', 'gemini', 'openai', 'groq', 'openrouter', 'ollama'])
+    .default('auto'),
+  // Override the model per provider. When unset, each provider uses its own
+  // cheap-but-capable default (e.g. haiku-4.5, gemini-2.0-flash, gpt-4o-mini).
+  AI_MODEL: z.string().transform((v) => v || undefined).optional(),
+  GEMINI_API_KEY: z.string().transform((v) => v || undefined).optional(),
+  OPENAI_API_KEY: z.string().transform((v) => v || undefined).optional(),
+  GROQ_API_KEY: z.string().transform((v) => v || undefined).optional(),
+  OPENROUTER_API_KEY: z.string().transform((v) => v || undefined).optional(),
+  // Ollama runs locally; we only need its base URL.
+  OLLAMA_BASE_URL: z.string().transform((v) => v || undefined).optional(),
   GOOGLE_CLIENT_ID: z.string().transform((v) => v || undefined).optional(),
   GOOGLE_CLIENT_SECRET: z.string().transform((v) => v || undefined).optional(),
   GITHUB_CLIENT_ID: z.string().transform((v) => v || undefined).optional(),
@@ -127,7 +142,24 @@ export class AppConfigService {
   get totpIssuer() { return this.env.TOTP_ISSUER; }
   get anthropicApiKey() { return this.env.ANTHROPIC_API_KEY; }
   get anthropicModel() { return this.env.ANTHROPIC_MODEL; }
-  get aiEnabled() { return !!this.env.ANTHROPIC_API_KEY; }
+  get aiProvider() { return this.env.AI_PROVIDER; }
+  get aiModelOverride() { return this.env.AI_MODEL; }
+  get geminiApiKey() { return this.env.GEMINI_API_KEY; }
+  get openaiApiKey() { return this.env.OPENAI_API_KEY; }
+  get groqApiKey() { return this.env.GROQ_API_KEY; }
+  get openrouterApiKey() { return this.env.OPENROUTER_API_KEY; }
+  get ollamaBaseUrl() { return this.env.OLLAMA_BASE_URL; }
+  /** True if *any* configured provider can serve AI requests. */
+  get aiEnabled() {
+    return !!(
+      this.env.ANTHROPIC_API_KEY ||
+      this.env.GEMINI_API_KEY ||
+      this.env.OPENAI_API_KEY ||
+      this.env.GROQ_API_KEY ||
+      this.env.OPENROUTER_API_KEY ||
+      this.env.OLLAMA_BASE_URL
+    );
+  }
   get googleClientId() { return this.env.GOOGLE_CLIENT_ID; }
   get googleClientSecret() { return this.env.GOOGLE_CLIENT_SECRET; }
   get githubClientId() { return this.env.GITHUB_CLIENT_ID; }

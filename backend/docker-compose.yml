@@ -9,25 +9,6 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-dbdash}
     volumes:
       - db_data:/var/lib/postgresql/data
-    # Only expose Postgres on the host when explicitly requested — default
-    # binds to 127.0.0.1 so only this host can reach it, not the network.
-    # Drop the `ports:` line entirely in prod unless you really need remote
-    # psql access. Other containers reach it via the dbdash network.
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
-    # Postgres needs CHOWN / FOWNER / SETUID / SETGID to drop privs to the
-    # `postgres` user on startup, and DAC_READ_SEARCH for its file layout.
-    # Everything else is dropped.
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - FOWNER
-      - SETUID
-      - SETGID
-      - DAC_READ_SEARCH
-    security_opt:
-      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dbdash} -d ${POSTGRES_DB:-dbdash}"]
       interval: 5s
@@ -39,24 +20,9 @@ services:
     image: redis:7-alpine
     container_name: dbdash-redis
     restart: unless-stopped
-    # AOF persistence so scheduled-job state survives a restart. Tune per
-    # deployment; `everysec` is bullmq's recommended setting.
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
     volumes:
       - redis_data:/data
-    # Redis's entrypoint chowns /data to the `redis` user before dropping
-    # privs, so it needs the same four caps Postgres does. Everything else
-    # stays dropped.
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - FOWNER
-      - SETUID
-      - SETGID
-      - DAC_READ_SEARCH
-    security_opt:
-      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -70,91 +36,22 @@ services:
       dockerfile: Dockerfile
     container_name: dbdash-api
     restart: unless-stopped
+    env_file: .env
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Defense in depth: shrink the container's attack surface so an RCE
-    # can't pivot off the host or escalate.
-    #   - read_only rootfs: attacker can't drop a persistent binary.
-    #   - tmpfs /tmp: pg_dump and Node need a writable scratch dir — scoped
-    #     and wiped on restart.
-    #   - cap_drop ALL: strip every Linux capability (CAP_NET_RAW, SETUID,
-    #     etc). The app only needs to bind an unprivileged port, which
-    #     non-root already allows without caps.
-    #   - no-new-privileges: process can never gain more caps via setuid
-    #     binaries. Neutralizes the sudo-style attack class.
-    read_only: true
-    tmpfs:
-      - /tmp:size=256m,mode=1777
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    # Bounded resources so a runaway process (or DoS) can't take the host
-    # down. Tune for your workload.
-    mem_limit: 1g
-    pids_limit: 256
     environment:
-      NODE_ENV: production
-      PORT: 3000
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${API_PORT:-3000}
       DATABASE_URL: postgresql://${POSTGRES_USER:-dbdash}:${POSTGRES_PASSWORD:-dbdash}@db:5432/${POSTGRES_DB:-dbdash}?schema=public
-      # Allow both the Vite dev server (local pnpm dev) and the dockerized
-      # frontend (served by nginx on FRONTEND_PORT). Comma-separated list
-      # consumed by AppConfigService.frontendOrigins.
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173,http://localhost:${FRONTEND_PORT:-8080}}
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET is required}
-      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
-      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-7d}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required (32 bytes base64)}
-      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-localhost}
-      COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      DEFAULT_STATEMENT_TIMEOUT_MS: ${DEFAULT_STATEMENT_TIMEOUT_MS:-30000}
-      RATE_LIMIT_TTL_SEC: ${RATE_LIMIT_TTL_SEC:-60}
-      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
-      RATE_LIMIT_LOGIN_MAX: ${RATE_LIMIT_LOGIN_MAX:-10}
-      TOTP_ISSUER: ${TOTP_ISSUER:-Dbdash}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
-      AI_PROVIDER: ${AI_PROVIDER:-auto}
-      AI_MODEL: ${AI_MODEL:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GROQ_API_KEY: ${GROQ_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
-      OAUTH_CALLBACK_BASE_URL: ${OAUTH_CALLBACK_BASE_URL:-}
-      OAUTH_SUCCESS_REDIRECT: ${OAUTH_SUCCESS_REDIRECT:-/auth/callback}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      SCHEDULER_CONCURRENCY: ${SCHEDULER_CONCURRENCY:-4}
-      SCHEDULER_QUERY_TIMEOUT_MS: ${SCHEDULER_QUERY_TIMEOUT_MS:-120000}
-      SMTP_URL: ${SMTP_URL:-}
-      SMTP_FROM: ${SMTP_FROM:-}
-      SLOW_QUERY_THRESHOLD_MS: ${SLOW_QUERY_THRESHOLD_MS:-1000}
-      SLOW_QUERY_RETENTION: ${SLOW_QUERY_RETENTION:-10000}
-      OPERATOR_JWT_SECRET: ${OPERATOR_JWT_SECRET:-dev-operator-secret-change-me-0000000000000000}
-      OPERATOR_JWT_TTL: ${OPERATOR_JWT_TTL:-30m}
-      OPERATOR_REFRESH_TTL: ${OPERATOR_REFRESH_TTL:-1d}
-      OPERATOR_ORIGIN: ${OPERATOR_ORIGIN:-http://localhost:5174,http://localhost:8081}
-      OPERATOR_BOOTSTRAP_EMAIL: ${OPERATOR_BOOTSTRAP_EMAIL:-}
-      OPERATOR_BOOTSTRAP_PASSWORD: ${OPERATOR_BOOTSTRAP_PASSWORD:-}
-    entrypoint: ["/usr/bin/tini", "--", "sh", "-c", "node_modules/.bin/prisma migrate deploy && exec node dist/main.js"]
+    entrypoint: ["/sbin/tini", "--", "sh", "-c", "node_modules/.bin/tsx node_modules/prisma/build/index.js migrate deploy && exec node dist/main.js"]
     ports:
       - "${API_PORT:-3000}:3000"
     networks: [dbdash]
 
-  # Nightly pg_dump of the app's own Postgres. Writes a timestamped .sql.gz
-  # to the `app_backups` volume and prunes anything older than the retention
-  # window. Intentionally separate from the user-data volume so a misbehaving
-  # backup can't stomp on the live DB.
-  #
-  # Restore: docker compose exec db psql -U dbdash -d dbdash < /path/to/dump.sql
   db-backup:
     image: postgres:17-alpine
     container_name: dbdash-db-backup
@@ -169,28 +66,9 @@ services:
       PGHOST: db
       RETENTION_DAYS: ${DB_BACKUP_RETENTION_DAYS:-14}
       SCHEDULE_CRON: ${DB_BACKUP_CRON:-0 2 * * *}
-      # When set, backups are encrypted with age (https://age-encryption.org)
-      # before being written to /backups. The corresponding private key
-      # (`age-keygen -o key.txt`) should NEVER live on this host — keep it
-      # somewhere an operator can retrieve to decrypt at restore time.
-      # Multiple comma-separated recipients supported (e.g. two-admin quorum).
-      # Leave unset to keep the old plaintext .sql.gz behaviour.
       BACKUP_AGE_RECIPIENT: ${BACKUP_AGE_RECIPIENT:-}
     volumes:
       - app_backups:/backups
-    cap_drop:
-      - ALL
-    # apk needs SETUID/SETGID to install age at container start; if you
-    # bake age into a custom image instead these can be dropped too.
-    cap_add:
-      - SETUID
-      - SETGID
-      - CHOWN
-    security_opt:
-      - no-new-privileges:true
-    # Install busybox cron + age + a backup script, then run crond.
-    # age is pulled from the alpine community repo (~1MB) so we don't need a
-    # custom Dockerfile for this feature.
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -202,15 +80,12 @@ services:
         set -eu
         stamp=$$(date -u +%Y%m%dT%H%M%SZ)
         if [ -n "$$BACKUP_AGE_RECIPIENT" ]; then
-          # Encrypted path: stream pg_dump | gzip | age → .sql.gz.age
           out="/backups/dbdash-$$stamp.sql.gz.age"
           echo "[backup] starting $$out (age-encrypted)"
-          # Build -r flags for each comma-separated recipient.
           set -- ""
           IFS=','; for r in $$BACKUP_AGE_RECIPIENT; do
             set -- "$$@" -r "$$r"
           done; unset IFS
-          # Drop the leading empty arg from the shift trick above.
           shift
           pg_dump --format=plain --no-owner --no-privileges | gzip -9 | age "$$@" -o "$$out.tmp"
           mv "$$out.tmp" "$$out"
@@ -227,42 +102,16 @@ services:
         EOF
         chmod +x /usr/local/bin/do-backup.sh
         echo "$$SCHEDULE_CRON /usr/local/bin/do-backup.sh >> /backups/cron.log 2>&1" > /etc/crontabs/root
-        # Run once at container start so operators see output immediately, then hand off to cron.
         /usr/local/bin/do-backup.sh >> /backups/cron.log 2>&1 || true
         exec crond -f -L /dev/stderr
     networks: [dbdash]
-
-  # Caddy reverse-proxy for production HTTPS. Disabled by default so local
-  # dev doesn't fight for ports 80/443 or need valid certs. To enable:
-  #   1. Copy Caddyfile.example to Caddyfile and fill in your domain.
-  #   2. Uncomment this service + the caddy volumes at the bottom.
-  #   3. Make sure ports 80/443 on the host are free and public DNS points here.
-  # caddy:
-  #   image: caddy:2-alpine
-  #   container_name: dbdash-caddy
-  #   restart: unless-stopped
-  #   depends_on:
-  #     - frontend
-  #   ports:
-  #     - "80:80"
-  #     - "443:443"
-  #   volumes:
-  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
-  #     - caddy_data:/data
-  #     - caddy_config:/config
-  #   networks: [dbdash]
 
 volumes:
   db_data:
   redis_data:
   app_backups:
-  # caddy_data:
-  # caddy_config:
 
 networks:
-  # Pinned name so the frontend compose file can join the same network
-  # without duplicating its definition. Without `name:` docker would prefix
-  # it with the project name and the frontend wouldn't find it.
   dbdash:
     name: dbdash-net
     driver: bridge

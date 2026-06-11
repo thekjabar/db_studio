@@ -1,7 +1,7 @@
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { ArrowLeft, Ban, CheckCircle2, Trash2, Activity, LifeBuoy } from 'lucide-react';
+import { ArrowLeft, Ban, Check, CheckCircle2, Trash2, X, Activity, LifeBuoy } from 'lucide-react';
 import {
   ResponsiveContainer,
   LineChart,
@@ -52,6 +52,33 @@ export default function UserDetail() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const approve = useMutation({
+    mutationFn: (note?: string) => api.approveUser(id!, note),
+    onSuccess: () => {
+      toast.success('User approved');
+      qc.invalidateQueries({ queryKey: ['user', id] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const onReject = async () => {
+    const reason = await modal.prompt({
+      title: 'Reject account',
+      description: 'The user will see this reason when they try to sign in. The action is audit-logged.',
+      placeholder: 'e.g. Disposable email address',
+      confirmLabel: 'Reject',
+      validate: (v) => (v.trim().length < 3 ? 'Reason must be at least 3 characters' : null),
+    });
+    if (!reason) return;
+    try {
+      await api.rejectUser(id!, reason);
+      toast.success('Account rejected');
+      qc.invalidateQueries({ queryKey: ['user', id] });
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
   const onDelete = async () => {
     const ok = await modal.confirm({
       title: 'Permanently delete this user?',
@@ -88,15 +115,32 @@ export default function UserDetail() {
             Joined {relativeDate(user.createdAt)} · {user.emailVerified ? 'Email verified' : 'Email not verified'}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {user.approvalStatus === 'pending' && (
+            <>
+              <Button onClick={() => approve.mutate(undefined)} disabled={approve.isPending}>
+                <Check className="h-4 w-4" /> Approve
+              </Button>
+              <Button variant="outline" onClick={onReject}>
+                <X className="h-4 w-4" /> Reject
+              </Button>
+            </>
+          )}
+          {user.approvalStatus === 'rejected' && (
+            <Button variant="outline" onClick={() => approve.mutate(undefined)} disabled={approve.isPending}>
+              <Check className="h-4 w-4" /> Approve anyway
+            </Button>
+          )}
           {user.suspendedAt ? (
             <Button variant="outline" onClick={() => unsuspend.mutate()} disabled={unsuspend.isPending}>
               <CheckCircle2 className="h-4 w-4" /> Unsuspend
             </Button>
           ) : (
-            <Button variant="outline" onClick={onSuspend}>
-              <Ban className="h-4 w-4" /> Suspend
-            </Button>
+            user.approvalStatus === 'approved' && (
+              <Button variant="outline" onClick={onSuspend}>
+                <Ban className="h-4 w-4" /> Suspend
+              </Button>
+            )
           )}
           <Button variant="destructive" onClick={onDelete}>
             <Trash2 className="h-4 w-4" /> Delete
@@ -104,6 +148,27 @@ export default function UserDetail() {
         </div>
       </div>
 
+      {user.approvalStatus === 'pending' && (
+        <Card className="p-3 border-amber-500/40 bg-amber-500/10">
+          <div className="font-medium text-amber-700 dark:text-amber-400 text-sm">
+            Awaiting approval
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            This customer signed up {relativeDate(user.createdAt)} and cannot sign in until you
+            approve or reject the account.
+          </div>
+        </Card>
+      )}
+      {user.approvalStatus === 'rejected' && (
+        <Card className="p-3 border-destructive/30 bg-destructive/10">
+          <div className="font-medium text-destructive text-sm">
+            Rejected {user.rejectedAt ? relativeDate(user.rejectedAt) : ''}
+          </div>
+          {user.approvalNote && (
+            <div className="mt-1 text-xs text-muted-foreground">Reason: {user.approvalNote}</div>
+          )}
+        </Card>
+      )}
       {user.suspendedAt && (
         <Card className="p-3 border-destructive/30 bg-destructive/10">
           <div className="font-medium text-destructive text-sm">

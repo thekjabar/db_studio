@@ -9,15 +9,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 
-// Default sign-in credentials prefilled for convenience. Remove these two
-// constants before the public production launch — they ship in the compiled
-// HTML so anyone viewing source can see them.
-const DEFAULT_EMAIL = 'admin@dbdash.local';
-const DEFAULT_PASSWORD = 'NewAdmin123456';
-
 export default function Login() {
-  const [email, setEmail] = useState(DEFAULT_EMAIL);
-  const [password, setPassword] = useState(DEFAULT_PASSWORD);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
   const mut = useMutation({

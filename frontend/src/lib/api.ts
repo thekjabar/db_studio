@@ -667,7 +667,11 @@ export const api = {
     const { data } = await http.post<
       | { accessToken: string; userId: string }
       | { needsVerification: true; userId: string }
+      | { awaitingApproval: true; userId: string }
     >("/auth/signup", input);
+    if ("awaitingApproval" in data && data.awaitingApproval) {
+      return { awaitingApproval: true as const, userId: data.userId };
+    }
     if ("needsVerification" in data && data.needsVerification) {
       return { needsVerification: true as const, userId: data.userId };
     }

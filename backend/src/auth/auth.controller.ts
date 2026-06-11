@@ -87,6 +87,10 @@ export class AuthController {
       // No session cookie — user must click the email link first.
       return { userId: t.userId, needsVerification: true };
     }
+    if ('awaitingApproval' in t) {
+      // No session cookie — operator must approve before the user can log in.
+      return { userId: t.userId, awaitingApproval: true };
+    }
     this.setRefreshCookie(res, t.refreshToken, t.refreshExpiresAt);
     return { accessToken: t.accessToken, userId: t.userId };
   }

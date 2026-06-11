@@ -82,7 +82,11 @@ export class AuthService {
   async signup(
     dto: SignupDto,
     meta: ReqMeta,
-  ): Promise<(AuthTokens & { userId: string }) | { userId: string; needsVerification: true }> {
+  ): Promise<
+    | (AuthTokens & { userId: string })
+    | { userId: string; needsVerification: true }
+    | { userId: string; awaitingApproval: true }
+  > {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existing) throw new ConflictException('Email already registered');
 
@@ -118,6 +122,10 @@ export class AuthService {
     // hard pre-condition) which is acceptable for a single-user bootstrap.
     const existingCount = await this.prisma.user.count();
     const isFirst = existingCount === 0;
+    // First signup on a fresh install bootstraps both admin AND approval
+    // so the install owner can actually use the app without needing
+    // another operator to approve themselves. Every subsequent signup
+    // lands at `pending` and waits for an operator's call.
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
@@ -125,6 +133,8 @@ export class AuthService {
         displayName: dto.displayName,
         emailVerifiedAt: needsVerify ? null : new Date(),
         isAdmin: isFirst,
+        approvalStatus: isFirst ? 'approved' : 'pending',
+        approvedAt: isFirst ? new Date() : null,
       },
     });
 
@@ -138,6 +148,13 @@ export class AuthService {
         .issueAndSend(user.id, user.email)
         .catch(() => null);
       return { userId: user.id, needsVerification: true };
+    }
+
+    // Non-first signups go into the approval queue. No tokens issued
+    // — the user has to wait for an operator. The client distinguishes
+    // this from `needsVerification` by the `awaitingApproval` flag.
+    if (!isFirst) {
+      return { userId: user.id, awaitingApproval: true };
     }
 
     const tokens = await this.issueTokens(user.id, user.email, meta);
@@ -169,11 +186,33 @@ export class AuthService {
     // is the operator-panel-controlled block — see OperatorUsersController.
     if (user.suspendedAt) {
       await this.audit.log({ userId: user.id, action: 'LOGIN_SUSPENDED', ...meta });
-      throw new ForbiddenException(
-        user.suspendedReason
+      throw new ForbiddenException({
+        code: 'ACCOUNT_SUSPENDED',
+        message: user.suspendedReason
           ? `Account suspended: ${user.suspendedReason}`
           : 'Account suspended. Contact support to restore access.',
-      );
+      });
+    }
+
+    // Approval gate. Self-signups land at `pending` and an operator
+    // must approve them before they can log in. Typed code so the
+    // login form can show "waiting for approval" / "rejected" copy.
+    if (user.approvalStatus === 'pending') {
+      await this.audit.log({ userId: user.id, action: 'LOGIN_PENDING', ...meta });
+      throw new ForbiddenException({
+        code: 'ACCOUNT_PENDING',
+        message:
+          'Your account is awaiting admin approval. You\'ll be able to sign in once it\'s reviewed.',
+      });
+    }
+    if (user.approvalStatus === 'rejected') {
+      await this.audit.log({ userId: user.id, action: 'LOGIN_REJECTED', ...meta });
+      throw new ForbiddenException({
+        code: 'ACCOUNT_REJECTED',
+        message: user.approvalNote
+          ? `Account not approved: ${user.approvalNote}`
+          : 'Your account was not approved. Contact support if you think this was a mistake.',
+      });
     }
 
     if (user.totpSecret?.enabled) {
@@ -320,7 +359,14 @@ export class AuthService {
     }
 
     // 3) Brand-new user — OAuth accounts are verified at creation.
+    // Approval lifecycle: first user bootstraps the install (approved
+    // immediately so they can use it). Subsequent OAuth signups go to
+    // `pending` just like password signups; the OAuth flow above
+    // bounces them back to the login page where the typed error code
+    // ACCOUNT_PENDING gets surfaced.
     if (!user) {
+      const existingCount = await this.prisma.user.count();
+      const isFirst = existingCount === 0;
       user = await this.prisma.user.create({
         data: {
           email: profile.email,
@@ -329,9 +375,42 @@ export class AuthService {
           oauthProvider: profile.provider,
           oauthId: profile.providerId,
           emailVerifiedAt: new Date(),
+          isAdmin: isFirst,
+          approvalStatus: isFirst ? 'approved' : 'pending',
+          approvedAt: isFirst ? new Date() : null,
         },
       });
       await this.audit.log({ userId: user.id, action: 'SIGNUP', ...meta });
+    }
+
+    // Gate the OAuth login the same way the password login is gated.
+    // Suspended/pending/rejected accounts cannot ride OAuth past the
+    // approval check.
+    if (user.suspendedAt) {
+      await this.audit.log({ userId: user.id, action: 'LOGIN_SUSPENDED', ...meta });
+      throw new ForbiddenException({
+        code: 'ACCOUNT_SUSPENDED',
+        message: user.suspendedReason
+          ? `Account suspended: ${user.suspendedReason}`
+          : 'Account suspended. Contact support to restore access.',
+      });
+    }
+    if (user.approvalStatus === 'pending') {
+      await this.audit.log({ userId: user.id, action: 'LOGIN_PENDING', ...meta });
+      throw new ForbiddenException({
+        code: 'ACCOUNT_PENDING',
+        message:
+          'Your account is awaiting admin approval. You\'ll be able to sign in once it\'s reviewed.',
+      });
+    }
+    if (user.approvalStatus === 'rejected') {
+      await this.audit.log({ userId: user.id, action: 'LOGIN_REJECTED', ...meta });
+      throw new ForbiddenException({
+        code: 'ACCOUNT_REJECTED',
+        message: user.approvalNote
+          ? `Account not approved: ${user.approvalNote}`
+          : 'Your account was not approved. Contact support if you think this was a mistake.',
+      });
     }
 
     await this.workspaces.ensurePersonalWorkspace(user.id).catch(() => null);

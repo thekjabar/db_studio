@@ -20,6 +20,19 @@ model User {
   /// Free-form reason shown to the operator (not the user) when looking at
   /// audit history. E.g. "payment failed 3x", "ToS violation: scraping".
   suspendedReason String?
+  /// Operator-driven moderation gate. Sign-ups land at `pending`; an
+  /// operator approves or rejects from the admin panel. Login refuses
+  /// any state other than `approved`. Existing rows at the migration
+  /// boundary were backfilled to `approved`.
+  approvalStatus  UserApprovalStatus @default(pending)
+  /// Reason displayed to the user on a rejected login. Also written on
+  /// approval for audit (typically blank — "Approved by Karwan").
+  approvalNote    String?
+  approvedAt      DateTime?
+  rejectedAt      DateTime?
+  /// Which operator made the call. Soft FK (string id, no relation) so
+  /// the Operator model can evolve without coupling to User migrations.
+  approvedByOperatorId String?
   /// Per-day AI usage counters. Daily free allowance + workspace top-up packs
   /// both feed into the guard at request time.
   aiUsage         AiUsageDay[]
@@ -59,4 +72,5 @@ model User {
 
   @@unique([oauthProvider, oauthId])
   @@index([email])
+  @@index([approvalStatus, createdAt(sort: Desc)])
 }

@@ -91,6 +91,10 @@ export const api = {
         isAdmin: boolean;
         suspendedAt: string | null;
         suspendedReason: string | null;
+        approvalStatus: 'pending' | 'approved' | 'rejected';
+        approvalNote: string | null;
+        approvedAt: string | null;
+        rejectedAt: string | null;
         emailVerified: boolean;
         createdAt: string;
         connections: number;
@@ -111,6 +115,11 @@ export const api = {
         isAdmin: boolean;
         suspendedAt: string | null;
         suspendedReason: string | null;
+        approvalStatus: 'pending' | 'approved' | 'rejected';
+        approvalNote: string | null;
+        approvedAt: string | null;
+        rejectedAt: string | null;
+        approvedByOperatorId: string | null;
         emailVerified: boolean;
         createdAt: string;
       };
@@ -134,6 +143,12 @@ export const api = {
   },
   async unsuspendUser(id: string) {
     await client.post(`/operator/users/${id}/unsuspend`);
+  },
+  async approveUser(id: string, note?: string) {
+    await client.post(`/operator/users/${id}/approve`, { note });
+  },
+  async rejectUser(id: string, reason: string) {
+    await client.post(`/operator/users/${id}/reject`, { reason });
   },
   async deleteUser(id: string) {
     await client.delete(`/operator/users/${id}`);

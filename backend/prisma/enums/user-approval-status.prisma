@@ -1,0 +1,11 @@
+/// Account approval lifecycle. New signups land at `pending` and an
+/// operator either approves (→ `approved`) or rejects (→ `rejected`).
+/// Existing accounts at the moment this column was introduced were
+/// backfilled to `approved`. A separately existing `suspendedAt` field
+/// can flip an `approved` account into a soft-suspended state without
+/// losing the approval audit trail.
+enum UserApprovalStatus {
+  pending
+  approved
+  rejected
+}

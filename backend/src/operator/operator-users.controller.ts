@@ -8,6 +8,14 @@ import { Public } from '../auth/decorators/public.decorator';
 const SuspendDto = z.object({
   reason: z.string().min(1).max(500),
 });
+const ApproveDto = z.object({
+  /// Optional internal note ("approved by Karwan"); not shown to the user.
+  note: z.string().max(500).optional(),
+});
+const RejectDto = z.object({
+  /// Reason the user sees if they try to log in after rejection. Required.
+  reason: z.string().min(1).max(500),
+});
 const OverrideDto = z.object({
   note: z.string().max(500).optional(),
   status: z.enum(['TRIALING', 'ACTIVE', 'PAST_DUE', 'SUSPENDED', 'CANCELLED']).optional(),
@@ -45,8 +53,16 @@ export class OperatorUsersController {
         { displayName: { contains: q, mode: 'insensitive' } },
       ];
     }
+    // Status filter — old values (`active`/`suspended`) still work; new
+    // values target the approval lifecycle (`pending`/`approved`/`rejected`).
     if (status === 'suspended') where.suspendedAt = { not: null };
-    if (status === 'active') where.suspendedAt = null;
+    if (status === 'active') {
+      where.suspendedAt = null;
+      where.approvalStatus = 'approved';
+    }
+    if (status === 'pending') where.approvalStatus = 'pending';
+    if (status === 'approved') where.approvalStatus = 'approved';
+    if (status === 'rejected') where.approvalStatus = 'rejected';
 
     const [rows, total] = await Promise.all([
       this.prisma.user.findMany({
@@ -62,6 +78,10 @@ export class OperatorUsersController {
           suspendedAt: true,
           suspendedReason: true,
           emailVerifiedAt: true,
+          approvalStatus: true,
+          approvalNote: true,
+          approvedAt: true,
+          rejectedAt: true,
           createdAt: true,
           _count: {
             select: {
@@ -82,6 +102,10 @@ export class OperatorUsersController {
         isAdmin: u.isAdmin,
         suspendedAt: u.suspendedAt,
         suspendedReason: u.suspendedReason,
+        approvalStatus: u.approvalStatus,
+        approvalNote: u.approvalNote,
+        approvedAt: u.approvedAt,
+        rejectedAt: u.rejectedAt,
         emailVerified: !!u.emailVerifiedAt,
         createdAt: u.createdAt,
         connections: u._count.connections,
@@ -103,6 +127,11 @@ export class OperatorUsersController {
         isAdmin: true,
         suspendedAt: true,
         suspendedReason: true,
+        approvalStatus: true,
+        approvalNote: true,
+        approvedAt: true,
+        rejectedAt: true,
+        approvedByOperatorId: true,
         emailVerifiedAt: true,
         createdAt: true,
         ownedWorkspaces: {
@@ -134,6 +163,11 @@ export class OperatorUsersController {
         isAdmin: u.isAdmin,
         suspendedAt: u.suspendedAt,
         suspendedReason: u.suspendedReason,
+        approvalStatus: u.approvalStatus,
+        approvalNote: u.approvalNote,
+        approvedAt: u.approvedAt,
+        rejectedAt: u.rejectedAt,
+        approvedByOperatorId: u.approvedByOperatorId,
         emailVerified: !!u.emailVerifiedAt,
         createdAt: u.createdAt,
       },
@@ -146,6 +180,89 @@ export class OperatorUsersController {
       })),
       aiUsageToday: usage?.callsUsed ?? 0,
     };
+  }
+
+  @Post(':id/approve')
+  async approve(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() req: OperatorRequest,
+  ) {
+    const dto = ApproveDto.parse(body ?? {});
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: { email: true, approvalStatus: true },
+    });
+    if (!user) throw new NotFoundException();
+    if (user.approvalStatus === 'approved') {
+      // Idempotent — re-approving a live account is a no-op (no audit
+      // log spam) so the admin can click without thinking.
+      return { ok: true as const, alreadyApproved: true };
+    }
+    await this.prisma.user.update({
+      where: { id },
+      data: {
+        approvalStatus: 'approved',
+        approvalNote: dto.note ?? null,
+        approvedAt: new Date(),
+        rejectedAt: null,
+        approvedByOperatorId: req.operator!.id,
+      },
+    });
+    await this.audit.log({
+      operatorId: req.operator!.id,
+      action: 'USER_APPROVED',
+      targetType: 'User',
+      targetId: id,
+      reason: dto.note,
+      metadata: { email: user.email },
+    });
+    return { ok: true as const };
+  }
+
+  @Post(':id/reject')
+  async reject(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Req() req: OperatorRequest,
+  ) {
+    const dto = RejectDto.parse(body);
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: { email: true, approvalStatus: true },
+    });
+    if (!user) throw new NotFoundException();
+    if (user.approvalStatus !== 'pending') {
+      // Reject is only valid coming from `pending`. To take action on
+      // a previously-approved account, use suspend instead.
+      throw new NotFoundException(
+        'Only pending accounts can be rejected. Suspend an approved account instead.',
+      );
+    }
+    await this.prisma.user.update({
+      where: { id },
+      data: {
+        approvalStatus: 'rejected',
+        approvalNote: dto.reason,
+        rejectedAt: new Date(),
+        approvedByOperatorId: req.operator!.id,
+      },
+    });
+    // Kill any open sessions just in case (e.g. OAuth signup that
+    // managed to issue tokens before rejection).
+    await this.prisma.refreshToken.updateMany({
+      where: { userId: id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    await this.audit.log({
+      operatorId: req.operator!.id,
+      action: 'USER_REJECTED',
+      targetType: 'User',
+      targetId: id,
+      reason: dto.reason,
+      metadata: { email: user.email },
+    });
+    return { ok: true as const };
   }
 
   @Post(':id/suspend')

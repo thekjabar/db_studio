@@ -29,6 +29,10 @@ export default function SignupPage() {
     setLoading(true);
     try {
       const r = await api.signup({ email, password, displayName: displayName || undefined });
+      if ("awaitingApproval" in r && r.awaitingApproval) {
+        nav("/login", { replace: true, state: { awaitingApproval: true, email } });
+        return;
+      }
       if ("needsVerification" in r && r.needsVerification) {
         toast.success(`We sent a verification link to ${email}. Click it to finish.`);
         nav("/login", { replace: true, state: { justSignedUp: true } });
@@ -50,9 +54,13 @@ export default function SignupPage() {
     <div className="min-h-screen flex items-center justify-center gradient-bg p-4">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-8">
-          <div className="h-12 w-12 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center mb-3">
+          <Link
+            to="/"
+            aria-label="DB Studio home"
+            className="h-12 w-12 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center mb-3 hover:bg-primary/20 transition-colors"
+          >
             <Database className="h-6 w-6 text-primary" />
-          </div>
+          </Link>
           <h1 className="text-xl font-semibold">Create account</h1>
           <p className="text-sm text-muted-foreground mt-1">Get started with DB Studio</p>
         </div>

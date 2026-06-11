@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Database, Loader2, ShieldCheck, Eye, EyeOff, CheckCircle2 } from "lucide-react";
+import { Database, Loader2, ShieldCheck, Eye, EyeOff, CheckCircle2, Clock, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -110,10 +110,60 @@ export default function LoginPage() {
     }
   };
 
-  // Fresh-signup flow: hide the login form entirely and show a dedicated
-  // confirmation screen. The user can't sign in until an admin approves, so
-  // a disabled-looking login form is just confusing.
-  if (approvalBanner?.kind === 'awaiting') {
+  // Any approval-related state hides the form entirely — the user can't sign
+  // in with this account, so showing a fillable form just invites confusion
+  // and retries that will fail with the same error.
+  if (approvalBanner) {
+    const screen = (() => {
+      switch (approvalBanner.kind) {
+        case 'awaiting':
+          return {
+            tone: 'amber' as const,
+            Icon: CheckCircle2,
+            pageTitle: 'Thanks for signing up',
+            pageSubtitle: 'One more step',
+            cardTitle: 'Account awaiting admin approval',
+            body: (
+              <>
+                We received your sign-up
+                {approvalBanner.email ? <> for <span className="font-mono">{approvalBanner.email}</span></> : null}
+                . An admin will review it shortly — you'll be able to sign in once it's approved.
+              </>
+            ),
+          };
+        case 'pending':
+          return {
+            tone: 'amber' as const,
+            Icon: Clock,
+            pageTitle: 'Awaiting approval',
+            pageSubtitle: 'Hang tight',
+            cardTitle: "Your account hasn't been approved yet",
+            body: <>An admin will review your sign-up soon. You'll be able to sign in once it's approved.</>,
+          };
+        case 'rejected':
+          return {
+            tone: 'destructive' as const,
+            Icon: Ban,
+            pageTitle: 'Account not approved',
+            pageSubtitle: 'Sign-in blocked',
+            cardTitle: 'Your account was rejected',
+            body: <>{approvalBanner.message || 'An admin rejected your account.'}</>,
+          };
+        case 'suspended':
+          return {
+            tone: 'destructive' as const,
+            Icon: Ban,
+            pageTitle: 'Account suspended',
+            pageSubtitle: 'Sign-in blocked',
+            cardTitle: 'Your account has been suspended',
+            body: <>{approvalBanner.message || 'Your account has been suspended.'}</>,
+          };
+      }
+    })();
+    const ringClass =
+      screen.tone === 'amber'
+        ? 'bg-amber-500/15 border-amber-500/30 text-amber-500'
+        : 'bg-destructive/15 border-destructive/30 text-destructive';
     return (
       <div className="min-h-screen flex items-center justify-center gradient-bg p-4">
         <div className="w-full max-w-sm">
@@ -125,20 +175,16 @@ export default function LoginPage() {
             >
               <Database className="h-6 w-6 text-primary" />
             </Link>
-            <h1 className="text-xl font-semibold">Thanks for signing up</h1>
-            <p className="text-sm text-muted-foreground mt-1">One more step</p>
+            <h1 className="text-xl font-semibold">{screen.pageTitle}</h1>
+            <p className="text-sm text-muted-foreground mt-1">{screen.pageSubtitle}</p>
           </div>
           <div className="rounded-lg border border-border bg-card shadow-xl p-6 space-y-4">
             <div className="flex flex-col items-center text-center gap-2">
-              <div className="h-10 w-10 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
-                <CheckCircle2 className="h-5 w-5 text-amber-500" />
+              <div className={`h-10 w-10 rounded-full border flex items-center justify-center ${ringClass}`}>
+                <screen.Icon className="h-5 w-5" />
               </div>
-              <div className="font-medium text-sm">Account awaiting admin approval</div>
-              <p className="text-xs text-muted-foreground">
-                We received your sign-up
-                {approvalBanner.email ? <> for <span className="font-mono">{approvalBanner.email}</span></> : null}
-                . An admin will review it shortly — you'll be able to sign in once it's approved.
-              </p>
+              <div className="font-medium text-sm">{screen.cardTitle}</div>
+              <p className="text-xs text-muted-foreground">{screen.body}</p>
             </div>
             <div className="flex flex-col gap-2 pt-2">
               <Button asChild className="w-full">
@@ -177,37 +223,6 @@ export default function LoginPage() {
           <p className="text-sm text-muted-foreground mt-1">Welcome back</p>
         </div>
         <div className="rounded-lg border border-border bg-card shadow-xl p-6">
-          {approvalBanner && (
-            <div
-              className={
-                approvalBanner.kind === 'rejected' || approvalBanner.kind === 'suspended'
-                  ? "mb-4 rounded border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive"
-                  : "mb-4 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400"
-              }
-            >
-              {approvalBanner.kind === 'pending' && (
-                <>
-                  <div className="font-medium mb-1">Awaiting approval</div>
-                  <div className="text-muted-foreground">
-                    Your account hasn't been approved yet. Hang tight — an admin will get to it
-                    soon.
-                  </div>
-                </>
-              )}
-              {approvalBanner.kind === 'rejected' && (
-                <>
-                  <div className="font-medium mb-1">Account not approved</div>
-                  <div>{approvalBanner.message || 'An admin rejected your account.'}</div>
-                </>
-              )}
-              {approvalBanner.kind === 'suspended' && (
-                <>
-                  <div className="font-medium mb-1">Account suspended</div>
-                  <div>{approvalBanner.message || 'Your account has been suspended.'}</div>
-                </>
-              )}
-            </div>
-          )}
           {unverifiedEmail && (
             <div className="mb-4 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
               <div className="font-medium mb-1">Verify your email first</div>

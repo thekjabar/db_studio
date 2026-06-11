@@ -47,7 +47,7 @@ services:
       PORT: ${API_PORT:-3000}
       DATABASE_URL: postgresql://${POSTGRES_USER:-dbdash}:${POSTGRES_PASSWORD:-dbdash}@db:5432/${POSTGRES_DB:-dbdash}?schema=public
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-    entrypoint: ["/sbin/tini", "--", "sh", "-c", "node_modules/.bin/tsx node_modules/prisma/build/index.js migrate deploy && exec node dist/main.js"]
+    entrypoint: ["/usr/bin/tini", "--", "sh", "-c", "node_modules/.bin/tsx node_modules/prisma/build/index.js migrate deploy && exec node dist/main.js"]
     ports:
       - "${API_PORT:-3000}:3000"
     networks: [dbdash]

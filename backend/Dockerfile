@@ -3,23 +3,28 @@
 # Trades a larger final image for much faster builds:
 #   - no multi-stage copy-out
 #   - no `pnpm prune --prod` (saves ~130s on slow disks for ~150 MB)
-#   - alpine base (much smaller pull + apk is faster than apt)
-# pg_dump majors 14-17 still required for the backup service.
+#   - debian-slim (glibc) — DuckDB ships only glibc prebuilds, no musl
+#     so alpine isn't an option here.
 
-FROM node:20-alpine
+FROM node:20-bookworm-slim
 
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
-# Build toolchain for native modules (argon2, better-sqlite3, ssh2 cpu-features).
-# Kept in the same image because we don't prune later.
-RUN apk add --no-cache \
-      python3 make g++ openssl ca-certificates curl tini
-
-# pg_dump for the backup feature. Alpine ships postgresql17-client only.
-# Note: this means dumps of remote Postgres servers older than 17 may fail.
-# Add older majors here if you support those servers.
-RUN apk add --no-cache postgresql17-client
-ENV DBSTUDIO_PG_DUMP_MAJORS="17"
+# Build toolchain for native modules + pg_dump majors 14-17 + tini for PID 1.
+# postgresql-client-N comes from PGDG so we get all four majors the backup
+# service can dispatch to depending on remote-server version.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 make g++ openssl ca-certificates curl tini gnupg lsb-release \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+         | gpg --dearmor -o /usr/share/keyrings/pgdg.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+         > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+         postgresql-client-14 postgresql-client-15 postgresql-client-16 postgresql-client-17 \
+    && rm -rf /var/lib/apt/lists/*
+ENV DBSTUDIO_PG_DUMP_MAJORS="14 15 16 17"
 
 WORKDIR /app
 
@@ -47,5 +52,5 @@ EXPOSE 3000
 ENV NODE_ENV=production
 ENV PORT=3000
 
-ENTRYPOINT ["/sbin/tini", "--"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "dist/main.js"]

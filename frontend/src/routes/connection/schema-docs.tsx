@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -17,7 +17,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { renderMarkdown } from "@/lib/markdown";
+
+// Sentinel since Radix Select forbids empty-string item values, but we need to
+// represent "table-level (no column)" as the chosen option.
+const TABLE_LEVEL = "__table__";
 
 type Doc = {
   id: string;
@@ -170,23 +181,67 @@ function DocDialog({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
-  const [schemaName, setSchema] = useState(initial?.schemaName ?? "public");
+  const isEditing = !!initial;
+  const [schemaName, setSchema] = useState(initial?.schemaName ?? "");
   const [tableName, setTable] = useState(initial?.tableName ?? "");
-  const [columnName, setColumn] = useState(initial?.columnName ?? "");
+  // Use sentinel for "table-level" since Radix Select disallows empty strings.
+  const [columnPick, setColumnPick] = useState<string>(
+    initial?.columnName ? initial.columnName : TABLE_LEVEL,
+  );
   const [description, setDescription] = useState(initial?.description ?? "");
   const [tags, setTags] = useState(initial?.tags ?? "");
   const [ownerEmail, setOwnerEmail] = useState(initial?.ownerEmail ?? "");
 
+  // Connection-derived options.
+  const schemasQ = useQuery({
+    queryKey: ["schemas", connectionId],
+    queryFn: () => api.listSchemas(connectionId),
+  });
+  const tablesQ = useQuery({
+    queryKey: ["tables", connectionId, schemaName],
+    queryFn: () => api.listTables(connectionId, schemaName),
+    enabled: !!schemaName,
+  });
+  const columnsQ = useQuery({
+    queryKey: ["columns", connectionId, schemaName, tableName],
+    queryFn: () => api.getTableColumns(connectionId, tableName, schemaName),
+    enabled: !!schemaName && !!tableName,
+  });
+  const membersQ = useQuery({
+    queryKey: ["conn-members", connectionId],
+    queryFn: () => api.listConnectionMembers(connectionId),
+  });
+
+  // First-load default: pick "public" if available, otherwise the first schema.
+  useEffect(() => {
+    if (!schemasQ.data || schemaName) return;
+    if (schemasQ.data.includes("public")) setSchema("public");
+    else if (schemasQ.data[0]) setSchema(schemasQ.data[0]);
+  }, [schemasQ.data, schemaName]);
+
+  // When schema changes (and we're creating, not editing) reset cascading picks.
+  useEffect(() => {
+    if (isEditing) return;
+    setTable("");
+    setColumnPick(TABLE_LEVEL);
+  }, [schemaName, isEditing]);
+  useEffect(() => {
+    if (isEditing) return;
+    setColumnPick(TABLE_LEVEL);
+  }, [tableName, isEditing]);
+
   const save = useMutation({
-    mutationFn: () =>
-      api.upsertSchemaDoc(connectionId, {
+    mutationFn: () => {
+      const columnName = columnPick === TABLE_LEVEL ? undefined : columnPick;
+      return api.upsertSchemaDoc(connectionId, {
         schemaName: schemaName.trim(),
         tableName: tableName.trim(),
-        columnName: columnName.trim() || undefined,
+        columnName,
         description: description || undefined,
         tags: tags || undefined,
         ownerEmail: ownerEmail || undefined,
-      }),
+      });
+    },
     onSuccess: () => {
       toast.success("Saved");
       qc.invalidateQueries({ queryKey: ["schema-docs", connectionId] });
@@ -205,25 +260,80 @@ function DocDialog({
           <div className="grid grid-cols-3 gap-2">
             <div>
               <Label>Schema</Label>
-              <Input value={schemaName} onChange={(e) => setSchema(e.target.value)} disabled={!!initial} />
+              <Select value={schemaName} onValueChange={setSchema} disabled={isEditing}>
+                <SelectTrigger>
+                  <SelectValue placeholder={schemasQ.isLoading ? "Loading..." : "Pick a schema"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {(schemasQ.data ?? []).map((s) => (
+                    <SelectItem key={s} value={s} className="font-mono">{s}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label>Table</Label>
-              <Input value={tableName} onChange={(e) => setTable(e.target.value)} disabled={!!initial} />
+              <Select value={tableName} onValueChange={setTable} disabled={isEditing || !schemaName}>
+                <SelectTrigger>
+                  <SelectValue placeholder={
+                    !schemaName ? "Pick schema first" :
+                    tablesQ.isLoading ? "Loading..." :
+                    tablesQ.data?.length === 0 ? "No tables" :
+                    "Pick a table"
+                  } />
+                </SelectTrigger>
+                <SelectContent>
+                  {(tablesQ.data ?? []).map((t) => (
+                    <SelectItem key={t.name} value={t.name} className="font-mono">
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
-              <Label>Column (blank for table-level)</Label>
-              <Input value={columnName} onChange={(e) => setColumn(e.target.value)} disabled={!!initial} />
+              <Label>Column</Label>
+              <Select value={columnPick} onValueChange={setColumnPick} disabled={isEditing || !tableName}>
+                <SelectTrigger>
+                  <SelectValue placeholder={
+                    !tableName ? "Pick table first" :
+                    columnsQ.isLoading ? "Loading..." :
+                    "Table-level"
+                  } />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={TABLE_LEVEL}>
+                    <span className="text-muted-foreground">Table-level (no column)</span>
+                  </SelectItem>
+                  {(columnsQ.data ?? []).map((c) => (
+                    <SelectItem key={c.name} value={c.name} className="font-mono">
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <div>
-            <Label>Owner email</Label>
-            <Input
-              type="email"
-              value={ownerEmail}
-              onChange={(e) => setOwnerEmail(e.target.value)}
-              placeholder="optional"
-            />
+            <Label>Owner</Label>
+            <Select value={ownerEmail || TABLE_LEVEL} onValueChange={(v) => setOwnerEmail(v === TABLE_LEVEL ? "" : v)}>
+              <SelectTrigger>
+                <SelectValue placeholder={membersQ.isLoading ? "Loading members..." : "Optional — pick an owner"} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={TABLE_LEVEL}>
+                  <span className="text-muted-foreground">No owner</span>
+                </SelectItem>
+                {(membersQ.data ?? []).map((m) => (
+                  <SelectItem key={m.id} value={m.email}>
+                    <span className="font-mono">{m.email}</span>
+                    {m.displayName ? (
+                      <span className="text-muted-foreground ml-2">({m.displayName})</span>
+                    ) : null}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div>
             <Label>Tags (comma-separated, e.g. pii,regulated)</Label>
@@ -243,7 +353,7 @@ function DocDialog({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+          <Button onClick={() => save.mutate()} disabled={save.isPending || !schemaName || !tableName}>
             {save.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Save
           </Button>
         </DialogFooter>

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -7,6 +7,13 @@ import { api, extractErrorMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export default function RowFiltersRoute() {
   const { id } = useParams<{ id: string }>();
@@ -55,7 +62,11 @@ export default function RowFiltersRoute() {
             <code className="rounded bg-muted px-1 py-0.5 font-mono">:userId</code> to reference
             the viewing user's id. Only the connection owner can manage filters.
           </p>
-          <NewFilterForm onSubmit={(b) => upsert.mutate(b)} pending={upsert.isPending} />
+          <NewFilterForm
+            connectionId={id!}
+            onSubmit={(b) => upsert.mutate(b)}
+            pending={upsert.isPending}
+          />
         </div>
 
         <div>
@@ -105,9 +116,11 @@ export default function RowFiltersRoute() {
 }
 
 function NewFilterForm({
+  connectionId,
   onSubmit,
   pending,
 }: {
+  connectionId: string;
   onSubmit: (b: {
     email: string;
     schemaName: string;
@@ -116,10 +129,40 @@ function NewFilterForm({
   }) => void;
   pending: boolean;
 }) {
+  // Populate every dropdown from the *current* connection: workspace members,
+  // available schemas, and tables in the picked schema. Avoids typos and
+  // missing-table errors, and surfaces the actual options the user has.
+  const membersQ = useQuery({
+    queryKey: ["conn-members", connectionId],
+    queryFn: () => api.listConnectionMembers(connectionId),
+  });
+  const schemasQ = useQuery({
+    queryKey: ["schemas", connectionId],
+    queryFn: () => api.listSchemas(connectionId),
+  });
+
   const [email, setEmail] = useState("");
-  const [schemaName, setSchema] = useState("public");
-  const [tableName, setTable] = useState("");
+  const [schemaName, setSchema] = useState<string>("");
+  const [tableName, setTable] = useState<string>("");
   const [predicate, setPredicate] = useState("tenant_id = :userId");
+
+  // Default schema to "public" if present, otherwise the first one returned.
+  useEffect(() => {
+    if (!schemasQ.data || schemaName) return;
+    if (schemasQ.data.includes("public")) setSchema("public");
+    else if (schemasQ.data[0]) setSchema(schemasQ.data[0]);
+  }, [schemasQ.data, schemaName]);
+
+  const tablesQ = useQuery({
+    queryKey: ["tables", connectionId, schemaName],
+    queryFn: () => api.listTables(connectionId, schemaName),
+    enabled: !!schemaName,
+  });
+
+  // Reset table when schema changes.
+  useEffect(() => {
+    setTable("");
+  }, [schemaName]);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -133,21 +176,62 @@ function NewFilterForm({
   return (
     <form onSubmit={submit} className="grid grid-cols-2 gap-3">
       <div>
-        <Label>User email</Label>
-        <Input
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="teammate@company.com"
-        />
+        <Label>User</Label>
+        <Select value={email} onValueChange={setEmail}>
+          <SelectTrigger>
+            <SelectValue placeholder={
+              membersQ.isLoading ? "Loading members..." :
+              membersQ.data?.length === 0 ? "No members yet — invite one first" :
+              "Pick a workspace member"
+            } />
+          </SelectTrigger>
+          <SelectContent>
+            {(membersQ.data ?? []).map((m) => (
+              <SelectItem key={m.id} value={m.email}>
+                <span className="font-mono">{m.email}</span>
+                {m.displayName ? (
+                  <span className="text-muted-foreground ml-2">({m.displayName})</span>
+                ) : null}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div>
         <Label>Schema</Label>
-        <Input value={schemaName} onChange={(e) => setSchema(e.target.value)} />
+        <Select value={schemaName} onValueChange={setSchema}>
+          <SelectTrigger>
+            <SelectValue placeholder={schemasQ.isLoading ? "Loading..." : "Pick a schema"} />
+          </SelectTrigger>
+          <SelectContent>
+            {(schemasQ.data ?? []).map((s) => (
+              <SelectItem key={s} value={s} className="font-mono">{s}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div>
         <Label>Table</Label>
-        <Input value={tableName} onChange={(e) => setTable(e.target.value)} placeholder="orders" />
+        <Select value={tableName} onValueChange={setTable} disabled={!schemaName}>
+          <SelectTrigger>
+            <SelectValue placeholder={
+              !schemaName ? "Pick a schema first" :
+              tablesQ.isLoading ? "Loading tables..." :
+              tablesQ.data?.length === 0 ? "No tables in this schema" :
+              "Pick a table"
+            } />
+          </SelectTrigger>
+          <SelectContent>
+            {(tablesQ.data ?? []).map((t) => (
+              <SelectItem key={t.name} value={t.name} className="font-mono">
+                {t.name}
+                {t.type === "view" ? (
+                  <span className="text-muted-foreground ml-2">(view)</span>
+                ) : null}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="col-span-2">
         <Label>Predicate (allowed: identifiers, =, &lt;, &gt;, IN, AND, OR, NOT, IS NULL, :userId)</Label>

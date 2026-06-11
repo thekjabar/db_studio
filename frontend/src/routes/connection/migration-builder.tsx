@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -144,7 +144,7 @@ export default function MigrationBuilderRoute() {
       </div>
 
       <div className="max-w-4xl mx-auto p-4 space-y-4">
-        <AddStepForm onAdd={addStep} dialect={dialect} />
+        <AddStepForm connectionId={id!} onAdd={addStep} dialect={dialect} />
 
         <div>
           <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
@@ -201,19 +201,50 @@ export default function MigrationBuilderRoute() {
 }
 
 function AddStepForm({
+  connectionId,
   onAdd,
   dialect,
 }: {
+  connectionId: string;
   onAdd: (s: Step) => void;
   dialect: string;
 }) {
   const [kind, setKind] = useState<Step["kind"]>("add-column");
-  const [schema, setSchema] = useState("public");
+  const [schema, setSchema] = useState("");
   const [table, setTable] = useState("");
   const [colName, setColName] = useState("");
   const [colType, setColType] = useState("text");
   const [nullable, setNullable] = useState(false);
   const [renameTo, setRenameTo] = useState("");
+
+  // Live schema/table/column lists from the current connection.
+  const schemasQ = useQuery({
+    queryKey: ["schemas", connectionId],
+    queryFn: () => api.listSchemas(connectionId),
+  });
+  const tablesQ = useQuery({
+    queryKey: ["tables", connectionId, schema],
+    queryFn: () => api.listTables(connectionId, schema),
+    enabled: !!schema,
+  });
+  // Only fetch columns when the step actually references existing ones —
+  // skip on `add-column` (user is naming a new column) and `drop-table`.
+  const needsExistingColumn = kind === "drop-column" || kind === "rename-column";
+  const columnsQ = useQuery({
+    queryKey: ["columns", connectionId, schema, table],
+    queryFn: () => api.getTableColumns(connectionId, table, schema),
+    enabled: !!schema && !!table && needsExistingColumn,
+  });
+
+  // Default schema once available.
+  useEffect(() => {
+    if (!schemasQ.data || schema) return;
+    if (schemasQ.data.includes("public")) setSchema("public");
+    else if (schemasQ.data[0]) setSchema(schemasQ.data[0]);
+  }, [schemasQ.data, schema]);
+  // Cascade reset.
+  useEffect(() => { setTable(""); }, [schema]);
+  useEffect(() => { setColName(""); }, [table, kind]);
 
   const reset = () => {
     setTable("");
@@ -267,11 +298,34 @@ function AddStepForm({
         </div>
         <div>
           <Label className="text-[11px]">Schema</Label>
-          <Input value={schema} onChange={(e) => setSchema(e.target.value)} />
+          <Select value={schema} onValueChange={setSchema}>
+            <SelectTrigger>
+              <SelectValue placeholder={schemasQ.isLoading ? "Loading…" : "Pick a schema"} />
+            </SelectTrigger>
+            <SelectContent>
+              {(schemasQ.data ?? []).map((s) => (
+                <SelectItem key={s} value={s} className="font-mono">{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div>
           <Label className="text-[11px]">{kind === "drop-table" ? "Table to drop" : "Table"}</Label>
-          <Input value={table} onChange={(e) => setTable(e.target.value)} />
+          <Select value={table} onValueChange={setTable} disabled={!schema}>
+            <SelectTrigger>
+              <SelectValue placeholder={
+                !schema ? "Pick schema first" :
+                tablesQ.isLoading ? "Loading…" :
+                tablesQ.data?.length === 0 ? "No tables" :
+                "Pick a table"
+              } />
+            </SelectTrigger>
+            <SelectContent>
+              {(tablesQ.data ?? []).map((t) => (
+                <SelectItem key={t.name} value={t.name} className="font-mono">{t.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <Button onClick={submit}>
           <Plus className="h-3.5 w-3.5" /> Stage
@@ -281,7 +335,26 @@ function AddStepForm({
         <div className="grid grid-cols-3 gap-2">
           <div>
             <Label className="text-[11px]">Column</Label>
-            <Input value={colName} onChange={(e) => setColName(e.target.value)} />
+            {needsExistingColumn ? (
+              <Select value={colName} onValueChange={setColName} disabled={!table}>
+                <SelectTrigger>
+                  <SelectValue placeholder={
+                    !table ? "Pick table first" :
+                    columnsQ.isLoading ? "Loading…" :
+                    columnsQ.data?.length === 0 ? "No columns" :
+                    "Pick a column"
+                  } />
+                </SelectTrigger>
+                <SelectContent>
+                  {(columnsQ.data ?? []).map((c) => (
+                    <SelectItem key={c.name} value={c.name} className="font-mono">{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              // `add-column` names a NEW column, so it stays a text input.
+              <Input value={colName} onChange={(e) => setColName(e.target.value)} placeholder="new_column" />
+            )}
           </div>
           {kind === "add-column" && (
             <>
@@ -305,7 +378,7 @@ function AddStepForm({
           {kind === "rename-column" && (
             <div>
               <Label className="text-[11px]">New name</Label>
-              <Input value={renameTo} onChange={(e) => setRenameTo(e.target.value)} />
+              <Input value={renameTo} onChange={(e) => setRenameTo(e.target.value)} placeholder="new_name" />
             </div>
           )}
         </div>

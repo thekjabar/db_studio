@@ -1,4 +1,8 @@
 import 'reflect-metadata';
+// Load .env BEFORE anything that reads process.env (Sentry init, config service).
+// In Docker, env vars come from docker-compose; on the host this picks up
+// backend/.env so `pnpm start:dev` works the same.
+import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';

@@ -1,4 +1,4 @@
-import { useState, type FormEvent, useMemo } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Trash2, UserPlus } from "lucide-react";
@@ -151,6 +151,7 @@ function PermissionsInner({ connectionId }: { connectionId: string }) {
         </div>
 
         <UpsertGrantForm
+          connectionId={connectionId}
           members={members.data ?? []}
           schemas={schemasQ.data ?? []}
           onSubmit={(v) => upsertGrant.mutate(v)}
@@ -292,11 +293,13 @@ function MembersTable({
 }
 
 function UpsertGrantForm({
+  connectionId,
   members,
   schemas,
   onSubmit,
   busy,
 }: {
+  connectionId: string;
   members: ConnectionMember[];
   schemas: string[];
   onSubmit: (v: { email: string; schemaName: string; tableName: string; role: MemberRole }) => void;
@@ -307,48 +310,75 @@ function UpsertGrantForm({
   const [tableName, setTableName] = useState("");
   const [role, setRole] = useState<MemberRole>("VIEWER");
 
-  const memberEmails = useMemo(() => members.map((m) => m.email), [members]);
+  // Default schema once schemas load, cascade table list off the chosen schema.
+  useEffect(() => {
+    if (!schemas.length || schemaName) return;
+    if (schemas.includes("public")) setSchemaName("public");
+    else setSchemaName(schemas[0]);
+  }, [schemas, schemaName]);
+  useEffect(() => { setTableName(""); }, [schemaName]);
+
+  const tablesQ = useQuery({
+    queryKey: ["tables", connectionId, schemaName],
+    queryFn: () => api.listTables(connectionId, schemaName),
+    enabled: !!schemaName,
+  });
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!email || !schemaName || !tableName) return;
-    onSubmit({ email, schemaName: schemaName.trim(), tableName: tableName.trim(), role });
+    onSubmit({ email, schemaName, tableName, role });
     setTableName("");
   };
 
   return (
     <form onSubmit={submit} className="grid grid-cols-1 md:grid-cols-[1.3fr_0.8fr_0.8fr_0.7fr_auto] gap-2 rounded-md border border-border bg-card p-3">
       <div className="space-y-1">
-        <Label className="text-xs">Member email</Label>
-        <Input
-          list="grant-member-emails"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="user@example.com"
-        />
-        <datalist id="grant-member-emails">
-          {memberEmails.map((e) => (
-            <option key={e} value={e} />
-          ))}
-        </datalist>
+        <Label className="text-xs">Member</Label>
+        <Select value={email} onValueChange={setEmail}>
+          <SelectTrigger>
+            <SelectValue placeholder={members.length === 0 ? "Add a member first" : "Pick a member"} />
+          </SelectTrigger>
+          <SelectContent>
+            {members.map((m) => (
+              <SelectItem key={m.id} value={m.email}>
+                <span className="font-mono">{m.email}</span>
+                {m.displayName ? <span className="text-muted-foreground ml-2">({m.displayName})</span> : null}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Schema</Label>
-        <Input
-          list="grant-schemas"
-          value={schemaName}
-          onChange={(e) => setSchemaName(e.target.value)}
-          placeholder="public"
-        />
-        <datalist id="grant-schemas">
-          {schemas.map((s) => (
-            <option key={s} value={s} />
-          ))}
-        </datalist>
+        <Select value={schemaName} onValueChange={setSchemaName}>
+          <SelectTrigger>
+            <SelectValue placeholder="Pick a schema" />
+          </SelectTrigger>
+          <SelectContent>
+            {schemas.map((s) => (
+              <SelectItem key={s} value={s} className="font-mono">{s}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Table</Label>
-        <Input value={tableName} onChange={(e) => setTableName(e.target.value)} placeholder="users" />
+        <Select value={tableName} onValueChange={setTableName} disabled={!schemaName}>
+          <SelectTrigger>
+            <SelectValue placeholder={
+              !schemaName ? "Pick a schema first" :
+              tablesQ.isLoading ? "Loading…" :
+              tablesQ.data?.length === 0 ? "No tables" :
+              "Pick a table"
+            } />
+          </SelectTrigger>
+          <SelectContent>
+            {(tablesQ.data ?? []).map((t) => (
+              <SelectItem key={t.name} value={t.name} className="font-mono">{t.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
       <div className="space-y-1">
         <Label className="text-xs">Role</Label>
@@ -358,15 +388,13 @@ function UpsertGrantForm({
           </SelectTrigger>
           <SelectContent>
             {ROLES.map((r) => (
-              <SelectItem key={r} value={r}>
-                {r}
-              </SelectItem>
+              <SelectItem key={r} value={r}>{r}</SelectItem>
             ))}
           </SelectContent>
         </Select>
       </div>
       <div className="flex items-end">
-        <Button type="submit" disabled={busy} className="w-full">
+        <Button type="submit" disabled={busy || !email || !tableName} className="w-full">
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save grant"}
         </Button>
       </div>

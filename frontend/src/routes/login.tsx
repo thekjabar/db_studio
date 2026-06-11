@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Database, Loader2, ShieldCheck, Eye, EyeOff } from "lucide-react";
+import { Database, Loader2, ShieldCheck, Eye, EyeOff, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -110,6 +110,58 @@ export default function LoginPage() {
     }
   };
 
+  // Fresh-signup flow: hide the login form entirely and show a dedicated
+  // confirmation screen. The user can't sign in until an admin approves, so
+  // a disabled-looking login form is just confusing.
+  if (approvalBanner?.kind === 'awaiting') {
+    return (
+      <div className="min-h-screen flex items-center justify-center gradient-bg p-4">
+        <div className="w-full max-w-sm">
+          <div className="flex flex-col items-center mb-8">
+            <Link
+              to="/"
+              aria-label="DB Studio home"
+              className="h-12 w-12 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center mb-3 hover:bg-primary/20 transition-colors"
+            >
+              <Database className="h-6 w-6 text-primary" />
+            </Link>
+            <h1 className="text-xl font-semibold">Thanks for signing up</h1>
+            <p className="text-sm text-muted-foreground mt-1">One more step</p>
+          </div>
+          <div className="rounded-lg border border-border bg-card shadow-xl p-6 space-y-4">
+            <div className="flex flex-col items-center text-center gap-2">
+              <div className="h-10 w-10 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                <CheckCircle2 className="h-5 w-5 text-amber-500" />
+              </div>
+              <div className="font-medium text-sm">Account awaiting admin approval</div>
+              <p className="text-xs text-muted-foreground">
+                We received your sign-up
+                {approvalBanner.email ? <> for <span className="font-mono">{approvalBanner.email}</span></> : null}
+                . An admin will review it shortly — you'll be able to sign in once it's approved.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 pt-2">
+              <Button asChild className="w-full">
+                <Link to="/">Back to home</Link>
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setApprovalBanner(null);
+                  setEmail('');
+                  setPassword('');
+                }}
+              >
+                Use a different account
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center gradient-bg p-4">
       <div className="w-full max-w-sm">
@@ -133,15 +185,6 @@ export default function LoginPage() {
                   : "mb-4 rounded border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400"
               }
             >
-              {approvalBanner.kind === 'awaiting' && (
-                <>
-                  <div className="font-medium mb-1">Thanks for signing up</div>
-                  <div className="text-muted-foreground">
-                    Your account{approvalBanner.email ? ` (${approvalBanner.email})` : ''} is now
-                    awaiting admin approval. You'll be able to sign in once it's reviewed.
-                  </div>
-                </>
-              )}
               {approvalBanner.kind === 'pending' && (
                 <>
                   <div className="font-medium mb-1">Awaiting approval</div>

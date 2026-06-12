@@ -51,6 +51,11 @@ const EnvSchema = z.object({
   SCHEDULER_QUERY_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
   SMTP_URL: z.string().transform((v) => v || undefined).optional(),
   SMTP_FROM: z.string().transform((v) => v || undefined).optional(),
+  // Resend native HTTP API — preferred over SMTP when set. RESEND_FROM falls
+  // back to SMTP_FROM if not provided. The from-address domain must be
+  // verified in Resend.
+  RESEND_API_KEY: z.string().transform((v) => v || undefined).optional(),
+  RESEND_FROM: z.string().transform((v) => v || undefined).optional(),
   SLOW_QUERY_THRESHOLD_MS: z.coerce.number().int().positive().default(1000),
   SLOW_QUERY_RETENTION: z.coerce.number().int().positive().default(10_000),
   SENTRY_DSN: z.string().transform((v) => v || undefined).optional(),
@@ -205,7 +210,14 @@ export class AppConfigService {
   get schedulerQueryTimeoutMs() { return this.env.SCHEDULER_QUERY_TIMEOUT_MS; }
   get smtpUrl() { return this.env.SMTP_URL; }
   get smtpFrom() { return this.env.SMTP_FROM; }
-  get emailEnabled() { return !!(this.env.SMTP_URL && this.env.SMTP_FROM); }
+  get resendApiKey() { return this.env.RESEND_API_KEY; }
+  /** From-address used for outbound mail. Resend-specific override, else SMTP_FROM. */
+  get mailFrom() { return this.env.RESEND_FROM ?? this.env.SMTP_FROM; }
+  get resendEnabled() { return !!(this.env.RESEND_API_KEY && this.mailFrom); }
+  /** Email is sendable if either Resend (preferred) or SMTP is configured. */
+  get emailEnabled() {
+    return this.resendEnabled || !!(this.env.SMTP_URL && this.env.SMTP_FROM);
+  }
   get slowQueryThresholdMs() { return this.env.SLOW_QUERY_THRESHOLD_MS; }
   get slowQueryRetention() { return this.env.SLOW_QUERY_RETENTION; }
   get sentryDsn() { return this.env.SENTRY_DSN; }

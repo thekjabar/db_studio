@@ -395,8 +395,10 @@ function NewScheduleDialog({
     }
     setSubmitting(true);
     try {
-      const payload = {
-        connectionId,
+      // Fields editable on both create + update. `connectionId` is create-only
+      // on the backend (you can't move a schedule to a different connection),
+      // so it's added separately for the create path only.
+      const common = {
         name,
         cron,
         timezone: timezone || undefined,
@@ -408,10 +410,10 @@ function NewScheduleDialog({
         alertCooldownMin: alertMode === "alert" ? Number(alertCooldown) || null : null,
       };
       if (editing) {
-        await api.updateSchedule(editing.id, payload);
+        await api.updateSchedule(editing.id, common);
         toast.success("Schedule updated");
       } else {
-        await api.createSchedule({ ...payload, enabled: true });
+        await api.createSchedule({ ...common, connectionId, enabled: true });
         toast.success(alertMode === "alert" ? "Alert created" : "Schedule created");
       }
       qc.invalidateQueries({ queryKey: ["schedules"] });

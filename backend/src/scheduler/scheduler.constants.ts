@@ -13,6 +13,8 @@ export interface EmailJobData {
   to: string[];
   subject: string;
   body: string;
+  /** Optional rich HTML body — includes an inline preview table of results. */
+  html?: string;
   /** CSV payload (utf-8) — sent as an attachment named `<schedule>.csv`. */
   csv?: string;
   filename?: string;

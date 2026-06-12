@@ -240,7 +240,10 @@ export function RowDrawer({ connectionId, schema, table, columns, row, onClose, 
       setFields((xs) => ({ ...xs, [f.col.name]: { ...xs[f.col.name], state: "VALUE", value: v } }));
 
     const locked = isLocked(f.col);
-    const disabled = locked || f.state !== "VALUE";
+    // Only PK/auto-generated columns are truly locked. NULL/DEFAULT fields stay
+    // editable — typing into them auto-switches to VALUE state (see setValue),
+    // so there's no extra "Enter value" click for the common case of typing.
+    const disabled = locked;
 
     if (kind === "bool") {
       return (

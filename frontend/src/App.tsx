@@ -34,7 +34,6 @@ import SchedulesRoute from "@/routes/schedules";
 import FederatedRoute from "@/routes/federated";
 import ApiKeysRoute from "@/routes/api-keys";
 import WorkspaceSsoRoute from "@/routes/workspace-sso";
-import AdminRoute from "@/routes/admin";
 import DashboardsListRoute from "@/routes/dashboards";
 import DashboardDetailRoute from "@/routes/dashboard-detail";
 import PublicDashboardRoute from "@/routes/public-dashboard";
@@ -168,14 +167,6 @@ export default function App() {
         element={
           <Protected>
             <WorkspaceSsoRoute />
-          </Protected>
-        }
-      />
-      <Route
-        path="/admin"
-        element={
-          <Protected>
-            <AdminRoute />
           </Protected>
         }
       />

@@ -116,23 +116,23 @@ export class AuthService {
     // login is blocked until the user clicks the link. Otherwise auto-verify
     // (single-user self-host / dev).
     const needsVerify = this.cfg.requireEmailVerification;
-    // First user on a fresh install is auto-promoted to admin so self-hosters
-    // have someone with /admin access without manual SQL. A race between two
-    // parallel signups can only make the first one admin (count < 1 is a
-    // hard pre-condition) which is acceptable for a single-user bootstrap.
+    // First user on a fresh install is auto-approved so the install owner can
+    // actually get in. Every subsequent signup lands at `pending` and waits
+    // for approval from the operator portal — the manual approval gate stays.
+    //
+    // IMPORTANT: signup NEVER grants the global `isAdmin` flag. Instance admin
+    // lives only in the separate operator portal. A customer's "admin of their
+    // own account" = OWNER of their personal workspace (set in
+    // ensurePersonalWorkspace below) and is fully isolated from other tenants.
     const existingCount = await this.prisma.user.count();
     const isFirst = existingCount === 0;
-    // First signup on a fresh install bootstraps both admin AND approval
-    // so the install owner can actually use the app without needing
-    // another operator to approve themselves. Every subsequent signup
-    // lands at `pending` and waits for an operator's call.
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
         passwordHash,
         displayName: dto.displayName,
         emailVerifiedAt: needsVerify ? null : new Date(),
-        isAdmin: isFirst,
+        isAdmin: false,
         approvalStatus: isFirst ? 'approved' : 'pending',
         approvedAt: isFirst ? new Date() : null,
       },
@@ -375,7 +375,9 @@ export class AuthService {
           oauthProvider: profile.provider,
           oauthId: profile.providerId,
           emailVerifiedAt: new Date(),
-          isAdmin: isFirst,
+          // Never grant global isAdmin at signup — instance admin lives only
+          // in the separate operator portal. See password-signup note above.
+          isAdmin: false,
           approvalStatus: isFirst ? 'approved' : 'pending',
           approvedAt: isFirst ? new Date() : null,
         },

@@ -33,6 +33,91 @@ function toCsv(rows: Record<string, unknown>[]): string {
   return lines.join('\n');
 }
 
+// How many result rows to render inline in the HTML email body. The full set
+// is still attached as CSV; this is just a readable preview.
+const EMAIL_PREVIEW_ROWS = 50;
+const EMAIL_PREVIEW_COLS = 12;
+const EMAIL_CELL_MAX = 120;
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function cellText(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  return s.length > EMAIL_CELL_MAX ? s.slice(0, EMAIL_CELL_MAX) + '…' : s;
+}
+
+/**
+ * Build a rich HTML body with an inline preview table of the query result, so
+ * recipients see the data at a glance without opening the CSV attachment.
+ * Inline styles only (email clients strip <style>/external CSS).
+ */
+function buildEmailHtml(input: {
+  name: string;
+  rows: Record<string, unknown>[];
+  durationMs: number;
+  isAlert: boolean;
+  alertSummary: string | null;
+}): string {
+  const { name, rows, durationMs, isAlert, alertSummary } = input;
+  const headers = rows.length ? Object.keys(rows[0]).slice(0, EMAIL_PREVIEW_COLS) : [];
+  const previewRows = rows.slice(0, EMAIL_PREVIEW_ROWS);
+  const extraCols = rows.length && Object.keys(rows[0]).length > EMAIL_PREVIEW_COLS;
+
+  const headerCells = headers
+    .map(
+      (h) =>
+        `<th style="text-align:left;padding:6px 10px;border-bottom:2px solid #e5e7eb;font-size:12px;color:#374151;white-space:nowrap;">${escapeHtml(h)}</th>`,
+    )
+    .join('');
+
+  const bodyRows = previewRows
+    .map((r, i) => {
+      const bg = i % 2 ? '#f9fafb' : '#ffffff';
+      const cells = headers
+        .map(
+          (h) =>
+            `<td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;font-size:12px;color:#111827;white-space:nowrap;">${escapeHtml(cellText(r[h]))}</td>`,
+        )
+        .join('');
+      return `<tr style="background:${bg};">${cells}</tr>`;
+    })
+    .join('');
+
+  const table = rows.length
+    ? `<table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
+         <thead><tr>${headerCells}</tr></thead>
+         <tbody>${bodyRows}</tbody>
+       </table>`
+    : `<p style="color:#6b7280;font-style:italic;">Query returned no rows.</p>`;
+
+  const note: string[] = [];
+  if (rows.length > EMAIL_PREVIEW_ROWS)
+    note.push(`Showing first ${EMAIL_PREVIEW_ROWS} of ${rows.length} rows — full results in the attached CSV.`);
+  if (extraCols) note.push(`Some columns hidden in this preview; the CSV has them all.`);
+
+  return `
+  <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#111827;max-width:760px;">
+    <div style="margin-bottom:12px;">
+      <div style="font-size:16px;font-weight:600;">${escapeHtml(name)}</div>
+      <div style="font-size:13px;color:#6b7280;margin-top:2px;">
+        ${isAlert ? `🔔 Alert fired — ${escapeHtml(alertSummary ?? '')} · ` : ''}${rows.length} row${rows.length === 1 ? '' : 's'} · ${durationMs}ms
+      </div>
+    </div>
+    ${table}
+    ${note.length ? `<p style="font-size:12px;color:#6b7280;margin-top:10px;">${note.map(escapeHtml).join(' ')}</p>` : ''}
+    <p style="font-size:11px;color:#9ca3af;margin-top:16px;border-top:1px solid #f1f5f9;padding-top:10px;">
+      Sent by DB Studio · scheduled query
+    </p>
+  </div>`;
+}
+
 @Injectable()
 export class SchedulerWorker implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(SchedulerWorker.name);
@@ -221,12 +306,20 @@ export class SchedulerWorker implements OnModuleInit, OnModuleDestroy {
 
         if (recipients.length > 0 && this.email.enabled) {
           const csv = toCsv(rows.slice(0, MAX_EMAIL_ROWS));
+          const html = buildEmailHtml({
+            name: schedule.name,
+            rows,
+            durationMs,
+            isAlert: !!condition,
+            alertSummary: condition ? outcome.summary : null,
+          });
           await this.queues.enqueueEmail({
             scheduleId,
             runId: run.id,
             to: recipients,
             subject,
             body,
+            html,
             csv,
             filename: `${schedule.name.replace(/[^a-z0-9-_]+/gi, '_')}.csv`,
           });
@@ -259,9 +352,9 @@ export class SchedulerWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   private async sendEmail(job: Job<EmailJobData>): Promise<void> {
-    const { runId, to, subject, body, csv, filename } = job.data;
+    const { runId, to, subject, body, html, csv, filename } = job.data;
     try {
-      await this.email.send({ to, subject, body, csv, filename });
+      await this.email.send({ to, subject, body, html, csv, filename });
       await this.prisma.scheduledQueryRun.update({
         where: { id: runId },
         data: { emailDelivered: true },

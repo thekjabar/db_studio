@@ -38,6 +38,7 @@ export class EmailService implements OnModuleInit {
     to: string[];
     subject: string;
     body: string;
+    html?: string;
     csv?: string;
     filename?: string;
   }): Promise<void> {
@@ -51,6 +52,7 @@ export class EmailService implements OnModuleInit {
         to: params.to,
         subject: params.subject,
         text: params.body,
+        ...(params.html ? { html: params.html } : {}),
         attachments: params.csv
           ? [
               {
@@ -59,7 +61,7 @@ export class EmailService implements OnModuleInit {
               },
             ]
           : undefined,
-      });
+      } as Parameters<Resend['emails']['send']>[0]);
       // Resend returns { error } instead of throwing on API errors.
       if (error) {
         throw new Error(`Resend send failed: ${error.message ?? String(error)}`);
@@ -74,6 +76,7 @@ export class EmailService implements OnModuleInit {
         to: params.to.join(', '),
         subject: params.subject,
         text: params.body,
+        ...(params.html ? { html: params.html } : {}),
         attachments: params.csv
           ? [{ filename: params.filename ?? 'result.csv', content: params.csv }]
           : undefined,

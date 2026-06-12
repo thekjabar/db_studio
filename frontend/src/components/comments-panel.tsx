@@ -103,7 +103,9 @@ export function CommentsPanel({ connectionId, target, label }: Props) {
           className="text-xs"
           disabled={create.isPending}
         />
-        <div className="flex justify-end">
+        {/* Left-align Post so the bottom-right floating Feedback button can't
+            sit on top of it. */}
+        <div className="flex justify-start">
           <Button type="submit" size="sm" disabled={!draft.trim() || create.isPending}>
             {create.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
             Post

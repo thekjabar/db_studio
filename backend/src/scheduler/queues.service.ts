@@ -39,17 +39,23 @@ export class QueuesService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Register/refresh the cron trigger for a schedule. */
+  // BullMQ rejects custom repeat keys/IDs containing ':' ("Custom Id cannot
+  // contain :"). Use a colon-free, collision-safe key for the repeat option.
+  private repeatKey(scheduleId: string): string {
+    return `schedule__${scheduleId}`;
+  }
+
   async upsertCron(scheduleId: string, cron: string, tz?: string | null) {
     if (!this.exec) return;
-    const repeatKey = `schedule:${scheduleId}`;
+    const key = this.repeatKey(scheduleId);
     // bullmq dedupes repeatable jobs by the jobId when provided — safe to call
     // this on every schedule create/update.
-    await this.exec.removeRepeatableByKey(repeatKey).catch(() => {});
+    await this.exec.removeRepeatableByKey(key).catch(() => {});
     await this.exec.add(
-      `schedule:${scheduleId}`,
+      key,
       { scheduleId },
       {
-        repeat: { pattern: cron, tz: tz ?? undefined, key: repeatKey },
+        repeat: { pattern: cron, tz: tz ?? undefined, key },
         removeOnComplete: { count: 100 },
         removeOnFail: { count: 50 },
         attempts: 3,
@@ -60,9 +66,10 @@ export class QueuesService implements OnModuleInit, OnModuleDestroy {
 
   async removeCron(scheduleId: string) {
     if (!this.exec) return;
+    const key = this.repeatKey(scheduleId);
     const repeats = await this.exec.getRepeatableJobs();
     for (const r of repeats) {
-      if (r.id === `schedule:${scheduleId}` || r.name === `schedule:${scheduleId}`) {
+      if (r.id === key || r.name === key || r.key === key) {
         await this.exec.removeRepeatableByKey(r.key).catch(() => {});
       }
     }

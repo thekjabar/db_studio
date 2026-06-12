@@ -28,6 +28,7 @@ export class CreateScheduleDto {
   @IsString() @Length(1, 80) name!: string;
   @IsString() @Matches(CRON_RE) cron!: string;
   @IsOptional() @IsString() @Length(0, 64) timezone?: string;
+  @IsOptional() @IsString() @Length(0, 128) schemaName?: string;
   @IsString() @Length(1, 100_000) sqlText!: string;
   @IsArray() @ArrayNotEmpty() @IsEmail({}, { each: true }) emailTo!: string[];
   @IsOptional() @IsString() @Length(0, 500) slackWebhook?: string;
@@ -45,6 +46,9 @@ export class UpdateScheduleDto {
   @ValidateIf((_o, v) => v !== null)
   @IsOptional() @IsString() @Length(0, 64)
   timezone?: string | null;
+  @ValidateIf((_o, v) => v !== null)
+  @IsOptional() @IsString() @Length(0, 128)
+  schemaName?: string | null;
   @IsOptional() @IsString() @Length(1, 100_000) sqlText?: string;
   @IsOptional() @IsArray() @IsEmail({}, { each: true }) emailTo?: string[];
   @IsOptional() slackWebhook?: string | null;

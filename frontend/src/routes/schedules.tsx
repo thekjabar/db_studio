@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -7,6 +7,7 @@ import { Database, Loader2, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import {
   api,
   extractErrorMessage,
+  type AlertOp,
   type Connection,
   type CreateScheduleInput,
   type ScheduledQuery,
@@ -53,6 +54,7 @@ export default function SchedulesRoute() {
   const modal = useModal();
   const { user } = useAuth();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<ScheduledQuery | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const list = useQuery({ queryKey: ["schedules"], queryFn: api.listSchedules });
@@ -107,7 +109,7 @@ export default function SchedulesRoute() {
             <h1 className="text-2xl font-semibold">Scheduled queries</h1>
             <p className="text-sm text-muted-foreground">Run SQL on a cron schedule and get results by email.</p>
           </div>
-          <Button onClick={() => setDialogOpen(true)} disabled={!connections.data?.length}>
+          <Button onClick={() => { setEditing(null); setDialogOpen(true); }} disabled={!connections.data?.length}>
             <Plus className="h-4 w-4" /> New schedule
           </Button>
         </div>
@@ -125,6 +127,7 @@ export default function SchedulesRoute() {
                 expanded={expandedId === s.id}
                 onExpand={() => setExpandedId(expandedId === s.id ? null : s.id)}
                 onToggle={(enabled) => toggle.mutate({ id: s.id, enabled })}
+                onEdit={() => { setEditing(s); setDialogOpen(true); }}
                 onRunNow={() => runNow.mutate(s.id)}
                 onDelete={async () => {
                   const ok = await modal.confirm({
@@ -145,7 +148,7 @@ export default function SchedulesRoute() {
             <div className="text-xs text-muted-foreground mb-4">
               Create one to run a SQL query on a cron and receive the results by email.
             </div>
-            <Button onClick={() => setDialogOpen(true)} disabled={!connections.data?.length}>
+            <Button onClick={() => { setEditing(null); setDialogOpen(true); }} disabled={!connections.data?.length}>
               <Plus className="h-4 w-4" /> New schedule
             </Button>
           </div>
@@ -154,8 +157,9 @@ export default function SchedulesRoute() {
 
       <NewScheduleDialog
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        onOpenChange={(v) => { setDialogOpen(v); if (!v) setEditing(null); }}
         connections={connections.data ?? []}
+        editing={editing}
       />
     </div>
   );
@@ -166,6 +170,7 @@ function ScheduleCard({
   expanded,
   onExpand,
   onToggle,
+  onEdit,
   onRunNow,
   onDelete,
   busy,
@@ -174,6 +179,7 @@ function ScheduleCard({
   expanded: boolean;
   onExpand: () => void;
   onToggle: (enabled: boolean) => void;
+  onEdit: () => void;
   onRunNow: () => void;
   onDelete: () => void;
   busy: boolean;
@@ -214,6 +220,9 @@ function ScheduleCard({
           </div>
           <Button variant="ghost" size="sm" onClick={onRunNow} disabled={busy}>
             <Play className="h-4 w-4" /> Run now
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onEdit} disabled={busy}>
+            <Pencil className="h-4 w-4" /> Edit
           </Button>
           <Button variant="ghost" size="sm" onClick={onExpand}>
             {expanded ? "Hide" : "History"}
@@ -291,33 +300,67 @@ function NewScheduleDialog({
   open,
   onOpenChange,
   connections,
+  editing,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   connections: Connection[];
+  editing?: ScheduledQuery | null;
 }) {
   const qc = useQueryClient();
   const [connectionId, setConnectionId] = useState<string>("");
   const [name, setName] = useState("");
   const [cron, setCron] = useState("0 * * * *");
   const [timezone, setTimezone] = useState("");
+  const [schemaName, setSchemaName] = useState<string>("");
   const [sqlText, setSqlText] = useState("SELECT 1;");
   const [emailToRaw, setEmailToRaw] = useState("");
   const [slackWebhook, setSlackWebhook] = useState("");
   const [alertMode, setAlertMode] = useState<"always" | "alert">("always");
-  const [alertOp, setAlertOp] = useState<
-    "gt" | "gte" | "lt" | "lte" | "eq" | "neq" | "rows_gt" | "rows_eq"
-  >("rows_gt");
+  const [alertOp, setAlertOp] = useState<AlertOp>("rows_gt");
   const [alertColumn, setAlertColumn] = useState("");
   const [alertValue, setAlertValue] = useState("0");
   const [alertCooldown, setAlertCooldown] = useState("15");
   const [submitting, setSubmitting] = useState(false);
+
+  // Prefill the form when opening in edit mode; clear it for a fresh create.
+  useEffect(() => {
+    if (!open) return;
+    if (editing) {
+      setConnectionId(editing.connectionId);
+      setName(editing.name);
+      setCron(editing.cron);
+      setTimezone(editing.timezone ?? "");
+      setSchemaName(editing.schemaName ?? "");
+      setSqlText(editing.sqlText);
+      setEmailToRaw(editing.emailTo);
+      setSlackWebhook(editing.slackWebhook ?? "");
+      setAlertMode(editing.alertCondition ? "alert" : "always");
+      if (editing.alertCondition) {
+        setAlertOp(editing.alertCondition.op);
+        setAlertColumn(editing.alertCondition.column ?? "");
+        setAlertValue(String(editing.alertCondition.value));
+      }
+      setAlertCooldown(String(editing.alertCooldownMin ?? 15));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing]);
+
+  // Schemas for the chosen connection — lets the user scope unqualified table
+  // names (fixes "relation does not exist" when a table lives in a non-default
+  // schema). The "__default__" sentinel means "use the connection default".
+  const schemasQ = useQuery({
+    queryKey: ["schemas", connectionId],
+    queryFn: () => api.listSchemas(connectionId),
+    enabled: !!connectionId,
+  });
 
   const reset = () => {
     setConnectionId("");
     setName("");
     setCron("0 * * * *");
     setTimezone("");
+    setSchemaName("");
     setSqlText("SELECT 1;");
     setEmailToRaw("");
     setSlackWebhook("");
@@ -352,19 +395,25 @@ function NewScheduleDialog({
     }
     setSubmitting(true);
     try {
-      await api.createSchedule({
+      const payload = {
         connectionId,
         name,
         cron,
         timezone: timezone || undefined,
+        schemaName: schemaName || null,
         sqlText,
         emailTo,
         slackWebhook: slackWebhook.trim() || undefined,
         alertCondition,
         alertCooldownMin: alertMode === "alert" ? Number(alertCooldown) || null : null,
-        enabled: true,
-      });
-      toast.success(alertMode === "alert" ? "Alert created" : "Schedule created");
+      };
+      if (editing) {
+        await api.updateSchedule(editing.id, payload);
+        toast.success("Schedule updated");
+      } else {
+        await api.createSchedule({ ...payload, enabled: true });
+        toast.success(alertMode === "alert" ? "Alert created" : "Schedule created");
+      }
       qc.invalidateQueries({ queryKey: ["schedules"] });
       reset();
       onOpenChange(false);
@@ -379,7 +428,7 @@ function NewScheduleDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>New scheduled query</DialogTitle>
+          <DialogTitle>{editing ? "Edit scheduled query" : "New scheduled query"}</DialogTitle>
           <DialogDescription>
             Pick a connection, write your SQL, set a cron, and add recipients. Results get emailed as CSV.
           </DialogDescription>
@@ -427,6 +476,30 @@ function NewScheduleDialog({
           <div className="space-y-1.5">
             <Label>Timezone (optional)</Label>
             <TimezoneSelect value={timezone} onChange={setTimezone} />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Schema (optional)</Label>
+            <Select
+              value={schemaName || "__default__"}
+              onValueChange={(v) => setSchemaName(v === "__default__" ? "" : v)}
+              disabled={!connectionId}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={
+                  !connectionId ? "Pick a connection first" :
+                  schemasQ.isLoading ? "Loading…" : "Connection default"
+                } />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__default__">Connection default</SelectItem>
+                {(schemasQ.data ?? []).map((s) => (
+                  <SelectItem key={s} value={s} className="font-mono">{s}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              Scopes unqualified table names. Pick the schema your tables live in if a query says “relation does not exist”.
+            </p>
           </div>
           <div className="space-y-1.5">
             <Label>SQL</Label>
@@ -533,7 +606,7 @@ function NewScheduleDialog({
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button type="submit" disabled={submitting || !connectionId}>
               {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              Create
+              {editing ? "Save changes" : "Create"}
             </Button>
           </DialogFooter>
         </form>

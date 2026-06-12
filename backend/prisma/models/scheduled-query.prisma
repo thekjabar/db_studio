@@ -11,6 +11,11 @@ model ScheduledQuery {
   name           String
   cron           String
   timezone       String?
+  /// Optional schema to scope unqualified table names against. When set, the
+  /// worker runs `SET search_path TO "<schema>"` before the SQL so a query
+  /// like `SELECT * FROM orders` resolves in that schema. Null = connection
+  /// default search_path.
+  schemaName     String?
   sqlText        String
   /// Comma-separated list of recipient email addresses.
   emailTo        String

@@ -136,7 +136,18 @@ export class SchedulerWorker implements OnModuleInit, OnModuleDestroy {
       const drv = await this.connections.buildDriverForRole(schedule.connectionId, Role.OWNER);
       try {
         const timeoutMs = this.cfg.schedulerQueryTimeoutMs;
-        const execPromise = drv.runRawQuery(schedule.sqlText);
+        // Scope unqualified table names to the chosen schema when set. The
+        // driver uses a connection pool, so the SET must run in the SAME
+        // statement batch as the query (otherwise it lands on a different
+        // pooled client). We prepend it to the SQL. The double-quoted
+        // identifier is injection-safe; we still reject quote/semicolon
+        // characters in the schema name as defense in depth.
+        const safeSchema =
+          schedule.schemaName && !/["';\\]/.test(schedule.schemaName) ? schedule.schemaName : null;
+        const sqlToRun = safeSchema
+          ? `SET search_path TO "${safeSchema}"; ${schedule.sqlText}`
+          : schedule.sqlText;
+        const execPromise = drv.runRawQuery(sqlToRun);
         const result = await Promise.race([
           execPromise,
           new Promise<never>((_, rej) =>

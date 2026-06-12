@@ -15,6 +15,7 @@ export interface CreateScheduleInput {
   name: string;
   cron: string;
   timezone?: string;
+  schemaName?: string | null;
   sqlText: string;
   emailTo: string[];
   slackWebhook?: string;
@@ -27,6 +28,7 @@ export interface UpdateScheduleInput {
   name?: string;
   cron?: string;
   timezone?: string | null;
+  schemaName?: string | null;
   sqlText?: string;
   emailTo?: string[];
   slackWebhook?: string | null;
@@ -104,6 +106,7 @@ export class SchedulerService {
         name: input.name,
         cron: input.cron,
         timezone: input.timezone ?? null,
+        schemaName: input.schemaName ?? null,
         sqlText: input.sqlText,
         emailTo: input.emailTo.join(','),
         slackWebhook: input.slackWebhook ?? null,
@@ -129,6 +132,7 @@ export class SchedulerService {
         ...(patch.name !== undefined && { name: patch.name }),
         ...(patch.cron !== undefined && { cron: patch.cron }),
         ...(patch.timezone !== undefined && { timezone: patch.timezone }),
+        ...(patch.schemaName !== undefined && { schemaName: patch.schemaName }),
         ...(patch.sqlText !== undefined && { sqlText: patch.sqlText }),
         ...(patch.emailTo !== undefined && { emailTo: patch.emailTo.join(',') }),
         ...(patch.slackWebhook !== undefined && { slackWebhook: patch.slackWebhook }),

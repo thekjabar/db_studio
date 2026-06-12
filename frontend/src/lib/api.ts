@@ -327,6 +327,7 @@ export interface ScheduledQuery {
   name: string;
   cron: string;
   timezone: string | null;
+  schemaName: string | null;
   sqlText: string;
   /** Comma-separated on the wire; UI treats it as a list. */
   emailTo: string;
@@ -365,6 +366,7 @@ export interface CreateScheduleInput {
   name: string;
   cron: string;
   timezone?: string;
+  schemaName?: string | null;
   sqlText: string;
   emailTo: string[];
   slackWebhook?: string;

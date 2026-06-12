@@ -1,0 +1,26 @@
+/// A read-only, tokenized share of a single SQL query. The recipient opens
+/// /shared/q/<token> (no login) and sees the result, re-run against the
+/// owner's connection with a hard row cap. Optional expiry. Revocable by
+/// deleting the row. The SQL is frozen at share time — the recipient cannot
+/// edit it, only re-run and export.
+model SharedQuery {
+  id           String     @id @default(cuid())
+  token        String     @unique
+  /// Frozen SQL — must be a single read-only SELECT (validated at create).
+  sqlText      String     @db.Text
+  /// Optional human label shown on the public page.
+  title        String?
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  createdById  String
+  createdBy    User       @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  /// Null = never expires.
+  expiresAt    DateTime?
+  /// Hard row cap for the public view, independent of the owner's editor cap.
+  rowLimit     Int        @default(1000)
+  viewCount    Int        @default(0)
+  createdAt    DateTime   @default(now())
+
+  @@index([connectionId])
+  @@index([createdById])
+}

@@ -1,5 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
-import { Check, ChevronRight, LogOut, Menu, Radio, RefreshCw, Search, User } from "lucide-react";
+import { Check, ChevronRight, LogOut, Menu, Radio, RefreshCw, Search, Sparkles, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
@@ -17,7 +17,7 @@ import { useRealtimeStatus } from "@/lib/realtime";
 import { cn } from "@/lib/utils";
 import { useModal } from "@/components/modal-provider";
 import { AnnouncementBell } from "@/components/announcements";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Connection } from "@/lib/api";
 
@@ -32,6 +32,14 @@ interface Props {
 export function TopBar({ connection, onOpenPalette, crumbs, onMenuClick }: Props) {
   const { user, setUser, clear } = useAuth();
   const qc = useQueryClient();
+  // AI usage for the signed-in user — shown in the profile dropdown so people
+  // can see their daily allowance without contacting support.
+  const aiUsage = useQuery({
+    queryKey: ["my-ai-usage"],
+    queryFn: () => api.myAiUsage(),
+    staleTime: 30_000,
+    retry: false,
+  });
   const nav = useNavigate();
   const modal = useModal();
 
@@ -134,6 +142,39 @@ export function TopBar({ connection, onOpenPalette, crumbs, onMenuClick }: Props
               <div className="text-muted-foreground text-[11px] font-normal">{user?.email}</div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            {aiUsage.data && (
+              <>
+                <div className="px-2 py-1.5">
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1">
+                    <span className="flex items-center gap-1">
+                      <Sparkles className="h-3 w-3" /> AI calls today
+                    </span>
+                    <span className="tabular-nums">
+                      {aiUsage.data.used}/{aiUsage.data.allowance}
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-all",
+                        aiUsage.data.used >= aiUsage.data.allowance
+                          ? "bg-destructive"
+                          : "bg-primary",
+                      )}
+                      style={{
+                        width: `${Math.min(100, aiUsage.data.allowance ? (aiUsage.data.used / aiUsage.data.allowance) * 100 : 0)}%`,
+                      }}
+                    />
+                  </div>
+                  {aiUsage.data.used >= aiUsage.data.allowance && (
+                    <div className="text-[10px] text-destructive mt-1">
+                      Daily limit reached — resets at midnight UTC.
+                    </div>
+                  )}
+                </div>
+                <DropdownMenuSeparator />
+              </>
+            )}
             <DropdownMenuItem asChild>
               <Link to="/connections">All connections</Link>
             </DropdownMenuItem>

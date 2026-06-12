@@ -36,6 +36,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
         safeMessage = (r.message as string) ?? exception.message;
         code = (r.error as string) ?? code;
       }
+      // Safety net: strip any "SomeException: " class-name prefix that leaks
+      // through (e.g. the framework throttler default) so the client only ever
+      // sees a human message.
+      safeMessage = stripExceptionPrefix(safeMessage);
     } else if (exception instanceof Error) {
       this.logger.error(`Unhandled ${exception.name}: ${exception.message}`, exception.stack);
       // Only send non-HTTP (i.e. unexpected) errors to Sentry; HttpExceptions
@@ -61,4 +65,13 @@ export class HttpExceptionFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
     });
   }
+}
+
+/**
+ * Remove a leading "FooException: " class-name prefix from a message, leaving
+ * just the human-readable part. Handles string and string[] shapes.
+ */
+function stripExceptionPrefix(message: string | string[]): string | string[] {
+  const clean = (s: string) => s.replace(/^[A-Z][A-Za-z0-9]*(Exception|Error):\s*/, '');
+  return Array.isArray(message) ? message.map(clean) : clean(message);
 }

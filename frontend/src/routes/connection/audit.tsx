@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Loader2, Undo2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Loader2, Undo2 } from "lucide-react";
 import { api, extractErrorMessage, type AuditAction, type AuditEntry } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -116,6 +116,20 @@ export default function AuditRoute() {
           {filtered.length} {filter ? `of ${items.length}` : ""} entries
           {q.hasNextPage && !filter ? "+" : ""}
         </span>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8"
+          onClick={() =>
+            api
+              .exportAuditCsv(id!)
+              .then(() => toast.success("Audit log exported"))
+              .catch((e) => toast.error(extractErrorMessage(e)))
+          }
+          title="Download this connection's audit log as CSV (owner only)"
+        >
+          <Download className="h-3.5 w-3.5" /> Export CSV
+        </Button>
       </div>
       <div className="flex-1 overflow-auto">
         {q.isLoading && <div className="p-6 text-sm text-muted-foreground">Loading audit log...</div>}

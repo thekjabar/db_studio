@@ -3,11 +3,26 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { toast } from "sonner";
-import { BarChart3, Download, Loader2, Play, Save, Send, Share2, Sparkles, Trash2 } from "lucide-react";
+import { BarChart3, ChevronDown, Download, FileJson, FileSpreadsheet, FileText, Loader2, Play, Save, Send, Share2, Sparkles, Table2, Trash2 } from "lucide-react";
 import { format as formatSql } from "sql-formatter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  exportCsv as dlCsv,
+  exportJson as dlJson,
+  exportExcel as dlExcel,
+  toMarkdownTable,
+  toInsertStatements,
+  copyToClipboard,
+} from "@/lib/result-export";
 import { DataGrid } from "@/components/data-grid";
 import { ExplainPanel } from "@/components/explain-panel";
 import { api, extractErrorMessage, type ExplainResult, type QueryResult } from "@/lib/api";
@@ -91,6 +106,7 @@ export default function SqlRoute() {
   const [confirmSql, setConfirmSql] = useState<string | null>(null);
   const [aiOpen, setAiOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const ctx = useOutletContext<{ schema?: string } | null>();
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
@@ -289,25 +305,18 @@ export default function SqlRoute() {
     if (name) saveMut.mutate({ name, sqlText: sql });
   };
 
-  const exportCsv = () => {
+  // Column names in the order shown. Shared by every export format.
+  const exportCols = () => (result ? result.fields.map((c) => c.name) : []);
+
+  const copyMarkdown = async () => {
     if (!result) return;
-    const cols = result.fields.map((c) => c.name);
-    const csv = [
-      cols.join(","),
-      ...result.rows.map((r) => cols.map((c) => {
-        const v = r[c];
-        if (v === null || v === undefined) return "";
-        const s = typeof v === "object" ? JSON.stringify(v) : String(v);
-        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-      }).join(",")),
-    ].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `query-${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const ok = await copyToClipboard(toMarkdownTable(exportCols(), result.rows));
+    ok ? toast.success("Markdown table copied") : toast.error("Copy failed");
+  };
+  const copyInserts = async () => {
+    if (!result) return;
+    const ok = await copyToClipboard(toInsertStatements(exportCols(), result.rows));
+    ok ? toast.success("INSERT statements copied") : toast.error("Copy failed");
   };
 
   return (
@@ -517,22 +526,55 @@ export default function SqlRoute() {
           <Button size="sm" variant="outline" onClick={doSave}>
             <Save className="h-3.5 w-3.5" /> Save
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              navigator.clipboard.writeText(window.location.href).then(
-                () => toast.success("Link copied"),
-                () => toast.error("Copy failed"),
-              );
-            }}
-            title="Copy shareable link (embeds the current SQL if short)"
-          >
-            <Share2 className="h-3.5 w-3.5" /> Share
-          </Button>
-          <Button size="sm" variant="ghost" onClick={exportCsv} disabled={!result}>
-            <Download className="h-3.5 w-3.5" /> CSV
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost" title="Share">
+                <Share2 className="h-3.5 w-3.5" /> Share
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => {
+                  navigator.clipboard.writeText(window.location.href).then(
+                    () => toast.success("Editor link copied"),
+                    () => toast.error("Copy failed"),
+                  );
+                }}
+              >
+                <Share2 className="h-3.5 w-3.5" /> Copy editor link
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShareOpen(true)} disabled={!sql.trim()}>
+                <Share2 className="h-3.5 w-3.5" /> Create public link…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost" disabled={!result}>
+                <Download className="h-3.5 w-3.5" /> Export
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => result && dlCsv(exportCols(), result.rows)}>
+                <Download className="h-3.5 w-3.5" /> Download CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => result && dlJson(exportCols(), result.rows)}>
+                <FileJson className="h-3.5 w-3.5" /> Download JSON
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => result && dlExcel(exportCols(), result.rows)}>
+                <FileSpreadsheet className="h-3.5 w-3.5" /> Download Excel
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={copyMarkdown}>
+                <FileText className="h-3.5 w-3.5" /> Copy as Markdown
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={copyInserts}>
+                <Table2 className="h-3.5 w-3.5" /> Copy as INSERTs
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             size="sm"
             variant="ghost"
@@ -711,7 +753,122 @@ export default function SqlRoute() {
         connectionId={id!}
         sql={sql}
       />
+      <ShareQueryDialog
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        connectionId={id!}
+        sql={sql}
+      />
     </div>
+  );
+}
+
+function ShareQueryDialog({
+  open,
+  onClose,
+  connectionId,
+  sql,
+}: {
+  open: boolean;
+  onClose: () => void;
+  connectionId: string;
+  sql: string;
+}) {
+  const [title, setTitle] = useState("");
+  const [expiresInDays, setExpiresInDays] = useState<string>("7");
+  const [link, setLink] = useState<string | null>(null);
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createSharedQuery(connectionId, {
+        sqlText: sql,
+        title: title.trim() || undefined,
+        expiresInDays: expiresInDays === "never" ? undefined : parseInt(expiresInDays, 10),
+      }),
+    onSuccess: (r) => {
+      const url = `${window.location.origin}/q/${r.token}`;
+      setLink(url);
+      navigator.clipboard.writeText(url).catch(() => {});
+      toast.success("Public link created & copied");
+    },
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
+  // Reset on close.
+  useEffect(() => {
+    if (!open) {
+      setLink(null);
+      setTitle("");
+      setExpiresInDays("7");
+    }
+  }, [open]);
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Create a public link</DialogTitle>
+        </DialogHeader>
+        {!link ? (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Anyone with the link can view this query's results (read-only, no login). The SQL is
+              frozen — they can re-run and export but not edit. Only <strong>SELECT</strong> queries
+              can be shared.
+            </p>
+            <div>
+              <label className="text-xs font-medium">Title (optional)</label>
+              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Monthly active users" />
+            </div>
+            <div>
+              <label className="text-xs font-medium">Expires</label>
+              <Select value={expiresInDays} onValueChange={setExpiresInDays}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">In 1 day</SelectItem>
+                  <SelectItem value="7">In 7 days</SelectItem>
+                  <SelectItem value="30">In 30 days</SelectItem>
+                  <SelectItem value="never">Never</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">Link copied to clipboard:</p>
+            <div className="flex items-center gap-2">
+              <Input readOnly value={link} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  navigator.clipboard.writeText(link);
+                  toast.success("Copied");
+                }}
+              >
+                Copy
+              </Button>
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          {!link ? (
+            <>
+              <Button variant="ghost" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button onClick={() => create.mutate()} disabled={create.isPending || !sql.trim()}>
+                {create.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Create link
+              </Button>
+            </>
+          ) : (
+            <Button onClick={onClose}>Done</Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

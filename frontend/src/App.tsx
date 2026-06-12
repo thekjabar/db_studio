@@ -38,6 +38,7 @@ import AdminRoute from "@/routes/admin";
 import DashboardsListRoute from "@/routes/dashboards";
 import DashboardDetailRoute from "@/routes/dashboard-detail";
 import PublicDashboardRoute from "@/routes/public-dashboard";
+import PublicSharedQueryRoute from "@/routes/public-shared-query";
 import NotebooksListRoute from "@/routes/notebooks";
 import NotebookDetailRoute from "@/routes/notebook-detail";
 import StatusPage from "@/routes/status";
@@ -196,6 +197,7 @@ export default function App() {
       />
       {/* Public share URL — no auth required */}
       <Route path="/d/:token" element={<PublicDashboardRoute />} />
+      <Route path="/q/:token" element={<PublicSharedQueryRoute />} />
       <Route path="/status" element={<StatusPage />} />
       <Route
         path="/sessions"

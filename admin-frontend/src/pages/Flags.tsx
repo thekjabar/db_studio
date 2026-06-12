@@ -180,7 +180,7 @@ export default function Flags() {
                     max={100}
                     value={draft.rolloutPercent}
                     onChange={(e) => setDraft({ ...draft, rolloutPercent: parseInt(e.target.value, 10) })}
-                    className="w-full"
+                    className="w-full accent-primary cursor-pointer"
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">

@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { NumberInput } from "@/components/ui/number-input";
 import { DatePicker, DateTimePicker } from "@/components/ui/date-picker";
@@ -170,12 +171,7 @@ export function BulkEditDialog({ open, onOpenChange, connectionId, schema, table
             {renderInput()}
             {col?.nullable && (
               <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={setNull}
-                  onChange={(e) => setSetNull(e.target.checked)}
-                  className="accent-brand"
-                />
+                <Checkbox checked={setNull} onCheckedChange={setSetNull} />
                 Set NULL instead
               </label>
             )}

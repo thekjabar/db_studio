@@ -1760,4 +1760,74 @@ export const api = {
 
   // ---- Feature flags ----
   myFlags: () => http.get<Record<string, boolean>>('/flags/my').then((r) => r.data),
+
+  // ---- Self usage (AI quota for the signed-in user) ----
+  myAiUsage: () =>
+    http
+      .get<{ used: number; allowance: number; day: string }>('/ai/chats/quota')
+      .then((r) => r.data),
+
+  // ---- Customer audit log CSV export (owner-only) ----
+  exportAuditCsv: async (connectionId: string) => {
+    const res = await http.get(`/connections/${connectionId}/audit/export.csv`, {
+      responseType: "blob",
+    });
+    const url = URL.createObjectURL(res.data as Blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `audit-${connectionId}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
+
+  // ---- Shareable read-only query links ----
+  createSharedQuery: (
+    connectionId: string,
+    body: { sqlText: string; title?: string; expiresInDays?: number; rowLimit?: number },
+  ) =>
+    http
+      .post<{ token: string; id: string; expiresAt: string | null }>(
+        `/connections/${connectionId}/shared-queries`,
+        body,
+      )
+      .then((r) => r.data),
+  listSharedQueries: (connectionId: string) =>
+    http
+      .get<
+        Array<{
+          id: string;
+          token: string;
+          title: string | null;
+          sqlText: string;
+          expiresAt: string | null;
+          viewCount: number;
+          createdAt: string;
+          createdBy: { email: string; displayName: string | null };
+        }>
+      >(`/connections/${connectionId}/shared-queries`)
+      .then((r) => r.data),
+  revokeSharedQuery: (connectionId: string, shareId: string) =>
+    http.delete(`/connections/${connectionId}/shared-queries/${shareId}`).then((r) => r.data),
+  // Public — no auth header needed but http client tolerates it.
+  getSharedQueryMeta: (token: string) =>
+    http
+      .get<{
+        title: string | null;
+        sqlText: string;
+        expiresAt: string | null;
+        rowLimit: number;
+        connectionName: string;
+        dialect: string;
+      }>(`/public/shared-queries/${token}`)
+      .then((r) => r.data),
+  runSharedQuery: (token: string) =>
+    http
+      .post<{
+        fields: { name: string; dataType: string }[];
+        rows: Record<string, unknown>[];
+        rowCount: number;
+        truncated: boolean;
+        durationMs: number;
+      }>(`/public/shared-queries/${token}/run`)
+      .then((r) => r.data),
 };

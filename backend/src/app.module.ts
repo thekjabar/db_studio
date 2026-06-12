@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { AppThrottlerGuard } from './common/throttler-behind-proxy.guard';
 import { AppConfigModule } from './config/config.module';
 import { AppConfigService } from './config/config.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -10,6 +11,7 @@ import { UsersModule } from './users/users.module';
 import { ConnectionsModule } from './connections/connections.module';
 import { DriversModule } from './drivers/drivers.module';
 import { QueryModule } from './query/query.module';
+import { SharedQueryModule } from './shared-query/shared-query.module';
 import { SchemaModule } from './schema/schema.module';
 import { AuditModule } from './audit/audit.module';
 import { RealtimeModule } from './realtime/realtime.module';
@@ -70,6 +72,7 @@ import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
     ConnectionsModule,
     DriversModule,
     QueryModule,
+    SharedQueryModule,
     SchemaModule,
     AuditModule,
     RealtimeModule,
@@ -109,6 +112,6 @@ import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
     FeatureFlagsModule,
   ],
   controllers: [HealthController],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],
 })
 export class AppModule {}

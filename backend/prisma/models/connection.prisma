@@ -30,6 +30,7 @@ model Connection {
   comments         Comment[]
   schemaSnapshots  SchemaSnapshot[]
   dashboards       Dashboard[]
+  sharedQueries    SharedQuery[]
   reviewRequests   QueryReviewRequest[]
   notebooks        Notebook[]
   rowFilters       RowFilter[]

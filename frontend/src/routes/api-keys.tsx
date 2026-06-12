@@ -8,6 +8,7 @@ import { api, extractErrorMessage, type ApiKey, type Connection } from "@/lib/ap
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -342,13 +343,12 @@ function NewKeyDialog({
           {scope === "selected" && (
             <div className="space-y-1 max-h-40 overflow-y-auto rounded border border-border p-2">
               {connections.map((c) => (
-                <label key={c.id} className="flex items-center gap-2 text-xs cursor-pointer px-1 py-0.5 hover:bg-accent rounded">
-                  <input
-                    type="checkbox"
+                <label key={c.id} className="flex items-center gap-2 text-xs cursor-pointer px-1 py-1 hover:bg-accent rounded">
+                  <Checkbox
                     checked={selected.has(c.id)}
-                    onChange={(e) => {
+                    onCheckedChange={(v) => {
                       const next = new Set(selected);
-                      if (e.target.checked) next.add(c.id);
+                      if (v) next.add(c.id);
                       else next.delete(c.id);
                       setSelected(next);
                     }}

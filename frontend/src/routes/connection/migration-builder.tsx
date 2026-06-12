@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ArrowRight, Copy, FileCode2, Loader2, Plus, Trash2 } from "lucide-react";
 import { api, extractErrorMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -363,12 +364,8 @@ function AddStepForm({
                 <Input value={colType} onChange={(e) => setColType(e.target.value)} placeholder="text / varchar(64) / int" />
               </div>
               <div className="flex items-end gap-2">
-                <label className="text-xs flex items-center gap-1">
-                  <input
-                    type="checkbox"
-                    checked={nullable}
-                    onChange={(e) => setNullable(e.target.checked)}
-                  />
+                <label className="text-xs flex items-center gap-1.5 cursor-pointer">
+                  <Checkbox checked={nullable} onCheckedChange={setNullable} />
                   nullable
                 </label>
                 <ArrowRight className="h-4 w-4 text-muted-foreground" />

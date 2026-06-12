@@ -1,5 +1,5 @@
-import { Controller, Get, HttpCode, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { Request } from 'express';
+import { Controller, Get, HttpCode, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Request, Response } from 'express';
 import { AuditService } from './audit.service';
 import { AuditRevertService } from './audit-revert.service';
 import { RbacGuard } from '../rbac/rbac.guard';
@@ -30,6 +30,20 @@ export class AuditController {
       limit ? parseInt(limit, 10) : 100,
       cursor,
     );
+  }
+
+  /** CSV export of this connection's audit log — for the customer's own
+   *  compliance records. OWNER-only since it includes everyone's SQL. */
+  @Get('export.csv')
+  @RequireRole('OWNER')
+  async exportCsv(@Param('id') connectionId: string, @Res() res: Response) {
+    const csv = await this.audit.exportConnectionCsv(connectionId);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="audit-${connectionId}-${new Date().toISOString().slice(0, 10)}.csv"`,
+    );
+    res.send(csv);
   }
 
   /**

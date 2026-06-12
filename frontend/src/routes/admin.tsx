@@ -26,6 +26,7 @@ import { api, extractErrorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { DialectBadge } from "@/components/dialect-badge";
@@ -525,16 +526,17 @@ function IncidentRow({
       )}
       {updateOpen && (
         <div className="flex items-center gap-2 pt-1">
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value as typeof status)}
-            className="text-xs px-2 py-1 rounded border border-border bg-background"
-          >
-            <option value="INVESTIGATING">Investigating</option>
-            <option value="IDENTIFIED">Identified</option>
-            <option value="MONITORING">Monitoring</option>
-            <option value="RESOLVED">Resolved</option>
-          </select>
+          <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>
+            <SelectTrigger className="h-8 w-40 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="INVESTIGATING">Investigating</SelectItem>
+              <SelectItem value="IDENTIFIED">Identified</SelectItem>
+              <SelectItem value="MONITORING">Monitoring</SelectItem>
+              <SelectItem value="RESOLVED">Resolved</SelectItem>
+            </SelectContent>
+          </Select>
           <Input
             value={message}
             onChange={(e) => setMessage(e.target.value)}
@@ -588,15 +590,16 @@ function NewIncidentDialog({ onClose }: { onClose: () => void }) {
         <h3 className="font-semibold">New incident</h3>
         <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" />
         <div className="grid grid-cols-2 gap-2">
-          <select
-            value={severity}
-            onChange={(e) => setSeverity(e.target.value as typeof severity)}
-            className="text-xs px-2 py-2 rounded border border-border bg-background"
-          >
-            <option value="MINOR">Minor</option>
-            <option value="MAJOR">Major</option>
-            <option value="CRITICAL">Critical</option>
-          </select>
+          <Select value={severity} onValueChange={(v) => setSeverity(v as typeof severity)}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="MINOR">Minor</SelectItem>
+              <SelectItem value="MAJOR">Major</SelectItem>
+              <SelectItem value="CRITICAL">Critical</SelectItem>
+            </SelectContent>
+          </Select>
           <Input value={impact} onChange={(e) => setImpact(e.target.value)} placeholder="Impact (optional)" />
         </div>
         <Input

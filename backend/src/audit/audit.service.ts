@@ -191,4 +191,34 @@ export class AuditService {
         : undefined,
     };
   }
+
+  /**
+   * CSV export of a connection's audit log for the customer's own records
+   * (SOC2 / compliance). Capped at 50k rows to bound memory.
+   */
+  async exportConnectionCsv(connectionId: string): Promise<string> {
+    const rows = await this.prisma.auditLog.findMany({
+      where: { connectionId },
+      orderBy: { createdAt: 'desc' },
+      take: 50_000,
+      include: { user: { select: { email: true, displayName: true } } },
+    });
+    const esc = (v: unknown): string => {
+      if (v === null || v === undefined) return '';
+      const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = ['createdAt', 'user', 'action', 'affectedRows', 'ip', 'sqlText'].join(',');
+    const lines = rows.map((r) =>
+      [
+        r.createdAt.toISOString(),
+        esc(r.user ? r.user.displayName || r.user.email : ''),
+        esc(r.action),
+        esc(r.affectedRows ?? ''),
+        esc(r.ip ?? ''),
+        esc(r.sqlText ?? ''),
+      ].join(','),
+    );
+    return [header, ...lines].join('\n');
+  }
 }

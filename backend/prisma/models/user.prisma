@@ -60,6 +60,7 @@ model User {
   passwordResets   PasswordReset[]
   schemaSnapshots  SchemaSnapshot[]
   dashboards       Dashboard[]
+  sharedQueries    SharedQuery[]
   reviewRequests   QueryReviewRequest[] @relation("ReviewRequests")
   reviewsDone      QueryReviewRequest[] @relation("Reviews")
   notebooks        Notebook[]

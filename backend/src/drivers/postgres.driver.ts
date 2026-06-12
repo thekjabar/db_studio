@@ -447,9 +447,22 @@ export class PostgresDriver implements IDatabaseDriver {
     return r.rowCount ?? 0;
   }
 
-  async runRawQuery(sql: string, params: unknown[] = []): Promise<QueryResult> {
+  async runRawQuery(
+    sql: string,
+    params: unknown[] = [],
+    opts?: { searchPath?: string },
+  ): Promise<QueryResult> {
     const start = Date.now();
-    const r = await this.withClient((c) => c.query(sql, params));
+    const r = await this.withClient(async (c) => {
+      // Scope unqualified table names by setting search_path on THIS client
+      // before the query — must be a separate statement on the same connection
+      // (concatenating "SET ...; SELECT ..." makes pg return the SET's empty
+      // result instead of the SELECT's rows). Reject quote/semicolon chars.
+      if (opts?.searchPath && !/["';\\]/.test(opts.searchPath)) {
+        await c.query(`SET search_path TO "${opts.searchPath}"`);
+      }
+      return c.query(sql, params);
+    });
     return {
       rows: r.rows,
       fields: (r.fields ?? []).map((f) => ({ name: f.name, dataType: String(f.dataTypeID) })),

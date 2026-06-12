@@ -160,7 +160,11 @@ export interface IDatabaseDriver {
     pks: Record<string, unknown>[],
     values: Record<string, unknown>,
   ): Promise<number>;
-  runRawQuery(sql: string, params?: unknown[]): Promise<QueryResult>;
+  runRawQuery(
+    sql: string,
+    params?: unknown[],
+    opts?: { searchPath?: string },
+  ): Promise<QueryResult>;
   introspectForER(schema?: string): Promise<ErDiagram>;
   listFunctions(schema?: string): Promise<FunctionMeta[]>;
   listTriggers(schema?: string): Promise<TriggerMeta[]>;

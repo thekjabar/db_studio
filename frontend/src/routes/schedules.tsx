@@ -438,7 +438,9 @@ function NewScheduleDialog({
         <form onSubmit={submit} className="space-y-3">
           <div className="space-y-1.5">
             <Label>Connection</Label>
-            <Select value={connectionId} onValueChange={setConnectionId}>
+            {/* Connection can't change after a schedule is created — its run
+                history + alerts are tied to it. Lock it in edit mode. */}
+            <Select value={connectionId} onValueChange={setConnectionId} disabled={!!editing}>
               <SelectTrigger><SelectValue placeholder="Pick a connection" /></SelectTrigger>
               <SelectContent>
                 {connections.map((c) => (
@@ -446,6 +448,11 @@ function NewScheduleDialog({
                 ))}
               </SelectContent>
             </Select>
+            {editing && (
+              <p className="text-[11px] text-muted-foreground">
+                Connection can't be changed. Delete this schedule and create a new one to use a different connection.
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label>Name</Label>

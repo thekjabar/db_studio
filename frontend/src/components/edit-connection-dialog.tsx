@@ -46,10 +46,15 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
   const [sshMode, setSshMode] = useState<"unchanged" | "set" | "clear">("unchanged");
   const [ssh, setSsh] = useState<SshTunnelInput>(defaultSshTunnel);
 
+  const [alertMs, setAlertMs] = useState("");
+  const [alertEmail, setAlertEmail] = useState("");
+
   useEffect(() => {
     if (!connection) return;
     setName(connection.name);
     setReadOnly(!!connection.readOnly);
+    setAlertMs(connection.slowQueryAlertMs ? String(connection.slowQueryAlertMs) : "");
+    setAlertEmail(connection.slowQueryAlertEmail ?? "");
     // Credentials start blank — user fills only what changes.
     setHost("");
     setPort("");
@@ -86,6 +91,11 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
     if (sslMode) patch.sslMode = sslMode;
     if (sshMode === "set") patch.ssh = ssh;
     else if (sshMode === "clear") patch.ssh = null;
+    // Slow-query alert: empty = clear (null), value = set.
+    const msNum = alertMs.trim() === "" ? null : parseInt(alertMs, 10) || null;
+    if (msNum !== (connection.slowQueryAlertMs ?? null)) patch.slowQueryAlertMs = msNum;
+    const emailVal = alertEmail.trim() || null;
+    if (emailVal !== (connection.slowQueryAlertEmail ?? null)) patch.slowQueryAlertEmail = emailVal;
 
     if (Object.keys(patch).length === 0) {
       toast.info("Nothing to update");
@@ -164,6 +174,32 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
               <div className="text-sm font-medium">Read-only</div>
               <div className="text-xs text-muted-foreground">
                 Prevent writes from this connection.
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-border pt-4 space-y-2">
+            <div className="text-sm font-medium">Slow-query alert</div>
+            <p className="text-xs text-muted-foreground">
+              Email when a query exceeds the threshold (max one alert per 15 min). Leave blank to disable.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Threshold (ms)</Label>
+                <Input
+                  value={alertMs}
+                  onChange={(e) => setAlertMs(e.target.value.replace(/[^\d]/g, ""))}
+                  placeholder="e.g. 5000"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Alert email</Label>
+                <Input
+                  type="email"
+                  value={alertEmail}
+                  onChange={(e) => setAlertEmail(e.target.value)}
+                  placeholder="ops@company.com"
+                />
               </div>
             </div>
           </div>

@@ -32,6 +32,26 @@ const DIALECTS: { value: Dialect; label: string; port: number }[] = [
   { value: "MSSQL", label: "SQL Server", port: 1433 },
 ];
 
+// Quick-connect presets for popular managed providers. Host values are
+// placeholder patterns the user edits — the point is the right port,
+// SSL mode and default database out of the box.
+const CONNECTION_PRESETS: {
+  label: string;
+  dialect: Dialect;
+  host: string;
+  port: number;
+  sslMode: string;
+  database?: string;
+  user?: string;
+}[] = [
+  { label: "Supabase", dialect: "POSTGRES", host: "db.YOUR-PROJECT.supabase.co", port: 5432, sslMode: "require", database: "postgres", user: "postgres" },
+  { label: "Neon", dialect: "POSTGRES", host: "YOUR-PROJECT.neon.tech", port: 5432, sslMode: "require" },
+  { label: "AWS RDS", dialect: "POSTGRES", host: "YOUR-DB.xxxxx.rds.amazonaws.com", port: 5432, sslMode: "require" },
+  { label: "Railway", dialect: "POSTGRES", host: "YOUR-PROJECT.railway.app", port: 5432, sslMode: "require", database: "railway", user: "postgres" },
+  { label: "PlanetScale", dialect: "MYSQL", host: "aws.connect.psdb.cloud", port: 3306, sslMode: "require" },
+  { label: "Local Postgres", dialect: "POSTGRES", host: "localhost", port: 5432, sslMode: "" },
+];
+
 export default function ConnectionsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Connection | null>(null);

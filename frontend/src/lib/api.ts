@@ -123,6 +123,8 @@ export interface CreateConnectionInput {
   sslMode?: string;
   readOnly?: boolean;
   statementTimeoutMs?: number;
+  slowQueryAlertMs?: number | null;
+  slowQueryAlertEmail?: string | null;
   ssh?: SshTunnelInput | null;
 }
 

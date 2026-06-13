@@ -136,7 +136,7 @@ export default function QueryBuilderRoute() {
                         }}
                       />
                       <span className="font-mono">{c.name}</span>
-                      <span className="text-muted-foreground ml-auto">{c.type}</span>
+                      <span className="text-muted-foreground ml-auto">{c.dataType}</span>
                     </label>
                   ))}
                 </div>

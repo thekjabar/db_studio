@@ -50,6 +50,7 @@ import { InviteCodesModule } from './invite-codes/invite-codes.module';
 import { AbuseModule } from './abuse/abuse.module';
 import { RetentionModule } from './retention/retention.module';
 import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
+import { SnippetsModule } from './snippets/snippets.module';
 
 @Module({
   imports: [
@@ -110,6 +111,7 @@ import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
     AbuseModule,
     RetentionModule,
     FeatureFlagsModule,
+    SnippetsModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],

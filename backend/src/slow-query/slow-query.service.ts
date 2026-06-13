@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppConfigService } from '../config/config.service';
+import { EmailService } from '../scheduler/email.service';
 
 /**
  * Replace literal values with `?` so two runs of the same query shape — even
@@ -60,9 +61,15 @@ export class SlowQueryService {
   private readonly log = new Logger(SlowQueryService.name);
   private retentionDebounce = 0;
 
+  // Per-connection alert cooldown — a burst of slow queries sends one email,
+  // not hundreds. 15 min, in-memory (fine for a single pod).
+  private readonly alertLastSent = new Map<string, number>();
+  private static readonly ALERT_COOLDOWN_MS = 15 * 60 * 1000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly cfg: AppConfigService,
+    private readonly email: EmailService,
   ) {}
 
   /** Fire-and-forget. Never throws — the caller is a hot query path and must not fail if logging does. */
@@ -100,6 +107,33 @@ export class SlowQueryService {
       })
       .then(() => this.maybeTrim(entry.connectionId))
       .catch((err) => this.log.warn(`slow-query log insert failed: ${(err as Error).message}`));
+
+    // Performance alert (fire-and-forget): when the connection owner set a
+    // threshold + email and this query exceeded it, notify — rate-limited.
+    void this.maybeAlert(entry.connectionId, entry.sql, entry.durationMs).catch((err) =>
+      this.log.warn(`slow-query alert failed: ${(err as Error).message}`),
+    );
+  }
+
+  private async maybeAlert(connectionId: string, sql: string, durationMs: number) {
+    if (!this.email.enabled) return;
+    const conn = await this.prisma.connection.findUnique({
+      where: { id: connectionId },
+      select: { name: true, slowQueryAlertMs: true, slowQueryAlertEmail: true },
+    });
+    if (!conn?.slowQueryAlertMs || !conn.slowQueryAlertEmail) return;
+    if (durationMs < conn.slowQueryAlertMs) return;
+    const last = this.alertLastSent.get(connectionId) ?? 0;
+    if (Date.now() - last < SlowQueryService.ALERT_COOLDOWN_MS) return;
+    this.alertLastSent.set(connectionId, Date.now());
+    await this.email.send({
+      to: [conn.slowQueryAlertEmail],
+      subject: `[DB Studio] Slow query on ${conn.name} — ${Math.round(durationMs)}ms`,
+      body:
+        `A query on connection "${conn.name}" exceeded your alert threshold ` +
+        `(${conn.slowQueryAlertMs}ms).\n\nDuration: ${Math.round(durationMs)}ms\n\nSQL:\n${sql.slice(0, 2000)}\n\n` +
+        `Further alerts for this connection are muted for 15 minutes.`,
+    });
   }
 
   /** Opportunistically delete oldest rows above the retention cap. Runs at

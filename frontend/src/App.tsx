@@ -14,6 +14,10 @@ import ConnectionsPage from "@/routes/connections";
 import { AppShell } from "@/components/layout/app-shell";
 import TableRoute from "@/routes/connection/table";
 import SqlRoute from "@/routes/connection/sql";
+import QueryBuilderRoute from "@/routes/connection/query-builder";
+import DiffRoute from "@/routes/connection/diff";
+import DictionaryRoute from "@/routes/connection/dictionary";
+import SensitiveScanRoute from "@/routes/connection/sensitive";
 import ErRoute from "@/routes/connection/er";
 import SchemaRoute from "@/routes/connection/schema";
 import AuditRoute from "@/routes/connection/audit";
@@ -226,6 +230,10 @@ export default function App() {
         <Route path="t/:schema/:table" element={<TableRoute />} />
         <Route path="t/:schema" element={<TableRoute />} />
         <Route path="sql" element={<SqlRoute />} />
+        <Route path="builder" element={<QueryBuilderRoute />} />
+        <Route path="diff" element={<DiffRoute />} />
+        <Route path="dictionary" element={<DictionaryRoute />} />
+        <Route path="sensitive" element={<SensitiveScanRoute />} />
         <Route path="er" element={<ErRoute />} />
         <Route path="schema" element={<SchemaRoute />} />
         <Route path="audit" element={<AuditRoute />} />

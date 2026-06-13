@@ -168,6 +168,44 @@ export default function SqlRoute() {
     enabled: !!id,
   });
 
+  // Personal SQL snippets — insertable text blocks, global + per-connection.
+  const snippetsQ = useQuery({
+    queryKey: ["snippets", id],
+    queryFn: () => api.listSnippets(id!),
+    enabled: !!id,
+  });
+  const saveSnippet = async () => {
+    const name = await modal.prompt({
+      title: "Save snippet",
+      description: "A short name for the current SQL.",
+      placeholder: "monthly revenue",
+      validate: (v) => (v.trim().length < 1 ? "Name required" : null),
+    });
+    if (!name) return;
+    try {
+      await api.createSnippet({ name: name.trim(), sqlText: sql, connectionId: id });
+      toast.success("Snippet saved");
+      qc.invalidateQueries({ queryKey: ["snippets", id] });
+    } catch (e) {
+      toast.error(extractErrorMessage(e));
+    }
+  };
+  const deleteSnippet = async () => {
+    const list = snippetsQ.data ?? [];
+    const pick = await modal.select({
+      title: "Delete snippet",
+      options: list.map((s) => ({ value: s.id, label: s.name })),
+    });
+    if (!pick) return;
+    try {
+      await api.deleteSnippet(pick);
+      toast.success("Snippet deleted");
+      qc.invalidateQueries({ queryKey: ["snippets", id] });
+    } catch (e) {
+      toast.error(extractErrorMessage(e));
+    }
+  };
+
   const run = useMutation({
     mutationFn: async (body: { sql: string; confirmDestructive?: boolean }) =>
       api.runQuery(id!, { ...body, maxRows }),
@@ -265,11 +303,45 @@ export default function SqlRoute() {
     onError: (e) => toast.error(extractErrorMessage(e)),
   });
 
+  // --- Query parameters (:name placeholders) ---------------------------
+  // `:since`-style tokens are detected at run time; the user fills values in
+  // a dialog and we substitute escaped literals before sending. `::casts`
+  // and tokens inside quoted strings are ignored.
+  const [paramRun, setParamRun] = useState<{ params: string[]; confirmDestructive?: boolean } | null>(null);
+  const [paramValues, setParamValues] = useState<Record<string, string>>({});
+
+  const startRun = (confirmDestructive?: boolean) => {
+    if (run.isPending || !sql.trim()) return;
+    const params = extractQueryParams(sql);
+    if (params.length > 0) {
+      // Prefill from last-used values for this connection.
+      try {
+        const saved = JSON.parse(localStorage.getItem(`qparams:${id}`) ?? "{}");
+        setParamValues(Object.fromEntries(params.map((p) => [p, saved[p] ?? ""])));
+      } catch {
+        setParamValues(Object.fromEntries(params.map((p) => [p, ""])));
+      }
+      setParamRun({ params, confirmDestructive });
+      return;
+    }
+    run.mutate({ sql, confirmDestructive });
+  };
+
+  const runWithParams = () => {
+    if (!paramRun) return;
+    try {
+      localStorage.setItem(`qparams:${id}`, JSON.stringify(paramValues));
+    } catch { /* ignore */ }
+    const substituted = substituteParams(sql, paramValues);
+    setParamRun(null);
+    run.mutate({ sql: substituted, confirmDestructive: paramRun.confirmDestructive });
+  };
+
   // Keep a ref to the current run-callback so the Monaco command (bound once
   // on mount) always sees the latest `sql` without needing to re-bind.
   const runRef = useRef<() => void>(() => {});
   runRef.current = () => {
-    if (!run.isPending && sql.trim()) run.mutate({ sql });
+    startRun();
   };
 
   const formatRef = useRef<() => void>(() => {});
@@ -406,7 +478,7 @@ export default function SqlRoute() {
                   });
                   if (!ok) return;
                 }
-                run.mutate({ sql });
+                startRun();
               }}
               disabled={run.isPending || !sql.trim()}
             >
@@ -526,6 +598,35 @@ export default function SqlRoute() {
           <Button size="sm" variant="outline" onClick={doSave}>
             <Save className="h-3.5 w-3.5" /> Save
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="ghost" title="SQL snippets">
+                <FileText className="h-3.5 w-3.5" /> Snippets
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="max-h-80 overflow-auto">
+              {(snippetsQ.data ?? []).map((s) => (
+                <DropdownMenuItem
+                  key={s.id}
+                  onClick={() => setSql((prev) => (prev.trim() ? prev + "\n\n" + s.sqlText : s.sqlText))}
+                  title={s.sqlText.slice(0, 200)}
+                >
+                  <FileText className="h-3.5 w-3.5" /> {s.name}
+                </DropdownMenuItem>
+              ))}
+              {(snippetsQ.data ?? []).length === 0 && (
+                <DropdownMenuItem disabled>No snippets yet</DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={saveSnippet} disabled={!sql.trim()}>
+                <Save className="h-3.5 w-3.5" /> Save current SQL as snippet…
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={deleteSnippet} disabled={(snippetsQ.data ?? []).length === 0}>
+                <Trash2 className="h-3.5 w-3.5" /> Delete a snippet…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button size="sm" variant="ghost" title="Share">
@@ -759,8 +860,64 @@ export default function SqlRoute() {
         connectionId={id!}
         sql={sql}
       />
+      {/* Parameter prompt — fills :name placeholders before running. */}
+      <Dialog open={!!paramRun} onOpenChange={(v) => !v && setParamRun(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Query parameters</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {(paramRun?.params ?? []).map((p) => (
+              <div key={p} className="space-y-1">
+                <label className="text-xs font-mono font-medium">:{p}</label>
+                <Input
+                  value={paramValues[p] ?? ""}
+                  onChange={(e) => setParamValues((v) => ({ ...v, [p]: e.target.value }))}
+                  placeholder="value (empty = NULL)"
+                  onKeyDown={(e) => e.key === "Enter" && runWithParams()}
+                />
+              </div>
+            ))}
+            <p className="text-[11px] text-muted-foreground">
+              Numbers are passed as numbers, everything else as quoted strings. Empty = NULL.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setParamRun(null)}>Cancel</Button>
+            <Button onClick={runWithParams}>
+              <Play className="h-3.5 w-3.5" /> Run
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
+}
+
+/** Find `:name` parameter tokens, skipping `::casts` and quoted strings. */
+export function extractQueryParams(sql: string): string[] {
+  // Blank out quoted strings/identifiers so tokens inside them are ignored.
+  const stripped = sql.replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"/g, (m) => " ".repeat(m.length));
+  const out: string[] = [];
+  const re = /(^|[^:\w]):([a-zA-Z_][a-zA-Z0-9_]*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(stripped))) {
+    if (!out.includes(m[2])) out.push(m[2]);
+  }
+  return out;
+}
+
+/** Replace :name tokens with escaped SQL literals. */
+function substituteParams(sql: string, values: Record<string, string>): string {
+  return sql.replace(/(^|[^:\w]):([a-zA-Z_][a-zA-Z0-9_]*)/g, (full, pre: string, name: string) => {
+    if (!(name in values)) return full;
+    const raw = values[name];
+    let lit: string;
+    if (raw === "") lit = "NULL";
+    else if (/^-?\d+(\.\d+)?$/.test(raw.trim())) lit = raw.trim();
+    else lit = `'${raw.replace(/'/g, "''")}'`;
+    return `${pre}${lit}`;
+  });
 }
 
 function ShareQueryDialog({

@@ -12,6 +12,7 @@ import { ColumnMasksController } from './column-masks.controller';
 import { ColumnMasksService } from './column-masks.service';
 import { RowFiltersController } from './row-filters.controller';
 import { RowFiltersService } from './row-filters.service';
+import { SensitiveScanController } from './sensitive-scan.controller';
 
 @Module({
   imports: [DriversModule, RbacModule, forwardRef(() => AuditModule), forwardRef(() => WebhooksModule)],
@@ -21,6 +22,7 @@ import { RowFiltersService } from './row-filters.service';
     PermissionsController,
     ColumnMasksController,
     RowFiltersController,
+    SensitiveScanController,
   ],
   providers: [ConnectionsService, PermissionsService, ColumnMasksService, RowFiltersService],
   exports: [ConnectionsService],

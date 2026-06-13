@@ -432,6 +432,27 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
           <DialogDescription>Connect to a database server.</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
+          {/* Quick-connect presets: prefill host pattern / port / SSL for the
+              common managed providers so onboarding takes seconds. */}
+          <div className="flex flex-wrap gap-1.5">
+            {CONNECTION_PRESETS.map((p) => (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => {
+                  setDialect(p.dialect);
+                  setHost(p.host);
+                  setPort(p.port);
+                  setSslMode(p.sslMode);
+                  if (p.database) setDatabase(p.database);
+                  if (p.user) setUser(p.user);
+                }}
+                className="text-[11px] px-2 py-1 rounded-full border border-border hover:border-primary hover:text-primary transition-colors"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Name</Label>

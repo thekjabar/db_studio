@@ -6,6 +6,10 @@ model Connection {
   credentialsCt    String
   readOnly         Boolean            @default(false)
   statementTimeoutMs Int              @default(30000)
+  /// Optional slow-query alerting: queries exceeding this threshold email
+  /// the alert address (rate-limited to avoid storms).
+  slowQueryAlertMs    Int?
+  slowQueryAlertEmail String?
   /// When true, `credentialsCt` was encrypted client-side with a key derived
   /// from a user passphrase. The server cannot decrypt these credentials on
   /// its own — the user must supply the derived key with each request. This
@@ -31,6 +35,7 @@ model Connection {
   schemaSnapshots  SchemaSnapshot[]
   dashboards       Dashboard[]
   sharedQueries    SharedQuery[]
+  snippets         Snippet[]
   reviewRequests   QueryReviewRequest[]
   notebooks        Notebook[]
   rowFilters       RowFilter[]

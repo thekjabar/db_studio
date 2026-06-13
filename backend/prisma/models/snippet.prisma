@@ -1,0 +1,17 @@
+/// Reusable SQL snippets — lightweight, per-user text blocks insertable from
+/// the SQL editor (and surfaced as Monaco completions). Optionally scoped to
+/// one connection; null connectionId = available everywhere.
+model Snippet {
+  id           String      @id @default(cuid())
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  connectionId String?
+  connection   Connection? @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  name         String
+  sqlText      String      @db.Text
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([connectionId])
+}

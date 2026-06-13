@@ -47,6 +47,8 @@ export class UpdateConnectionDto {
   @IsOptional() @IsBoolean() readOnly?: boolean;
   @IsOptional() @IsInt() @Min(1000) @Max(600_000) statementTimeoutMs?: number;
   @IsOptional() @IsString() workspaceId?: string;
+  @IsOptional() @IsInt() @Min(100) @Max(600_000) slowQueryAlertMs?: number | null;
+  @IsOptional() @IsString() slowQueryAlertEmail?: string | null;
   @IsOptional() @IsBoolean() requireReview?: boolean;
 }
 

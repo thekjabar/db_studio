@@ -47,6 +47,39 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * Detect a simple label+number shape (e.g. GROUP BY results) and render a
+ * horizontal bar chart with styled divs. Returns '' when the result doesn't
+ * look chartable (no numeric column, or too many rows to be an aggregate).
+ */
+function buildEmailChart(rows: Record<string, unknown>[]): string {
+  if (rows.length < 2 || rows.length > 30) return '';
+  const cols = Object.keys(rows[0]);
+  const numericCol = cols.find((c) => rows.every((r) => typeof r[c] === 'number' || (!isNaN(Number(r[c])) && r[c] !== null && r[c] !== '')));
+  const labelCol = cols.find((c) => c !== numericCol);
+  if (!numericCol || !labelCol) return '';
+  const values = rows.map((r) => Number(r[numericCol]));
+  const max = Math.max(...values.map((v) => Math.abs(v)), 1);
+  const bars = rows
+    .slice(0, 15)
+    .map((r) => {
+      const v = Number(r[numericCol]);
+      const pct = Math.max(2, Math.round((Math.abs(v) / max) * 100));
+      const label = escapeHtml(cellText(r[labelCol]).slice(0, 32));
+      return `<tr>
+        <td style="padding:2px 8px 2px 0;font-size:11px;color:#374151;white-space:nowrap;max-width:160px;overflow:hidden;">${label}</td>
+        <td style="width:100%;padding:2px 0;">
+          <div style="background:#3ECF8E;height:14px;width:${pct}%;border-radius:3px;min-width:2px;"></div>
+        </td>
+        <td style="padding:2px 0 2px 8px;font-size:11px;color:#111827;white-space:nowrap;">${escapeHtml(String(v))}</td>
+      </tr>`;
+    })
+    .join('');
+  return `<table cellspacing="0" cellpadding="0" style="width:100%;margin:0 0 14px 0;border-collapse:collapse;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
+    <tbody>${bars}</tbody>
+  </table>`;
+}
+
 function cellText(v: unknown): string {
   if (v === null || v === undefined) return '';
   const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -97,6 +130,11 @@ function buildEmailHtml(input: {
        </table>`
     : `<p style="color:#6b7280;font-style:italic;">Query returned no rows.</p>`;
 
+  // Inline bar chart for aggregate-ish results: first text column = label,
+  // first numeric column = value. Email clients strip SVG (Gmail), so bars
+  // are plain styled divs — universally supported.
+  const chart = buildEmailChart(rows);
+
   const note: string[] = [];
   if (rows.length > EMAIL_PREVIEW_ROWS)
     note.push(`Showing first ${EMAIL_PREVIEW_ROWS} of ${rows.length} rows — full results in the attached CSV.`);
@@ -110,6 +148,7 @@ function buildEmailHtml(input: {
         ${isAlert ? `🔔 Alert fired — ${escapeHtml(alertSummary ?? '')} · ` : ''}${rows.length} row${rows.length === 1 ? '' : 's'} · ${durationMs}ms
       </div>
     </div>
+    ${chart}
     ${table}
     ${note.length ? `<p style="font-size:12px;color:#6b7280;margin-top:10px;">${note.map(escapeHtml).join(' ')}</p>` : ''}
     <p style="font-size:11px;color:#9ca3af;margin-top:16px;border-top:1px solid #f1f5f9;padding-top:10px;">

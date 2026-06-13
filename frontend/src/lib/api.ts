@@ -94,6 +94,8 @@ export interface Connection {
   sslMode?: string;
   readOnly?: boolean;
   statementTimeoutMs?: number;
+  slowQueryAlertMs?: number | null;
+  slowQueryAlertEmail?: string | null;
   requireReview?: boolean;
   workspaceId?: string | null;
   createdAt?: string;
@@ -1762,6 +1764,47 @@ export const api = {
 
   // ---- Feature flags ----
   myFlags: () => http.get<Record<string, boolean>>('/flags/my').then((r) => r.data),
+
+  // ---- SQL snippets ----
+  listSnippets: (connectionId?: string) =>
+    http
+      .get<Array<{ id: string; name: string; sqlText: string; connectionId: string | null; updatedAt: string }>>(
+        "/snippets",
+        { params: { connectionId } },
+      )
+      .then((r) => r.data),
+  createSnippet: (body: { name: string; sqlText: string; connectionId?: string }) =>
+    http.post("/snippets", body).then((r) => r.data),
+  deleteSnippet: (id: string) => http.delete(`/snippets/${id}`).then((r) => r.data),
+
+  // ---- Sensitive data scan ----
+  scanSensitive: (connectionId: string) =>
+    http
+      .post<{
+        findings: Array<{
+          schema: string;
+          table: string;
+          column: string;
+          dataType: string;
+          kind: string;
+          reason: string;
+          confidence: "high" | "medium";
+        }>;
+        tablesScanned: number;
+      }>(`/connections/${connectionId}/sensitive-scan`)
+      .then((r) => r.data),
+
+  // ---- Column masks (pairs with the scanner) ----
+  listColumnMasks: (connectionId: string) =>
+    http
+      .get<Array<{ id: string; email: string; schemaName: string; tableName: string; columnName: string }>>(
+        `/connections/${connectionId}/column-masks`,
+      )
+      .then((r) => r.data),
+  createColumnMask: (
+    connectionId: string,
+    body: { email: string; schemaName: string; tableName: string; columnName: string },
+  ) => http.post(`/connections/${connectionId}/column-masks`, body).then((r) => r.data),
 
   // ---- Self usage (AI quota for the signed-in user) ----
   myAiUsage: () =>

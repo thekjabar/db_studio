@@ -114,6 +114,8 @@ export class ConnectionsService implements OnModuleDestroy {
     return {
       id: c.id, name: c.name, dialect: c.dialect,
       readOnly: c.readOnly, statementTimeoutMs: c.statementTimeoutMs,
+      slowQueryAlertMs: c.slowQueryAlertMs ?? null,
+      slowQueryAlertEmail: c.slowQueryAlertEmail ?? null,
       ownerId: c.ownerId, workspaceId: c.workspaceId ?? null,
       createdAt: c.createdAt, updatedAt: c.updatedAt,
     };
@@ -195,6 +197,9 @@ export class ConnectionsService implements OnModuleDestroy {
       readOnly: dto.readOnly ?? existing.readOnly,
       statementTimeoutMs: dto.statementTimeoutMs ?? existing.statementTimeoutMs,
       requireReview: dto.requireReview ?? existing.requireReview,
+      // Slow-query alert config: undefined = keep, null = clear.
+      ...(dto.slowQueryAlertMs !== undefined && { slowQueryAlertMs: dto.slowQueryAlertMs }),
+      ...(dto.slowQueryAlertEmail !== undefined && { slowQueryAlertEmail: dto.slowQueryAlertEmail }),
     };
     if (dto.workspaceId !== undefined) {
       // Verify the caller is a member of the destination workspace.

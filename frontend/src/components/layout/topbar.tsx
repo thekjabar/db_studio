@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Check, ChevronRight, KeyRound, Loader2, LogOut, Menu, Radio, RefreshCw, Search, Sparkles, User } from "lucide-react";
+import { Check, ChevronRight, Eye, EyeOff, KeyRound, Loader2, LogOut, Menu, Radio, RefreshCw, Search, Sparkles, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -213,6 +213,47 @@ export function TopBar({ connection, onOpenPalette, crumbs, onMenuClick }: Props
   );
 }
 
+function PasswordField({
+  label,
+  value,
+  onChange,
+  autoComplete,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  autoComplete: string;
+  placeholder?: string;
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      <div className="relative">
+        <Input
+          type={show ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          autoComplete={autoComplete}
+          placeholder={placeholder}
+          className="pr-9"
+          required
+        />
+        <button
+          type="button"
+          onClick={() => setShow((v) => !v)}
+          tabIndex={-1}
+          aria-label={show ? "Hide password" : "Show password"}
+          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+        >
+          {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ChangePasswordDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -266,37 +307,25 @@ function ChangePasswordDialog({ open, onOpenChange }: { open: boolean; onOpenCha
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
-          <div className="space-y-1.5">
-            <Label>Current password</Label>
-            <Input
-              type="password"
-              value={current}
-              onChange={(e) => setCurrent(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>New password</Label>
-            <Input
-              type="password"
-              value={next}
-              onChange={(e) => setNext(e.target.value)}
-              autoComplete="new-password"
-              placeholder="At least 12 characters"
-              required
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label>Confirm new password</Label>
-            <Input
-              type="password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              autoComplete="new-password"
-              required
-            />
-          </div>
+          <PasswordField
+            label="Current password"
+            value={current}
+            onChange={setCurrent}
+            autoComplete="current-password"
+          />
+          <PasswordField
+            label="New password"
+            value={next}
+            onChange={setNext}
+            autoComplete="new-password"
+            placeholder="At least 12 characters"
+          />
+          <PasswordField
+            label="Confirm new password"
+            value={confirm}
+            onChange={setConfirm}
+            autoComplete="new-password"
+          />
           <DialogFooter className="gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel

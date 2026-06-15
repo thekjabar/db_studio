@@ -11,6 +11,7 @@ import { UsersModule } from './users/users.module';
 import { ConnectionsModule } from './connections/connections.module';
 import { DriversModule } from './drivers/drivers.module';
 import { QueryModule } from './query/query.module';
+import { QueryCacheModule } from './query/query-cache.module';
 import { SharedQueryModule } from './shared-query/shared-query.module';
 import { SchemaModule } from './schema/schema.module';
 import { AuditModule } from './audit/audit.module';
@@ -73,6 +74,7 @@ import { SnippetsModule } from './snippets/snippets.module';
     ConnectionsModule,
     DriversModule,
     QueryModule,
+    QueryCacheModule,
     SharedQueryModule,
     SchemaModule,
     AuditModule,

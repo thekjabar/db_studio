@@ -1,0 +1,46 @@
+/// One captured EXPLAIN plan for a query shape, taken at a point in time.
+/// We fingerprint the plan's *structure* (scan types per relation + cost band)
+/// so we can detect when the planner silently switches strategy — e.g. an
+/// Index Scan degrading to a Seq Scan — which is the usual cause of a query
+/// that "suddenly got slow" in production without the SQL changing.
+model PlanSnapshot {
+  id            String   @id @default(cuid())
+  connectionId  String
+  connection    Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// SHA1 of the normalized query shape (same scheme as SlowQueryLog.shapeHash),
+  /// so plan history lines up with slow-query history for the same shape.
+  shapeHash     String
+  /// Normalized SQL (literals -> ?), for display.
+  normalizedSql String
+  /// The actual SQL that was explained. Truncated.
+  exampleSql    String
+
+  /// Structural fingerprint: a stable hash of (nodeType, relation) pairs in
+  /// preorder. Two plans with the same structure share this hash even if costs
+  /// drift slightly. A change here = the planner picked a different strategy.
+  planHash      String
+  /// Human-readable structure summary, e.g. "Seq Scan on orders; Hash Join".
+  planSummary   String
+  /// Planner total cost of the root node (cost units, not ms).
+  totalCost     Float?
+  /// ANALYZE wall-clock when available (plan mode leaves this null).
+  totalTimeMs   Float?
+  /// Compact list of scan operations: [{ nodeType, relation }]. JSON.
+  scans         Json
+  /// Full flattened plan nodes for the diff UI. JSON (capped server-side).
+  nodes         Json
+
+  /// Set when this snapshot's structure differs from the previous snapshot for
+  /// the same shape. Lets the UI/alerts find regressions without recomputing.
+  regressed     Boolean  @default(false)
+  /// One-line description of what changed vs the prior snapshot.
+  regressionNote String?
+
+  createdAt     DateTime @default(now())
+
+  @@index([connectionId, shapeHash, createdAt(sort: Desc)])
+  @@index([connectionId, regressed, createdAt(sort: Desc)])
+}

@@ -27,6 +27,7 @@ model Connection {
   tableGrants      TableGrant[]
   scheduledQueries ScheduledQuery[]
   slowQueryLogs    SlowQueryLog[]
+  planSnapshots    PlanSnapshot[]
   webhooks         Webhook[]
   columnMasks     ColumnMask[]
   auditLogs        AuditLog[]

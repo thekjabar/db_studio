@@ -3,7 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { toast } from "sonner";
-import { BarChart3, ChevronDown, Download, FileJson, FileSpreadsheet, FileText, Loader2, Play, Save, Send, Share2, Sparkles, Table2, Trash2 } from "lucide-react";
+import { ArrowRightLeft, BarChart3, ChevronDown, Download, FileJson, FileSpreadsheet, FileText, Layers, Loader2, Play, Save, Send, Share2, Sparkles, Table2, Trash2 } from "lucide-react";
 import { format as formatSql } from "sql-formatter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,7 @@ import { useModal } from "@/components/modal-provider";
 import { useTheme } from "@/lib/theme-store";
 import { AiQueryDialog } from "@/components/ai-query-dialog";
 import { SendResultDialog } from "@/components/send-result-dialog";
+import { TranspileDialog } from "@/components/transpile-dialog";
 import { registerSqlCompletions } from "@/lib/sql-completions";
 import type { ErGraph } from "@/lib/api";
 import { useOutletContext } from "react-router-dom";
@@ -107,7 +108,16 @@ export default function SqlRoute() {
   const [aiOpen, setAiOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [transpileOpen, setTranspileOpen] = useState(false);
   const ctx = useOutletContext<{ schema?: string } | null>();
+
+  // Connection dialect — needed as the "from" side of dialect conversion.
+  const connQ = useQuery({
+    queryKey: ["connection", id],
+    queryFn: () => api.getConnection(id!),
+    enabled: !!id,
+    staleTime: 5 * 60_000,
+  });
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
   // Live schema context fed to Monaco's completion provider. A ref + setter
@@ -337,6 +347,79 @@ export default function SqlRoute() {
     run.mutate({ sql: substituted, confirmDestructive: paramRun.confirmDestructive });
   };
 
+  // ---- Server-side cursor streaming ----
+  // For huge result sets: open a Postgres cursor and pull pages, appending to
+  // the grid, instead of buffering one giant response. A ref-backed stop flag
+  // lets the user abort mid-stream; the cursor is closed server-side either way.
+  const [streaming, setStreaming] = useState(false);
+  const [streamedRows, setStreamedRows] = useState(0);
+  const stopStreamRef = useRef(false);
+
+  const streamAll = async () => {
+    if (streaming || run.isPending || !sql.trim()) return;
+    if (extractQueryParams(sql).length > 0) {
+      toast.error("Streaming doesn't support :parameters — run normally instead.");
+      return;
+    }
+    setStreaming(true);
+    setStreamedRows(0);
+    stopStreamRef.current = false;
+    let cursorId: string | null = null;
+    const PAGE = 2000;
+    try {
+      const first = await api.cursorOpen(id!, sql, PAGE);
+      cursorId = first.cursorId;
+      const fields = first.fields;
+      const acc: Record<string, unknown>[] = [...first.rows];
+      setResult({
+        rows: acc,
+        rowCount: acc.length,
+        fields,
+        durationMs: 0,
+        truncated: false,
+      } as QueryResult);
+      setResultTab("data");
+      setStreamedRows(acc.length);
+      pushHistory({ sql, when: Date.now() });
+
+      let done = first.done;
+      while (!done && !stopStreamRef.current) {
+        const page = await api.cursorFetch(id!, cursorId, PAGE);
+        acc.push(...page.rows);
+        done = page.done;
+        // New array each page so the grid re-renders.
+        setResult({
+          rows: [...acc],
+          rowCount: acc.length,
+          fields,
+          durationMs: 0,
+          truncated: false,
+        } as QueryResult);
+        setStreamedRows(acc.length);
+      }
+      if (stopStreamRef.current && !done && cursorId) {
+        await api.cursorClose(id!, cursorId).catch(() => {});
+      }
+      toast.success(
+        stopStreamRef.current
+          ? `Stopped at ${acc.length.toLocaleString()} rows`
+          : `Streamed ${acc.length.toLocaleString()} rows`,
+      );
+    } catch (e: any) {
+      const code = e?.response?.data?.code;
+      if (code === "CURSOR_UNSUPPORTED") {
+        toast.error("Streaming needs PostgreSQL without an SSH tunnel — using a normal run instead.");
+        startRun();
+      } else {
+        toast.error(extractErrorMessage(e));
+      }
+      if (cursorId) await api.cursorClose(id!, cursorId).catch(() => {});
+    } finally {
+      setStreaming(false);
+      stopStreamRef.current = false;
+    }
+  };
+
   // Keep a ref to the current run-callback so the Monaco command (bound once
   // on mount) always sees the latest `sql` without needing to re-bind.
   const runRef = useRef<() => void>(() => {});
@@ -485,6 +568,40 @@ export default function SqlRoute() {
               {run.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
               Run
               <kbd className="ml-1 rounded border border-border bg-background/30 px-1 text-[10px]">Ctrl ↵</kbd>
+            </Button>
+            {streaming ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  stopStreamRef.current = true;
+                }}
+                title="Stop streaming"
+              >
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Stop · {streamedRows.toLocaleString()}
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={streamAll}
+                disabled={run.isPending || !sql.trim()}
+                title="Stream every row via a server-side cursor (PostgreSQL) — no row cap, paged so the browser stays responsive"
+              >
+                <Layers className="h-3.5 w-3.5" />
+                Stream all
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setTranspileOpen(true)}
+              disabled={!sql.trim()}
+              title="Convert this query to another SQL dialect"
+            >
+              <ArrowRightLeft className="h-3.5 w-3.5" />
+              Convert
             </Button>
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <span>Limit</span>
@@ -694,6 +811,14 @@ export default function SqlRoute() {
             >
               {result.truncated ? `${result.rowCount}+ rows (capped)` : `${result.rowCount ?? result.rows.length} rows`} ·{" "}
               {result.durationMs}ms
+              {result.cached && (
+                <span
+                  className="ml-2 inline-flex items-center rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+                  title="Served from cache — invalidated automatically when the underlying tables change"
+                >
+                  cached
+                </span>
+              )}
             </span>
           )}
           </div>
@@ -859,6 +984,14 @@ export default function SqlRoute() {
         onClose={() => setShareOpen(false)}
         connectionId={id!}
         sql={sql}
+      />
+      <TranspileDialog
+        open={transpileOpen}
+        onOpenChange={setTranspileOpen}
+        connectionId={id!}
+        sourceDialect={connQ.data?.dialect ?? "POSTGRES"}
+        sql={sql}
+        onApply={(converted) => setSql(converted)}
       />
       {/* Parameter prompt — fills :name placeholders before running. */}
       <Dialog open={!!paramRun} onOpenChange={(v) => !v && setParamRun(null)}>

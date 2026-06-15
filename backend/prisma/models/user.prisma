@@ -53,6 +53,7 @@ model User {
   tableGrants      TableGrant[]
   scheduledQueries ScheduledQuery[]
   slowQueryLogs    SlowQueryLog[]
+  planSnapshots    PlanSnapshot[]
   webhooks         Webhook[]
   apiKeys          ApiKey[]
   columnMasks      ColumnMask[]

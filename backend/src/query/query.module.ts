@@ -8,6 +8,9 @@ import { SqlClassifierService } from './sql-classifier.service';
 import { ExplainService } from './explain.service';
 import { PerfInsightsService } from './perf-insights.service';
 import { QueryCostService } from './query-cost.service';
+import { PlanRegressionService } from './plan-regression.service';
+import { CursorService } from './cursor.service';
+import { TranspileService } from './transpile.service';
 import { SavedQueriesController } from './saved-queries.controller';
 import { SavedQueriesService } from './saved-queries.service';
 import { QueryReviewModule } from '../query-review/query-review.module';
@@ -21,7 +24,7 @@ import { QueryReviewModule } from '../query-review/query-review.module';
     forwardRef(() => QueryReviewModule),
   ],
   controllers: [QueryController, SavedQueriesController],
-  providers: [SqlClassifierService, ExplainService, PerfInsightsService, QueryCostService, SavedQueriesService],
+  providers: [SqlClassifierService, ExplainService, PerfInsightsService, QueryCostService, PlanRegressionService, CursorService, TranspileService, SavedQueriesService],
   exports: [SqlClassifierService],
 })
 export class QueryModule {}

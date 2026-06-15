@@ -170,6 +170,8 @@ export interface QueryResult {
   truncated?: boolean;
   /** The cap the server applied (null if none). */
   appliedLimit?: number | null;
+  /** True when this result was served from the correctness-aware cache. */
+  cached?: boolean;
 }
 
 export type AuditAction =
@@ -443,6 +445,23 @@ export interface FederatedQueryResult {
   sources: { alias: string; connectionId: string; dialect: Dialect }[];
 }
 
+export interface SourcePushdown {
+  alias: string;
+  dialect: Dialect;
+  tables: string[];
+  pushedFilters: string[];
+  projectedColumns: string[];
+  fullScan: boolean;
+  estimatedRows: number | null;
+}
+
+export interface FederatedPlan {
+  raw: string;
+  sources: SourcePushdown[];
+  localOperations: string[];
+  warnings: string[];
+}
+
 export interface SlowQueryGroup {
   shapeHash: string;
   normalizedSql: string;
@@ -505,6 +524,53 @@ export interface ExplainResult {
   totalTimeMs?: number;
   planTimeMs?: number;
   executionTimeMs?: number;
+}
+
+export interface PlanScan {
+  nodeType: string;
+  relation: string | null;
+}
+
+export interface PlanSnapshot {
+  id: string;
+  shapeHash: string;
+  normalizedSql: string;
+  exampleSql: string;
+  planHash: string;
+  planSummary: string;
+  totalCost: number | null;
+  totalTimeMs: number | null;
+  scans: PlanScan[];
+  nodes: ExplainPlanNode[];
+  regressed: boolean;
+  regressionNote: string | null;
+  createdAt: string;
+}
+
+export interface PlanDiff {
+  from: PlanSnapshot;
+  to: PlanSnapshot;
+  changed: boolean;
+  costDeltaRatio: number | null;
+  regressionNote: string | null;
+}
+
+export interface CursorPage {
+  fields: { name: string; dataType?: string }[];
+  rows: Record<string, unknown>[];
+  done: boolean;
+}
+
+export interface TranspileWarning {
+  severity: "info" | "warn";
+  message: string;
+}
+export interface TranspileResult {
+  from: Dialect;
+  to: Dialect;
+  sql: string;
+  warnings: TranspileWarning[];
+  noop: boolean;
 }
 
 export interface CsvUploadResult {
@@ -989,6 +1055,54 @@ export const api = {
       .post<ExplainResult>(`/connections/${connectionId}/query/explain`, body)
       .then((r) => r.data),
 
+  // ---- Plan regression detection ----
+  planCapture: (connectionId: string, sql: string) =>
+    http
+      .post<{ captured: boolean; snapshot: PlanSnapshot | null }>(
+        `/connections/${connectionId}/query/plan-capture`,
+        { sql },
+      )
+      .then((r) => r.data),
+  planHistory: (connectionId: string, shapeHash: string, limit = 50) =>
+    http
+      .get<PlanSnapshot[]>(`/connections/${connectionId}/query/plan-history/${shapeHash}`, {
+        params: { limit },
+      })
+      .then((r) => r.data),
+  planRegressions: (connectionId: string, hours = 168, limit = 50) =>
+    http
+      .get<PlanSnapshot[]>(`/connections/${connectionId}/query/plan-regressions`, {
+        params: { hours, limit },
+      })
+      .then((r) => r.data),
+  planDiff: (connectionId: string, from: string, to: string) =>
+    http
+      .get<PlanDiff>(`/connections/${connectionId}/query/plan-diff`, { params: { from, to } })
+      .then((r) => r.data),
+
+  // ---- Server-side cursor streaming (Postgres) ----
+  cursorOpen: (connectionId: string, sql: string, pageSize = 1000) =>
+    http
+      .post<CursorPage & { cursorId: string }>(`/connections/${connectionId}/query/cursor`, {
+        sql,
+        pageSize,
+      })
+      .then((r) => r.data),
+  cursorFetch: (connectionId: string, cursorId: string, pageSize = 1000) =>
+    http
+      .post<CursorPage>(`/connections/${connectionId}/query/cursor/${cursorId}/fetch`, { pageSize })
+      .then((r) => r.data),
+  cursorClose: (connectionId: string, cursorId: string) =>
+    http
+      .post<{ closed: boolean }>(`/connections/${connectionId}/query/cursor/${cursorId}/close`)
+      .then((r) => r.data),
+
+  // ---- Cross-dialect transpilation ----
+  transpile: (connectionId: string, body: { sql: string; to: Dialect; from?: Dialect }) =>
+    http
+      .post<TranspileResult>(`/connections/${connectionId}/query/transpile`, body)
+      .then((r) => r.data),
+
   listApiKeys: () => http.get<ApiKey[]>("/api-keys").then((r) => r.data),
   createApiKey: (body: { name: string; connectionIds?: string[]; expiresAt?: string }) =>
     http.post<ApiKey & { token: string }>("/api-keys", body).then((r) => r.data),
@@ -1079,6 +1193,11 @@ export const api = {
     sql: string;
     maxRows?: number;
   }) => http.post<FederatedQueryResult>("/federated/query", body).then((r) => r.data),
+
+  federatedExplain: (body: {
+    sources: { alias: string; connectionId: string }[];
+    sql: string;
+  }) => http.post<FederatedPlan>("/federated/explain", body).then((r) => r.data),
 
   estimateBackup: (connectionId: string, schema?: string) =>
     http

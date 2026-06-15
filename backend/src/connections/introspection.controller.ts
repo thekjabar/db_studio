@@ -12,6 +12,7 @@ import { AuditService } from '../audit/audit.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { ColumnMasksService } from './column-masks.service';
 import { RowFiltersService } from './row-filters.service';
+import { QueryCacheService } from '../query/query-cache.service';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
 import { Role, WebhookEvent } from '@prisma/client';
 
@@ -28,7 +29,13 @@ export class IntrospectionController {
     private readonly webhooks: WebhooksService,
     private readonly masks: ColumnMasksService,
     private readonly rowFilters: RowFiltersService,
+    private readonly queryCache: QueryCacheService,
   ) {}
+
+  /** Drop cached reads that depend on a table we just wrote. Fail-open. */
+  private invalidateCache(connectionId: string, schema: string, table: string) {
+    void this.queryCache.invalidateTable(connectionId, schema, table).catch(() => {});
+  }
 
   private roleFromReq(req: Request): Role {
     return ((req as any).connectionRole as Role) ?? Role.VIEWER;
@@ -126,6 +133,7 @@ export class IntrospectionController {
         connectionId: id, schemaName: schema, tableName: name,
         event: WebhookEvent.ROW_INSERT, userId: u.id, after: r,
       });
+      this.invalidateCache(id, schema, name);
       return r;
     } finally { await drv.close().catch(() => {}); }
   }
@@ -150,6 +158,7 @@ export class IntrospectionController {
         connectionId: id, schemaName: schema, tableName: name,
         event: WebhookEvent.ROW_UPDATE, userId: u.id, pk: dto.pk, before, after: r,
       });
+      this.invalidateCache(id, schema, name);
       return r;
     } finally { await drv.close().catch(() => {}); }
   }
@@ -174,6 +183,7 @@ export class IntrospectionController {
         connectionId: id, schemaName: schema, tableName: name,
         event: WebhookEvent.ROW_DELETE, userId: u.id, pk: dto.pk, before,
       });
+      this.invalidateCache(id, schema, name);
       return { affectedRows: affected };
     } finally { await drv.close().catch(() => {}); }
   }
@@ -199,6 +209,7 @@ export class IntrospectionController {
           connectionId: id, schemaName: schema, tableName: name,
           event: WebhookEvent.ROW_DELETE, userId: u.id, bulk: dto.pks.length,
         });
+        this.invalidateCache(id, schema, name);
         return { affectedRows: total };
       }
       const affected = await drv.deleteRows(schema, name, dto.pks);
@@ -207,6 +218,7 @@ export class IntrospectionController {
         connectionId: id, schemaName: schema, tableName: name,
         event: WebhookEvent.ROW_DELETE, userId: u.id, bulk: dto.pks.length,
       });
+      this.invalidateCache(id, schema, name);
       return { affectedRows: affected };
     } finally { await drv.close().catch(() => {}); }
   }
@@ -234,6 +246,7 @@ export class IntrospectionController {
           connectionId: id, schemaName: schema, tableName: name,
           event: WebhookEvent.ROW_UPDATE, userId: u.id, bulk: dto.pks.length,
         });
+        this.invalidateCache(id, schema, name);
         return { affectedRows: total };
       }
       const affected = await drv.bulkUpdateRows(schema, name, dto.pks, dto.values);
@@ -242,6 +255,7 @@ export class IntrospectionController {
         connectionId: id, schemaName: schema, tableName: name,
         event: WebhookEvent.ROW_UPDATE, userId: u.id, bulk: dto.pks.length,
       });
+      this.invalidateCache(id, schema, name);
       return { affectedRows: affected };
     } finally { await drv.close().catch(() => {}); }
   }

@@ -32,6 +32,7 @@ import SavedRoute from "@/routes/connection/saved";
 import PermissionsRoute from "@/routes/connection/permissions";
 import BackupRoute from "@/routes/connection/backup";
 import SlowQueriesRoute from "@/routes/connection/slow-queries";
+import PlanRegressionsRoute from "@/routes/connection/plan-regressions";
 import MigrationExportRoute from "@/routes/connection/migration-export";
 import WebhooksRoute from "@/routes/connection/webhooks";
 import SchedulesRoute from "@/routes/schedules";
@@ -248,6 +249,7 @@ export default function App() {
         <Route path="permissions" element={<PermissionsRoute />} />
         <Route path="backup" element={<BackupRoute />} />
         <Route path="slow-queries" element={<SlowQueriesRoute />} />
+        <Route path="plan-regressions" element={<PlanRegressionsRoute />} />
         <Route path="migration-export" element={<MigrationExportRoute />} />
         <Route path="webhooks" element={<WebhooksRoute />} />
         <Route path="*" element={<NotFoundPage />} />

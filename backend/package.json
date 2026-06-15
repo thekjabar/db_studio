@@ -62,6 +62,7 @@
     "passport-google-oauth20": "^2.0.0",
     "passport-jwt": "^4.0.1",
     "pg": "^8.13.1",
+    "pg-logical-replication": "^2.5.0",
     "prisma": "^7.7.0",
     "qrcode": "^1.5.4",
     "reflect-metadata": "^0.2.2",

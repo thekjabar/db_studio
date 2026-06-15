@@ -24,6 +24,33 @@ export interface FederatedQueryResult {
   sources: { alias: string; connectionId: string; dialect: Dialect }[];
 }
 
+/** What the distributed planner pushed down to a single remote source. */
+export interface SourcePushdown {
+  alias: string;
+  dialect: Dialect;
+  /** The remote table(s) scanned, as DuckDB resolved them. */
+  tables: string[];
+  /** Filter predicates pushed into the remote scan (run on the source DB). */
+  pushedFilters: string[];
+  /** Projected columns pushed down — only these are fetched, not SELECT *. */
+  projectedColumns: string[];
+  /** True when the whole table is pulled with no predicate (a warning sign). */
+  fullScan: boolean;
+  /** Planner's estimated cardinality for this source's scan, if available. */
+  estimatedRows: number | null;
+}
+
+export interface FederatedPlan {
+  /** Raw DuckDB EXPLAIN text, for power users. */
+  raw: string;
+  /** Per-source breakdown of what executes remotely vs. what's pulled local. */
+  sources: SourcePushdown[];
+  /** Cross-source operations DuckDB runs locally (joins, aggregations). */
+  localOperations: string[];
+  /** Human-readable advisories (e.g. "alias a pulls a full table — add a WHERE"). */
+  warnings: string[];
+}
+
 /**
  * Runs a federated SQL query across multiple connections using an in-memory
  * DuckDB. Each source is ATTACH'd with a user-picked alias so the caller can
@@ -47,35 +74,27 @@ export class FederatedService {
     private readonly rbac: RbacService,
   ) {}
 
-  async runQuery(
-    userId: string,
-    sources: FederatedSource[],
-    sql: string,
-    maxRows = 1000,
-  ): Promise<FederatedQueryResult> {
-    if (!sql?.trim()) throw new BadRequestException('SQL required');
+  /**
+   * Validate + decrypt every source. Shared by runQuery and explainPlan so the
+   * RBAC checks and dialect/SSH guards live in exactly one place.
+   */
+  private async resolveSources(userId: string, sources: FederatedSource[]) {
     if (!Array.isArray(sources) || sources.length === 0) {
       throw new BadRequestException('At least one source is required');
     }
     if (sources.length > 5) {
       throw new BadRequestException('Maximum 5 sources per federated query');
     }
-
     const usedAliases = new Set<string>();
     const resolved: Array<{ alias: string; connectionId: string; dialect: Dialect; creds: ConnectionCredentials }> = [];
     for (const s of sources) {
-      if (!IDENT_RE.test(s.alias)) {
-        throw new BadRequestException(`Invalid alias: ${s.alias}`);
-      }
-      if (usedAliases.has(s.alias)) {
-        throw new BadRequestException(`Duplicate alias: ${s.alias}`);
-      }
+      if (!IDENT_RE.test(s.alias)) throw new BadRequestException(`Invalid alias: ${s.alias}`);
+      if (usedAliases.has(s.alias)) throw new BadRequestException(`Duplicate alias: ${s.alias}`);
       usedAliases.add(s.alias);
       if (['main', 'pg_catalog', 'information_schema', 'memory', 'system', 'temp'].includes(s.alias)) {
         throw new BadRequestException(`Alias "${s.alias}" is reserved`);
       }
       await this.rbac.require(userId, s.connectionId, Role.VIEWER);
-
       const conn = await this.prisma.connection.findUnique({
         where: { id: s.connectionId },
         select: { id: true, dialect: true, credentialsCt: true },
@@ -94,6 +113,17 @@ export class FederatedService {
       }
       resolved.push({ alias: s.alias, connectionId: conn.id, dialect: conn.dialect, creds });
     }
+    return resolved;
+  }
+
+  async runQuery(
+    userId: string,
+    sources: FederatedSource[],
+    sql: string,
+    maxRows = 1000,
+  ): Promise<FederatedQueryResult> {
+    if (!sql?.trim()) throw new BadRequestException('SQL required');
+    const resolved = await this.resolveSources(userId, sources);
 
     // Cap only applies to top-level SELECT. Wrapping in a subquery with LIMIT
     // N+1 so we can detect truncation — same approach as the main query endpoint.
@@ -164,6 +194,138 @@ export class FederatedService {
     } finally {
       instance.closeSync();
     }
+  }
+
+  /**
+   * Distributed query planner view. Runs DuckDB EXPLAIN and parses what the
+   * optimizer pushed down to each remote source vs. what it executes locally.
+   *
+   * DuckDB's postgres/mysql/sqlite scanners already push filters and
+   * projections into the remote scan — this surfaces that so the user can SEE
+   * whether their join pulls a full table over the wire (slow) or a filtered
+   * slice (fast), and gives actionable warnings.
+   */
+  async explainPlan(
+    userId: string,
+    sources: FederatedSource[],
+    sql: string,
+  ): Promise<FederatedPlan> {
+    if (!sql?.trim()) throw new BadRequestException('SQL required');
+    const resolved = await this.resolveSources(userId, sources);
+
+    const instance = await DuckDBInstance.create(':memory:');
+    try {
+      const connection = await instance.connect();
+      try {
+        const neededExtensions = new Set<string>();
+        for (const r of resolved) neededExtensions.add(extensionFor(r.dialect));
+        for (const ext of neededExtensions) {
+          await connection.run(`INSTALL ${ext}`);
+          await connection.run(`LOAD ${ext}`);
+        }
+        for (const r of resolved) {
+          await connection.run(buildAttachSql(r.alias, r.dialect, r.creds));
+        }
+
+        const explain = await connection.runAndReadAll(`EXPLAIN ${sql.replace(/;+\s*$/, '')}`);
+        // EXPLAIN returns rows of (explain_key, explain_value); join the value
+        // column into the full plan text.
+        const rows = explain.getRowObjects() as Record<string, unknown>[];
+        const raw = rows
+          .map((r) => String(r.explain_value ?? Object.values(r).pop() ?? ''))
+          .join('\n');
+
+        return this.parsePlan(raw, resolved);
+      } finally {
+        connection.disconnectSync();
+      }
+    } catch (err) {
+      const message = (err as Error).message;
+      this.log.warn(`federated explain failed: ${message}`);
+      throw new BadRequestException(message.slice(0, 500));
+    } finally {
+      instance.closeSync();
+    }
+  }
+
+  /**
+   * Parse a DuckDB physical plan for remote-scan nodes. DuckDB renders scanner
+   * nodes as `POSTGRES_SCAN` / `MYSQL_SCAN` / `SQLITE_SCAN` boxes that list the
+   * table, the projected columns, and any `Filters:` pushed into the scan.
+   * We attribute each scan to a source by the table/alias it references.
+   */
+  private parsePlan(
+    raw: string,
+    resolved: Array<{ alias: string; dialect: Dialect }>,
+  ): FederatedPlan {
+    const sources: SourcePushdown[] = resolved.map((r) => ({
+      alias: r.alias,
+      dialect: r.dialect,
+      tables: [],
+      pushedFilters: [],
+      projectedColumns: [],
+      fullScan: false,
+      estimatedRows: null,
+    }));
+    const byAlias = new Map(sources.map((s) => [s.alias, s]));
+    const localOperations: string[] = [];
+    const warnings: string[] = [];
+
+    // Split the ASCII-art plan into node blocks. DuckDB separates boxes with
+    // lines of pipes/dashes; we tokenize on the node-type headers instead.
+    const lines = raw.split('\n');
+    const SCAN_RE = /(POSTGRES_SCAN|MYSQL_SCAN|SQLITE_SCAN|POSTGRES_SCAN_PUSHDOWN)/i;
+    const LOCAL_RE = /(HASH_JOIN|NESTED_LOOP_JOIN|HASH_GROUP_BY|ORDER_BY|AGGREGATE|PIPELINE)/i;
+
+    let current: SourcePushdown | null = null;
+    for (const line of lines) {
+      const clean = line.replace(/[│|├─└┌┐┘╞═╡─-╿]/g, ' ').trim();
+      if (!clean) continue;
+
+      if (SCAN_RE.test(clean)) {
+        // Attribute to whichever alias appears later in this block; default to
+        // first source if we can't tell.
+        current = null;
+        continue;
+      }
+      if (LOCAL_RE.test(clean)) {
+        const op = clean.match(LOCAL_RE)![1];
+        if (!localOperations.includes(op)) localOperations.push(op);
+        current = null;
+        continue;
+      }
+      // A table reference like `alias.schema.table` or `alias.table`.
+      const tableRef = clean.match(/\b([A-Za-z_][\w]*)\.[\w.]+/);
+      if (tableRef && byAlias.has(tableRef[1])) {
+        current = byAlias.get(tableRef[1])!;
+        if (!current.tables.includes(clean)) current.tables.push(clean.slice(0, 120));
+        continue;
+      }
+      if (current) {
+        const filt = clean.match(/^Filters?:\s*(.+)$/i);
+        if (filt) current.pushedFilters.push(filt[1].slice(0, 200));
+        const proj = clean.match(/^Projections?:\s*(.+)$/i);
+        if (proj) current.projectedColumns.push(...proj[1].split(',').map((c) => c.trim()).filter(Boolean));
+        const card = clean.match(/(?:EC|Estimated Cardinality|cardinality)[:=]\s*([\d,]+)/i);
+        if (card) current.estimatedRows = parseInt(card[1].replace(/,/g, ''), 10);
+      }
+    }
+
+    for (const s of sources) {
+      s.fullScan = s.tables.length > 0 && s.pushedFilters.length === 0;
+      if (s.fullScan) {
+        warnings.push(
+          `Source "${s.alias}" is scanned with no pushed-down filter — the whole table is pulled across the network. Add a WHERE on ${s.alias}.* columns to filter at the source.`,
+        );
+      }
+      if (s.estimatedRows && s.estimatedRows > 1_000_000) {
+        warnings.push(
+          `Source "${s.alias}" is estimated to return ~${s.estimatedRows.toLocaleString()} rows — consider filtering or aggregating before the join.`,
+        );
+      }
+    }
+
+    return { raw, sources, localOperations, warnings };
   }
 }
 

@@ -13,12 +13,15 @@ import { RbacService } from '../rbac/rbac.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConnectionCredentials } from '../drivers/driver.interface';
+import { CdcService } from './cdc.service';
 
 interface AuthedSocket extends Socket { userId?: string }
 
 interface SubState {
   pgClient?: PgClient;
   pollTimer?: NodeJS.Timeout;
+  /** Unsubscribe fn returned by CdcService when this sub uses logical replication. */
+  cdcUnsub?: () => Promise<void>;
 }
 
 /**
@@ -43,6 +46,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     private readonly rbac: RbacService,
     private readonly crypto: CryptoService,
     private readonly prisma: PrismaService,
+    private readonly cdc: CdcService,
   ) {}
 
   async handleConnection(client: AuthedSocket) {
@@ -60,6 +64,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   async handleDisconnect(client: AuthedSocket) {
     for (const [key, st] of this.subs.entries()) {
       if (key.startsWith(`${client.id}:`)) {
+        if (st.cdcUnsub) await st.cdcUnsub().catch(() => {});
         if (st.pgClient) await st.pgClient.end().catch(() => {});
         if (st.pollTimer) clearInterval(st.pollTimer);
         this.subs.delete(key);
@@ -80,6 +85,27 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     if (!conn) return { ok: false, error: 'not_found' };
     const key = `${client.id}:${data.connectionId}:${data.schema}.${data.table}`;
     client.join(key);
+
+    // Preferred path: logical-replication CDC. Sub-second latency with exact
+    // before/after row images and no user-installed trigger. Only used when the
+    // server has wal_level=logical and we can publish the table; otherwise we
+    // fall through to LISTEN/NOTIFY and then polling.
+    if (conn.dialect === Dialect.POSTGRES) {
+      try {
+        const unsub = await this.cdc.subscribe(data.connectionId, data.schema, data.table, (change) => {
+          client.emit('change', {
+            schema: change.schema,
+            table: change.table,
+            mode: 'cdc',
+            payload: { op: change.op, new: change.new, old: change.old, lsn: change.lsn },
+          });
+        });
+        this.subs.set(key, { cdcUnsub: unsub });
+        return { ok: true, mode: 'cdc' };
+      } catch (e) {
+        this.log.debug(`CDC unavailable for ${key}, falling back: ${(e as Error).message}`);
+      }
+    }
 
     if (conn.dialect === Dialect.POSTGRES) {
       const creds = await this.crypto.decryptJson<ConnectionCredentials>(conn.credentialsCt, `conn:${conn.id}`);
@@ -133,6 +159,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   ) {
     const key = `${client.id}:${data.connectionId}:${data.schema}.${data.table}`;
     const st = this.subs.get(key);
+    if (st?.cdcUnsub) await st.cdcUnsub().catch(() => {});
     if (st?.pgClient) await st.pgClient.end().catch(() => {});
     if (st?.pollTimer) clearInterval(st.pollTimer);
     this.subs.delete(key);

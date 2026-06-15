@@ -58,6 +58,10 @@ const EnvSchema = z.object({
   RESEND_FROM: z.string().transform((v) => v || undefined).optional(),
   SLOW_QUERY_THRESHOLD_MS: z.coerce.number().int().positive().default(1000),
   SLOW_QUERY_RETENTION: z.coerce.number().int().positive().default(10_000),
+  // Correctness-aware query cache. 0 disables it. Short by design — in-band
+  // writes invalidate instantly; this only bounds staleness from out-of-band
+  // writes (psql etc.).
+  QUERY_CACHE_TTL_SEC: z.coerce.number().int().min(0).default(60),
   SENTRY_DSN: z.string().transform((v) => v || undefined).optional(),
   SENTRY_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.2),
   API_KEY_RATE_LIMIT: z.coerce.number().int().positive().default(60),
@@ -220,6 +224,7 @@ export class AppConfigService {
   }
   get slowQueryThresholdMs() { return this.env.SLOW_QUERY_THRESHOLD_MS; }
   get slowQueryRetention() { return this.env.SLOW_QUERY_RETENTION; }
+  get queryCacheTtlSec() { return this.env.QUERY_CACHE_TTL_SEC; }
   get sentryDsn() { return this.env.SENTRY_DSN; }
   get sentrySampleRate() { return this.env.SENTRY_SAMPLE_RATE; }
   get sentryEnabled() { return !!this.env.SENTRY_DSN; }

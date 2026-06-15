@@ -29,6 +29,7 @@ import {
   BookOpenText,
   GitCompare,
   ScanSearch,
+  TrendingDown,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -195,10 +196,11 @@ export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSche
         <NavSection
           label="Performance"
           storageKey="sidebar.perf"
-          paths={["/slow-queries", "/db-health", "/reviews"]}
+          paths={["/slow-queries", "/plan-regressions", "/db-health", "/reviews"]}
           connectionId={connectionId}
         >
           <NavItem to={`/c/${connectionId}/slow-queries`} icon={<Timer className="h-3.5 w-3.5" />} label="Slow queries" />
+          <NavItem to={`/c/${connectionId}/plan-regressions`} icon={<TrendingDown className="h-3.5 w-3.5" />} label="Plan regressions" />
           <NavItem to={`/c/${connectionId}/db-health`} icon={<Activity className="h-3.5 w-3.5" />} label="DB health" />
           <NavItem to={`/c/${connectionId}/reviews`} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Query reviews" />
           <NavItem to={`/c/${connectionId}/diff`} icon={<GitCompare className="h-3.5 w-3.5" />} label="Compare results" />

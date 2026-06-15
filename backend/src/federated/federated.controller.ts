@@ -21,6 +21,13 @@ export class FederatedQueryDto {
   @IsOptional() @IsInt() @Min(0) @Max(100_000) maxRows?: number;
 }
 
+export class FederatedPlanDto {
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(5)
+  @ValidateNested({ each: true }) @Type(() => FederatedSourceDto)
+  sources!: FederatedSourceDto[];
+  @IsString() @Length(1, 100_000) sql!: string;
+}
+
 @Controller('federated')
 @UseGuards(JwtAuthGuard)
 export class FederatedController {
@@ -31,5 +38,13 @@ export class FederatedController {
   @HttpCode(200)
   query(@CurrentUser() u: AuthUser, @Body() dto: FederatedQueryDto) {
     return this.svc.runQuery(u.id, dto.sources, dto.sql, dto.maxRows ?? 1000);
+  }
+
+  /** Distributed plan: what gets pushed down to each source vs. run locally. */
+  @Throttle({ heavy: { limit: 20, ttl: 60_000 } })
+  @Post('explain')
+  @HttpCode(200)
+  explain(@CurrentUser() u: AuthUser, @Body() dto: FederatedPlanDto) {
+    return this.svc.explainPlan(u.id, dto.sources, dto.sql);
   }
 }

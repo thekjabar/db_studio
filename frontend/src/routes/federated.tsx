@@ -2,11 +2,12 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Database, Loader2, Play, Plus, Trash2, Workflow } from "lucide-react";
+import { AlertTriangle, Database, GitBranch, Loader2, Play, Plus, Trash2, Workflow } from "lucide-react";
 import {
   api,
   extractErrorMessage,
   type Connection,
+  type FederatedPlan,
   type FederatedQueryResult,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,7 @@ export default function FederatedRoute() {
   const [sql, setSql] = useState(EXAMPLE_SQL);
   const [maxRows, setMaxRows] = useState(1000);
   const [result, setResult] = useState<FederatedQueryResult | null>(null);
+  const [plan, setPlan] = useState<FederatedPlan | null>(null);
 
   const connectionsQ = useQuery({
     queryKey: ["connections"],
@@ -59,6 +61,16 @@ export default function FederatedRoute() {
         toast.success(`${r.rowCount} rows · ${r.durationMs}ms`);
       }
     },
+    onError: (err) => toast.error(extractErrorMessage(err)),
+  });
+
+  const explain = useMutation({
+    mutationFn: () =>
+      api.federatedExplain({
+        sources: sources.filter((s) => s.alias && s.connectionId),
+        sql,
+      }),
+    onSuccess: (p) => setPlan(p),
     onError: (err) => toast.error(extractErrorMessage(err)),
   });
 
@@ -219,12 +231,110 @@ export default function FederatedRoute() {
               Postgres / MySQL / SQLite only. MSSQL sources and SSH-tunnelled connections aren't
               supported here — DuckDB needs a direct network path.
             </div>
-            <Button type="submit" disabled={run.isPending}>
-              {run.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              Run
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={explain.isPending || run.isPending}
+                onClick={() => {
+                  const valid = sources.filter((s) => s.alias && s.connectionId);
+                  if (valid.length === 0 || !sql.trim()) {
+                    toast.error("Add a source and SQL first");
+                    return;
+                  }
+                  explain.mutate();
+                }}
+                title="Show how the planner distributes this query — what runs on each source vs. locally"
+              >
+                {explain.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitBranch className="h-4 w-4" />}
+                Show plan
+              </Button>
+              <Button type="submit" disabled={run.isPending}>
+                {run.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                Run
+              </Button>
+            </div>
           </div>
         </form>
+
+        {plan && (
+          <div className="rounded-md border border-border bg-card p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="text-sm font-medium flex items-center gap-2">
+                <GitBranch className="h-4 w-4" /> Distributed plan
+              </div>
+              <button
+                className="text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setPlan(null)}
+              >
+                Hide
+              </button>
+            </div>
+
+            {plan.warnings.length > 0 && (
+              <div className="space-y-1.5">
+                {plan.warnings.map((w, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start gap-2 text-xs rounded-md px-2.5 py-1.5 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                    <span>{w}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              {plan.sources.map((s) => (
+                <div key={s.alias} className="rounded border border-border p-2.5 text-xs space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-semibold">{s.alias}</span>
+                    <span className="text-muted-foreground">{s.dialect.toLowerCase()}</span>
+                    {s.fullScan ? (
+                      <span className="ml-auto rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                        full scan
+                      </span>
+                    ) : (
+                      <span className="ml-auto rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+                        pushed down
+                      </span>
+                    )}
+                  </div>
+                  {s.pushedFilters.length > 0 && (
+                    <div>
+                      <span className="text-muted-foreground">Filters at source: </span>
+                      <span className="font-mono">{s.pushedFilters.join(", ")}</span>
+                    </div>
+                  )}
+                  {s.projectedColumns.length > 0 && (
+                    <div>
+                      <span className="text-muted-foreground">Columns fetched: </span>
+                      <span className="font-mono">{s.projectedColumns.slice(0, 8).join(", ")}{s.projectedColumns.length > 8 ? "…" : ""}</span>
+                    </div>
+                  )}
+                  {s.estimatedRows != null && (
+                    <div className="text-muted-foreground">
+                      Est. rows: <span className="font-mono">{s.estimatedRows.toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {plan.localOperations.length > 0 && (
+              <div className="text-xs">
+                <span className="text-muted-foreground">Runs locally (DuckDB): </span>
+                <span className="font-mono">{plan.localOperations.join(", ")}</span>
+              </div>
+            )}
+
+            <details className="text-xs">
+              <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Raw plan</summary>
+              <pre className="mt-1 bg-muted rounded p-2 overflow-auto max-h-60 whitespace-pre">{plan.raw}</pre>
+            </details>
+          </div>
+        )}
 
         <div className="flex-1 min-h-80 rounded-md border border-border bg-card flex flex-col">
           {result ? (

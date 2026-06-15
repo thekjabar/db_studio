@@ -1,6 +1,17 @@
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Check, ChevronRight, LogOut, Menu, Radio, RefreshCw, Search, Sparkles, User } from "lucide-react";
+import { Check, ChevronRight, KeyRound, Loader2, LogOut, Menu, Radio, RefreshCw, Search, Sparkles, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
   DropdownMenu,
@@ -32,6 +43,7 @@ interface Props {
 export function TopBar({ connection, onOpenPalette, crumbs, onMenuClick }: Props) {
   const { user, setUser, clear } = useAuth();
   const qc = useQueryClient();
+  const [pwOpen, setPwOpen] = useState(false);
   // AI usage for the signed-in user — shown in the profile dropdown so people
   // can see their daily allowance without contacting support.
   const aiUsage = useQuery({
@@ -187,13 +199,116 @@ export function TopBar({ connection, onOpenPalette, crumbs, onMenuClick }: Props
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => setPwOpen(true)}>
+              <KeyRound className="h-3.5 w-3.5" /> Change password
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={logout} className="text-destructive focus:text-destructive">
               <LogOut className="h-3.5 w-3.5" /> Logout
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <ChangePasswordDialog open={pwOpen} onOpenChange={setPwOpen} />
     </header>
+  );
+}
+
+function ChangePasswordDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const reset = () => {
+    setCurrent("");
+    setNext("");
+    setConfirm("");
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (next !== confirm) {
+      toast.error("New passwords don't match");
+      return;
+    }
+    if (next.length < 12) {
+      toast.error("New password must be at least 12 characters");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.changePassword({ currentPassword: current, newPassword: next });
+      toast.success("Password changed — other sessions have been signed out");
+      reset();
+      onOpenChange(false);
+    } catch (err) {
+      toast.error(extractErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (!v) reset();
+        onOpenChange(v);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4" /> Change password
+          </DialogTitle>
+          <DialogDescription>
+            Enter your current password and a new one. Your other active sessions will be signed out.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="space-y-1.5">
+            <Label>Current password</Label>
+            <Input
+              type="password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>New password</Label>
+            <Input
+              type="password"
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+              autoComplete="new-password"
+              placeholder="At least 12 characters"
+              required
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Confirm new password</Label>
+            <Input
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="new-password"
+              required
+            />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy}>
+              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+              Change password
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

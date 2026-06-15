@@ -17,7 +17,7 @@ import { AuditService } from '../audit/audit.service';
 import { WorkspacesService } from '../workspaces/workspaces.service';
 import { EmailVerificationService } from './email-verification.service';
 import { LoginCooldownService } from './login-cooldown.service';
-import { SignupDto, LoginDto, EnableTotpDto, DisableTotpDto } from './dto/auth.dto';
+import { SignupDto, LoginDto, EnableTotpDto, DisableTotpDto, ChangePasswordDto } from './dto/auth.dto';
 
 export interface AuthTokens {
   accessToken: string;
@@ -317,6 +317,49 @@ export class AuthService {
     }
     await this.prisma.totpSecret.delete({ where: { userId } });
     await this.audit.log({ userId, action: 'TOTP_DISABLED', ...meta });
+  }
+
+  /**
+   * Change the password of an already-authenticated user. Verifies the current
+   * password first (so a hijacked access token can't silently rotate it), then
+   * revokes all OTHER refresh tokens — the current session stays valid so the
+   * user isn't logged out of the tab they're using, but anyone else holding an
+   * old session is kicked.
+   */
+  async changePassword(
+    userId: string,
+    dto: ChangePasswordDto,
+    meta: ReqMeta,
+    currentRefreshToken?: string,
+  ): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException();
+    if (!user.passwordHash) {
+      throw new BadRequestException('This account signs in with a provider and has no password to change.');
+    }
+    const ok = await argon2.verify(user.passwordHash, dto.currentPassword).catch(() => false);
+    if (!ok) throw new UnauthorizedException('Current password is incorrect');
+    if (dto.newPassword === dto.currentPassword) {
+      throw new BadRequestException('New password must be different from the current one');
+    }
+
+    const passwordHash = await argon2.hash(dto.newPassword, { type: argon2.argon2id });
+    const currentHash = currentRefreshToken ? this.hashRefresh(currentRefreshToken) : null;
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: userId }, data: { passwordHash } }),
+      // Revoke every active session except the one making this request.
+      this.prisma.refreshToken.updateMany({
+        where: {
+          userId,
+          revokedAt: null,
+          ...(currentHash ? { tokenHash: { not: currentHash } } : {}),
+        },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+
+    await this.audit.log({ userId, action: 'PASSWORD_CHANGED', ...meta });
   }
 
   /** Issue a fresh session for an already-authenticated user (SSO callback

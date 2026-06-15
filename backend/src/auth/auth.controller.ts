@@ -23,6 +23,7 @@ import {
   LoginDto,
   EnableTotpDto,
   DisableTotpDto,
+  ChangePasswordDto,
 } from './dto/auth.dto';
 
 class VerifyEmailDto {
@@ -165,6 +166,19 @@ export class AuthController {
     const raw = (req.cookies ?? {})[REFRESH_COOKIE];
     await this.auth.logout(raw, user.id, this.meta(req));
     this.clearRefreshCookie(res);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(204)
+  @Post('change-password')
+  async changePassword(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: ChangePasswordDto,
+    @Req() req: Request,
+  ) {
+    const currentRefresh = (req.cookies ?? {})[REFRESH_COOKIE];
+    await this.auth.changePassword(user.id, dto, this.meta(req), currentRefresh);
   }
 
   @UseGuards(JwtAuthGuard)

@@ -59,3 +59,13 @@ export class DisableTotpDto {
   @Length(6, 8)
   code!: string;
 }
+
+export class ChangePasswordDto {
+  @IsString()
+  @Length(1, 128)
+  currentPassword!: string;
+
+  @IsString()
+  @Length(12, 128, { message: 'Password must be 12-128 chars' })
+  newPassword!: string;
+}

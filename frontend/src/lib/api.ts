@@ -786,6 +786,8 @@ export const api = {
     http.post<{ secret: string; otpauthUrl: string; qrSvg: string }>("/auth/2fa/enable").then((r) => r.data),
   verify2fa: (code: string) => http.post("/auth/2fa/verify", { code }).then((r) => r.data),
   disable2fa: (code: string) => http.post("/auth/2fa/disable", { code }).then((r) => r.data),
+  changePassword: (body: { currentPassword: string; newPassword: string }) =>
+    http.post("/auth/change-password", body).then((r) => r.data),
 
   listConnections: (workspaceId?: string) =>
     http

@@ -1,6 +1,12 @@
 import { IsEmail, IsOptional, IsString, Length, Matches } from 'class-validator';
+import { Transform } from 'class-transformer';
+
+/** Normalize email so case/whitespace variants resolve to one account. */
+const normalizeEmail = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : value;
 
 export class SignupDto {
+  @Transform(normalizeEmail)
   @IsEmail()
   email!: string;
 
@@ -25,6 +31,7 @@ export class SignupDto {
 }
 
 export class LoginDto {
+  @Transform(normalizeEmail)
   @IsEmail()
   email!: string;
 

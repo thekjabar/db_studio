@@ -10,7 +10,12 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { IsEmail, IsString, Length } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { Request, Response } from 'express';
+
+/** Normalize email so case/whitespace variants resolve to one account. */
+const normalizeEmail = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : value;
 import { AuthService } from './auth.service';
 import { EmailVerificationService } from './email-verification.service';
 import { PasswordResetService } from './password-reset.service';
@@ -30,10 +35,10 @@ class VerifyEmailDto {
   @IsString() @Length(1, 512) token!: string;
 }
 class ResendVerificationDto {
-  @IsEmail() email!: string;
+  @Transform(normalizeEmail) @IsEmail() email!: string;
 }
 class RequestPasswordResetDto {
-  @IsEmail() email!: string;
+  @Transform(normalizeEmail) @IsEmail() email!: string;
 }
 class CompletePasswordResetDto {
   @IsString() @Length(1, 512) token!: string;

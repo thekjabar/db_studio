@@ -198,7 +198,7 @@ export class RowFiltersService {
       throw new BadRequestException(`Invalid predicate: ${validation.error}`);
     }
     const user = await this.prisma.user.findUnique({
-      where: { email: input.email },
+      where: { email: input.email.trim().toLowerCase() },
       select: { id: true, email: true, displayName: true },
     });
     if (!user) throw new NotFoundException(`No user with email ${input.email}`);

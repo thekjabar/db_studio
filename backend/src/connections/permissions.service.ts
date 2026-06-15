@@ -62,7 +62,7 @@ export class PermissionsService {
     await this.assertOwner(connectionId, actorUserId);
 
     const user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: email.trim().toLowerCase() },
       select: { id: true, email: true, displayName: true },
     });
     if (!user) throw new NotFoundException(`No user with email ${email}`);
@@ -160,7 +160,7 @@ export class PermissionsService {
   ): Promise<TableGrantView> {
     await this.assertOwner(connectionId, actorUserId);
     const user = await this.prisma.user.findUnique({
-      where: { email: input.email },
+      where: { email: input.email.trim().toLowerCase() },
       select: { id: true, email: true, displayName: true },
     });
     if (!user) throw new NotFoundException(`No user with email ${input.email}`);

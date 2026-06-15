@@ -96,7 +96,7 @@ export class WorkspacesService {
 
   async addMember(workspaceId: string, addedBy: string, email: string, role: Role) {
     await this.assertRole(workspaceId, addedBy, Role.OWNER);
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
     if (!user) throw new NotFoundException('User with that email not found');
     try {
       return await this.prisma.workspaceMember.create({

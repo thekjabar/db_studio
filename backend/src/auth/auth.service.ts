@@ -378,6 +378,10 @@ export class AuthService {
     profile: { provider: 'google' | 'github'; providerId: string; email: string; displayName?: string },
     meta: ReqMeta,
   ): Promise<AuthTokens & { userId: string }> {
+    // Normalize email so OAuth resolves to the same account as a
+    // case/whitespace variant signed up by password.
+    if (profile.email) profile = { ...profile, email: profile.email.trim().toLowerCase() };
+
     // 1) Exact match on (provider, providerId).
     let user = await this.prisma.user.findFirst({
       where: { oauthProvider: profile.provider, oauthId: profile.providerId },

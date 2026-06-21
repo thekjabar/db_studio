@@ -463,11 +463,21 @@ export class PostgresDriver implements IDatabaseDriver {
       }
       return c.query(sql, params);
     });
+    // node-postgres returns an ARRAY of result objects for a multi-statement
+    // string; a single statement returns one object. Normalize to the last
+    // result that actually carried rows (the SELECT in "SET ...; SELECT ..."),
+    // and always default rows/fields to [] so callers never see undefined.
+    const result = Array.isArray(r)
+      ? ([...r].reverse().find((x) => Array.isArray(x?.rows) && x.rows.length > 0) ?? r[r.length - 1] ?? {})
+      : r;
     return {
-      rows: r.rows,
-      fields: (r.fields ?? []).map((f) => ({ name: f.name, dataType: String(f.dataTypeID) })),
-      rowCount: r.rowCount ?? 0,
-      command: r.command,
+      rows: result.rows ?? [],
+      fields: (result.fields ?? []).map((f: { name: string; dataTypeID: number }) => ({
+        name: f.name,
+        dataType: String(f.dataTypeID),
+      })),
+      rowCount: result.rowCount ?? 0,
+      command: result.command,
       durationMs: Date.now() - start,
     };
   }

@@ -263,7 +263,9 @@ export class QueryController {
       // means the real result set is larger. Trim the sentinel row before
       // returning.
       let truncated = false;
-      let rows = res.rows;
+      // Some statements (DDL, SET, etc.) return no row set — default to [] so
+      // downstream .length / slice never hit undefined.
+      let rows = res.rows ?? [];
       if (shouldWrap && rows.length > cap) {
         rows = rows.slice(0, cap);
         truncated = true;

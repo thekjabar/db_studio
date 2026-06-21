@@ -21,6 +21,7 @@ import {
   exportExcel as dlExcel,
   toMarkdownTable,
   toInsertStatements,
+  toJson,
   copyToClipboard,
 } from "@/lib/result-export";
 import { DataGrid } from "@/components/data-grid";
@@ -65,23 +66,40 @@ export default function SqlRoute() {
   const modal = useModal();
   const isDark = useTheme((s) => s.theme === "dark");
   const [searchParams, setSearchParams] = useSearchParams();
+  // Initial content priority: ?sql= deep link > per-connection saved draft > default.
   const [sql, setSql] = useState(() => {
     const urlSql = searchParams.get("sql");
-    return urlSql ?? "SELECT 1 AS hello;";
+    if (urlSql) return urlSql;
+    try {
+      const draft = localStorage.getItem(`sqldraft:${id}`);
+      if (draft) return draft;
+    } catch { /* ignore */ }
+    return "SELECT 1 AS hello;";
   });
 
-  // Push SQL to URL so it's shareable — debounced so every keystroke isn't a history event.
-  // Skip anything over ~1.5KB to keep URLs reasonable (long queries should be Saved instead).
+  // A deep link (?sql=) seeds the editor once, then we strip it from the URL so
+  // the address bar stays clean instead of carrying the whole query.
+  useEffect(() => {
+    if (searchParams.get("sql")) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("sql");
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist the editor content per-connection so a refresh keeps your work,
+  // without polluting the URL. Debounced.
   useEffect(() => {
     const handle = setTimeout(() => {
-      const next = new URLSearchParams(searchParams);
-      if (sql && sql !== "SELECT 1 AS hello;" && sql.length < 1500) next.set("sql", sql);
-      else next.delete("sql");
-      setSearchParams(next, { replace: true });
+      try {
+        if (sql && sql !== "SELECT 1 AS hello;") localStorage.setItem(`sqldraft:${id}`, sql);
+        else localStorage.removeItem(`sqldraft:${id}`);
+      } catch { /* ignore quota */ }
     }, 400);
     return () => clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sql]);
+  }, [sql, id]);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [explainResult, setExplainResult] = useState<ExplainResult | null>(null);
   const [insights, setInsights] = useState<
@@ -317,12 +335,42 @@ export default function SqlRoute() {
   // `:since`-style tokens are detected at run time; the user fills values in
   // a dialog and we substitute escaped literals before sending. `::casts`
   // and tokens inside quoted strings are ignored.
-  const [paramRun, setParamRun] = useState<{ params: string[]; confirmDestructive?: boolean } | null>(null);
+  const [paramRun, setParamRun] = useState<{ params: string[]; confirmDestructive?: boolean; sql: string } | null>(null);
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
+
+  /**
+   * Decide which SQL to actually run:
+   *  1. If the user has selected text → run exactly that.
+   *  2. Else → run the single statement under the cursor.
+   *  3. Else (no editor / cursor info) → run the last non-empty statement.
+   * Falls back to the whole buffer if splitting yields nothing.
+   */
+  const resolveSqlToRun = (): string => {
+    const editor = editorRef.current;
+    if (editor) {
+      const model = editor.getModel?.();
+      const selection = editor.getSelection?.();
+      // 1) Non-empty selection wins.
+      if (model && selection && !selection.isEmpty()) {
+        const selected = model.getValueInRange(selection);
+        if (selected.trim()) return selected;
+      }
+      // 2) Statement under the cursor.
+      if (model && selection) {
+        const offset = model.getOffsetAt(selection.getPosition());
+        const stmt = statementAtOffset(sql, offset);
+        if (stmt && stmt.trim()) return stmt;
+      }
+    }
+    // 3) Last non-empty statement, else whole buffer.
+    const parts = splitSqlStatements(sql).filter((s) => s.trim());
+    return parts.length ? parts[parts.length - 1] : sql;
+  };
 
   const startRun = (confirmDestructive?: boolean) => {
     if (run.isPending || !sql.trim()) return;
-    const params = extractQueryParams(sql);
+    const sqlToRun = resolveSqlToRun();
+    const params = extractQueryParams(sqlToRun);
     if (params.length > 0) {
       // Prefill from last-used values for this connection.
       try {
@@ -331,10 +379,10 @@ export default function SqlRoute() {
       } catch {
         setParamValues(Object.fromEntries(params.map((p) => [p, ""])));
       }
-      setParamRun({ params, confirmDestructive });
+      setParamRun({ params, confirmDestructive, sql: sqlToRun });
       return;
     }
-    run.mutate({ sql, confirmDestructive });
+    run.mutate({ sql: sqlToRun, confirmDestructive });
   };
 
   const runWithParams = () => {
@@ -342,7 +390,7 @@ export default function SqlRoute() {
     try {
       localStorage.setItem(`qparams:${id}`, JSON.stringify(paramValues));
     } catch { /* ignore */ }
-    const substituted = substituteParams(sql, paramValues);
+    const substituted = substituteParams(paramRun.sql, paramValues);
     setParamRun(null);
     run.mutate({ sql: substituted, confirmDestructive: paramRun.confirmDestructive });
   };
@@ -472,6 +520,11 @@ export default function SqlRoute() {
     if (!result) return;
     const ok = await copyToClipboard(toInsertStatements(exportCols(), result.rows));
     ok ? toast.success("INSERT statements copied") : toast.error("Copy failed");
+  };
+  const copyJson = async () => {
+    if (!result) return;
+    const ok = await copyToClipboard(toJson(exportCols(), result.rows));
+    ok ? toast.success("JSON copied") : toast.error("Copy failed");
   };
 
   return (
@@ -788,6 +841,9 @@ export default function SqlRoute() {
               <DropdownMenuItem onClick={copyMarkdown}>
                 <FileText className="h-3.5 w-3.5" /> Copy as Markdown
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={copyJson}>
+                <FileJson className="h-3.5 w-3.5" /> Copy as JSON
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={copyInserts}>
                 <Table2 className="h-3.5 w-3.5" /> Copy as INSERTs
               </DropdownMenuItem>
@@ -1051,6 +1107,95 @@ function substituteParams(sql: string, values: Record<string, string>): string {
     else lit = `'${raw.replace(/'/g, "''")}'`;
     return `${pre}${lit}`;
   });
+}
+
+/**
+ * Split a SQL buffer into individual statements on top-level semicolons,
+ * ignoring `;` inside single/double-quoted strings, line/block comments, and
+ * Postgres dollar-quoted bodies ($$ ... $$ / $tag$ ... $tag$). Returns each
+ * statement WITH a trailing newline-preserved slice so cursor offsets map back.
+ * The returned strings include their original text (sans the splitting `;`).
+ */
+function splitSqlStatements(sql: string): string[] {
+  const out: string[] = [];
+  let buf = "";
+  let i = 0;
+  const n = sql.length;
+  while (i < n) {
+    const ch = sql[i];
+    const two = sql.slice(i, i + 2);
+    // Line comment.
+    if (two === "--") {
+      const end = sql.indexOf("\n", i);
+      const stop = end === -1 ? n : end;
+      buf += sql.slice(i, stop);
+      i = stop;
+      continue;
+    }
+    // Block comment.
+    if (two === "/*") {
+      const end = sql.indexOf("*/", i + 2);
+      const stop = end === -1 ? n : end + 2;
+      buf += sql.slice(i, stop);
+      i = stop;
+      continue;
+    }
+    // Single/double quoted string.
+    if (ch === "'" || ch === '"') {
+      const q = ch;
+      buf += ch;
+      i++;
+      while (i < n) {
+        buf += sql[i];
+        if (sql[i] === q) {
+          // Doubled quote = escaped, stay in string.
+          if (sql[i + 1] === q) { buf += sql[i + 1]; i += 2; continue; }
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    // Dollar-quoted body: $tag$ ... $tag$.
+    if (ch === "$") {
+      const m = /^\$[A-Za-z_]*\$/.exec(sql.slice(i));
+      if (m) {
+        const tag = m[0];
+        const close = sql.indexOf(tag, i + tag.length);
+        const stop = close === -1 ? n : close + tag.length;
+        buf += sql.slice(i, stop);
+        i = stop;
+        continue;
+      }
+    }
+    if (ch === ";") {
+      out.push(buf);
+      buf = "";
+      i++;
+      continue;
+    }
+    buf += ch;
+    i++;
+  }
+  if (buf.trim()) out.push(buf);
+  return out;
+}
+
+/** Return the single statement that contains the given character offset. */
+function statementAtOffset(sql: string, offset: number): string | null {
+  const parts = splitSqlStatements(sql);
+  let pos = 0;
+  for (const part of parts) {
+    // +1 accounts for the `;` consumed by the splitter between statements.
+    const start = pos;
+    const end = pos + part.length;
+    if (offset >= start && offset <= end + 1) {
+      return part.trim() ? part : null;
+    }
+    pos = end + 1;
+  }
+  return null;
 }
 
 function ShareQueryDialog({

@@ -18,6 +18,7 @@ import {
   exportExcel as dlExcel,
   toMarkdownTable,
   toInsertStatements,
+  toJson,
   copyToClipboard,
 } from "@/lib/result-export";
 
@@ -48,6 +49,12 @@ export default function PublicSharedQueryRoute() {
     if (!result) return;
     (await copyToClipboard(toMarkdownTable(cols, result.rows)))
       ? toast.success("Markdown copied")
+      : toast.error("Copy failed");
+  };
+  const copyJson = async () => {
+    if (!result) return;
+    (await copyToClipboard(toJson(cols, result.rows)))
+      ? toast.success("JSON copied")
       : toast.error("Copy failed");
   };
   const copyInserts = async () => {
@@ -112,6 +119,9 @@ export default function PublicSharedQueryRoute() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={copyMd}>
                   <FileText className="h-3.5 w-3.5" /> Copy as Markdown
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={copyJson}>
+                  <FileJson className="h-3.5 w-3.5" /> Copy as JSON
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={copyInserts}>
                   <Table2 className="h-3.5 w-3.5" /> Copy as INSERTs

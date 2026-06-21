@@ -32,14 +32,19 @@ export function exportCsv(cols: string[], rows: Row[], base = "query") {
   download(csv, "text/csv;charset=utf-8", `${base}-${stamp()}.csv`);
 }
 
-export function exportJson(cols: string[], rows: Row[], base = "query") {
-  // Re-project to the column order the user sees.
+/** JSON string of the rows, projected to the visible column order. Shared by
+ *  the download and the "Copy as JSON" clipboard action. */
+export function toJson(cols: string[], rows: Row[]): string {
   const projected = rows.map((r) => {
     const o: Row = {};
     for (const c of cols) o[c] = r[c] ?? null;
     return o;
   });
-  download(JSON.stringify(projected, null, 2), "application/json", `${base}-${stamp()}.json`);
+  return JSON.stringify(projected, null, 2);
+}
+
+export function exportJson(cols: string[], rows: Row[], base = "query") {
+  download(toJson(cols, rows), "application/json", `${base}-${stamp()}.json`);
 }
 
 export function exportExcel(cols: string[], rows: Row[], base = "query") {

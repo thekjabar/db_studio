@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, OnModuleDestroy } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy } from '@nestjs/common';
 import { Dialect, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
@@ -304,7 +304,11 @@ export class ConnectionsService implements OnModuleDestroy {
   ): Promise<{ creds: ConnectionCredentials; tunnel?: OpenTunnel }> {
     if (!creds.ssh) return { creds };
     if (!creds.host || !creds.port) {
-      throw new Error('SSH tunnel requires a target host and port');
+      throw new BadRequestException(
+        'Set the database host and port. When using an SSH tunnel these are the ' +
+          'database address as seen from the SSH server — usually 127.0.0.1 and the ' +
+          'database port (e.g. 5432 for PostgreSQL), not the SSH host.',
+      );
     }
     const tunnel = await this.ssh.open(creds.ssh, creds.host, creds.port);
     const tunneled: ConnectionCredentials = {

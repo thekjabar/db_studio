@@ -9,6 +9,7 @@ import { api, extractErrorMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -118,9 +119,9 @@ function NewKeyDialog({ open, onOpenChange, connections, onCreated, }) {
                                                 ? "border-primary bg-primary/15 text-primary"
                                                 : "border-border text-muted-foreground hover:text-foreground"}`, onClick: () => setScope("all"), children: "All connections" }), _jsx("button", { type: "button", className: `flex-1 rounded border px-2 py-1 text-xs ${scope === "selected"
                                                 ? "border-primary bg-primary/15 text-primary"
-                                                : "border-border text-muted-foreground hover:text-foreground"}`, onClick: () => setScope("selected"), children: "Specific connections" })] })] }), scope === "selected" && (_jsxs("div", { className: "space-y-1 max-h-40 overflow-y-auto rounded border border-border p-2", children: [connections.map((c) => (_jsxs("label", { className: "flex items-center gap-2 text-xs cursor-pointer px-1 py-0.5 hover:bg-accent rounded", children: [_jsx("input", { type: "checkbox", checked: selected.has(c.id), onChange: (e) => {
+                                                : "border-border text-muted-foreground hover:text-foreground"}`, onClick: () => setScope("selected"), children: "Specific connections" })] })] }), scope === "selected" && (_jsxs("div", { className: "space-y-1 max-h-40 overflow-y-auto rounded border border-border p-2", children: [connections.map((c) => (_jsxs("label", { className: "flex items-center gap-2 text-xs cursor-pointer px-1 py-1 hover:bg-accent rounded", children: [_jsx(Checkbox, { checked: selected.has(c.id), onCheckedChange: (v) => {
                                                 const next = new Set(selected);
-                                                if (e.target.checked)
+                                                if (v)
                                                     next.add(c.id);
                                                 else
                                                     next.delete(c.id);

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ArrowRight, Copy, FileCode2, Loader2, Plus, Trash2 } from "lucide-react";
 import { api, extractErrorMessage } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -203,5 +204,5 @@ function AddStepForm({ connectionId, onAdd, dialect, }) {
                                                     columnsQ.data?.length === 0 ? "No columns" :
                                                         "Pick a column" }) }), _jsx(SelectContent, { children: (columnsQ.data ?? []).map((c) => (_jsx(SelectItem, { value: c.name, className: "font-mono", children: c.name }, c.name))) })] })) : (
                             // `add-column` names a NEW column, so it stays a text input.
-                            _jsx(Input, { value: colName, onChange: (e) => setColName(e.target.value), placeholder: "new_column" }))] }), kind === "add-column" && (_jsxs(_Fragment, { children: [_jsxs("div", { children: [_jsx(Label, { className: "text-[11px]", children: "Type (raw SQL)" }), _jsx(Input, { value: colType, onChange: (e) => setColType(e.target.value), placeholder: "text / varchar(64) / int" })] }), _jsxs("div", { className: "flex items-end gap-2", children: [_jsxs("label", { className: "text-xs flex items-center gap-1", children: [_jsx("input", { type: "checkbox", checked: nullable, onChange: (e) => setNullable(e.target.checked) }), "nullable"] }), _jsx(ArrowRight, { className: "h-4 w-4 text-muted-foreground" })] })] })), kind === "rename-column" && (_jsxs("div", { children: [_jsx(Label, { className: "text-[11px]", children: "New name" }), _jsx(Input, { value: renameTo, onChange: (e) => setRenameTo(e.target.value), placeholder: "new_name" })] }))] }))] }));
+                            _jsx(Input, { value: colName, onChange: (e) => setColName(e.target.value), placeholder: "new_column" }))] }), kind === "add-column" && (_jsxs(_Fragment, { children: [_jsxs("div", { children: [_jsx(Label, { className: "text-[11px]", children: "Type (raw SQL)" }), _jsx(Input, { value: colType, onChange: (e) => setColType(e.target.value), placeholder: "text / varchar(64) / int" })] }), _jsxs("div", { className: "flex items-end gap-2", children: [_jsxs("label", { className: "text-xs flex items-center gap-1.5 cursor-pointer", children: [_jsx(Checkbox, { checked: nullable, onCheckedChange: setNullable }), "nullable"] }), _jsx(ArrowRight, { className: "h-4 w-4 text-muted-foreground" })] })] })), kind === "rename-column" && (_jsxs("div", { children: [_jsx(Label, { className: "text-[11px]", children: "New name" }), _jsx(Input, { value: renameTo, onChange: (e) => setRenameTo(e.target.value), placeholder: "new_name" })] }))] }))] }));
 }

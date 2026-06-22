@@ -411,7 +411,7 @@ export function RowDrawer({ connectionId, schema, table, columns, row, onClose, 
 
   return (
     <Sheet open onOpenChange={(v) => !v && onClose()}>
-      <SheetContent width="w-[560px]">
+      <SheetContent width="w-[560px]" resizable storageKey="rowDrawerWidth">
         <SheetHeader>
           <SheetTitle>
             {isInsert ? "Insert row into" : "Update row from"}{" "}

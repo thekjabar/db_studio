@@ -32,6 +32,7 @@ import { useTheme } from "@/lib/theme-store";
 import { AiQueryDialog } from "@/components/ai-query-dialog";
 import { SendResultDialog } from "@/components/send-result-dialog";
 import { TranspileDialog } from "@/components/transpile-dialog";
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { registerSqlCompletions } from "@/lib/sql-completions";
 import type { ErGraph } from "@/lib/api";
 import { useOutletContext } from "react-router-dom";
@@ -528,9 +529,11 @@ export default function SqlRoute() {
   };
 
   return (
-    <div className="h-full flex">
-      {/* Saved / history */}
-      <aside className="w-56 shrink-0 border-r border-border bg-card flex flex-col">
+    <>
+    <ResizablePanelGroup direction="horizontal" autoSaveId="sql-editor-h" className="h-full">
+      {/* Saved / history — resizable + collapsible */}
+      <ResizablePanel defaultSize={16} minSize={10} maxSize={35} collapsible collapsedSize={0}>
+      <aside className="h-full w-full shrink-0 border-r border-border bg-card flex flex-col">
         <div className="px-3 py-2 text-[10px] uppercase font-medium tracking-wider text-muted-foreground border-b border-border">
           Saved queries
         </div>
@@ -589,8 +592,12 @@ export default function SqlRoute() {
           ))}
         </div>
       </aside>
+      </ResizablePanel>
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <ResizableHandle withHandle />
+
+      <ResizablePanel defaultSize={84} minSize={40}>
+      <div className="flex-1 flex flex-col min-w-0 h-full">
         {/* Toolbar split into two zones:
             - Left (pinned, never scrolls): Run + Limit. These are the
               must-always-see controls — hiding them would be hostile UX.
@@ -880,7 +887,9 @@ export default function SqlRoute() {
           </div>
         </div>
 
-        <div className="h-2/5 min-h-45 border-b border-border">
+        <ResizablePanelGroup direction="vertical" autoSaveId="sql-editor-v" className="flex-1 min-h-0">
+        <ResizablePanel defaultSize={40} minSize={15}>
+        <div className="h-full min-h-0 border-b border-border">
           <Editor
             height="100%"
             defaultLanguage="sql"
@@ -912,8 +921,12 @@ export default function SqlRoute() {
             }}
           />
         </div>
+        </ResizablePanel>
 
-        <div className="flex-1 min-h-0 flex flex-col">
+        <ResizableHandle withHandle />
+
+        <ResizablePanel defaultSize={60} minSize={10}>
+        <div className="h-full min-h-0 flex flex-col">
           {(result || explainResult || insights) && (
             <div className="flex items-center gap-1 border-b border-border px-2">
               <button
@@ -995,7 +1008,11 @@ export default function SqlRoute() {
             </div>
           </div>
         </div>
+        </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
+      </ResizablePanel>
+      </ResizablePanelGroup>
 
       <Dialog open={!!confirmSql} onOpenChange={(v) => !v && setConfirmSql(null)}>
         <DialogContent>
@@ -1079,7 +1096,7 @@ export default function SqlRoute() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }
 

@@ -18,6 +18,33 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [schema, setSchema] = useState<string>("public");
 
+  // Draggable sidebar width (px), persisted. Clamped to a sane range.
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem("sidebarWidth"));
+    return saved >= 180 && saved <= 480 ? saved : 240;
+  });
+  const startSidebarResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    const onMove = (ev: PointerEvent) => {
+      const next = Math.min(480, Math.max(180, startW + (ev.clientX - startX)));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.userSelect = "";
+      setSidebarWidth((w) => {
+        localStorage.setItem("sidebarWidth", String(w));
+        return w;
+      });
+    };
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
   // When crossing breakpoints, update defaults.
   useEffect(() => {
     if (isMobile) setMobileOpen(false);
@@ -76,6 +103,8 @@ export function AppShell() {
           onToggleCollapse={() => setCollapsed((v) => !v)}
           currentSchema={schema}
           onSchemaChange={setSchema}
+          width={collapsed ? undefined : sidebarWidth}
+          onResizeStart={collapsed ? undefined : startSidebarResize}
         />
       )}
       {id && isMobile && mobileOpen && (

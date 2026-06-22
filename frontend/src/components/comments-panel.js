@@ -50,7 +50,7 @@ export function CommentsPanel({ connectionId, target, label }) {
                             });
                             if (ok)
                                 remove.mutate(c.id);
-                        } }, c.id)))] }), _jsxs("form", { onSubmit: submit, className: "space-y-2", children: [_jsx(Textarea, { value: draft, onChange: (e) => setDraft(e.target.value), placeholder: "Write a comment\u2026", rows: 2, className: "text-xs", disabled: create.isPending }), _jsx("div", { className: "flex justify-end", children: _jsxs(Button, { type: "submit", size: "sm", disabled: !draft.trim() || create.isPending, children: [create.isPending ? _jsx(Loader2, { className: "h-3 w-3 animate-spin" }) : _jsx(Send, { className: "h-3 w-3" }), "Post"] }) })] })] }));
+                        } }, c.id)))] }), _jsxs("form", { onSubmit: submit, className: "space-y-2", children: [_jsx(Textarea, { value: draft, onChange: (e) => setDraft(e.target.value), placeholder: "Write a comment\u2026", rows: 2, className: "text-xs", disabled: create.isPending }), _jsx("div", { className: "flex justify-start", children: _jsxs(Button, { type: "submit", size: "sm", disabled: !draft.trim() || create.isPending, children: [create.isPending ? _jsx(Loader2, { className: "h-3 w-3 animate-spin" }) : _jsx(Send, { className: "h-3 w-3" }), "Post"] }) })] })] }));
 }
 function CommentItem({ comment, ownedByMe, onDelete, }) {
     const author = comment.user?.displayName || comment.user?.email || comment.userId;

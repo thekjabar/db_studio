@@ -48,9 +48,13 @@ interface Props {
   onToggleCollapse: () => void;
   currentSchema: string;
   onSchemaChange: (s: string) => void;
+  /** Expanded width in px. When set, overrides the default w-60 and a drag
+   *  handle on the right edge lets the user resize. */
+  width?: number;
+  onResizeStart?: (e: React.PointerEvent) => void;
 }
 
-export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSchema, onSchemaChange }: Props) {
+export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSchema, onSchemaChange, width, onResizeStart }: Props) {
   const [filter, setFilter] = useState("");
   const params = useParams();
   const currentTable = params.table;
@@ -95,7 +99,13 @@ export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSche
   }
 
   return (
-    <aside className="w-60 shrink-0 border-r border-border bg-card flex flex-col h-full">
+    <aside
+      className={cn(
+        "shrink-0 border-r border-border bg-card flex flex-col h-full relative",
+        width == null && "w-60",
+      )}
+      style={width != null ? { width } : undefined}
+    >
       <div className="flex items-center justify-between px-3 py-2 border-b border-border">
         <Link to="/connections" className="flex items-center gap-2 font-semibold text-sm">
           <Database className="h-4 w-4 text-primary" />
@@ -230,6 +240,13 @@ export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSche
           <NavItem to={`/c/${connectionId}/webhooks`} icon={<Webhook className="h-3.5 w-3.5" />} label="Webhooks" />
         </NavSection>
       </nav>
+      {onResizeStart && (
+        <div
+          onPointerDown={onResizeStart}
+          className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-primary/50 active:bg-primary z-10"
+          title="Drag to resize sidebar"
+        />
+      )}
     </aside>
   );
 }

@@ -80,7 +80,7 @@ function toCreatePayload(input) {
     };
 }
 function toUpdatePayload(input) {
-    const { name, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh } = input;
+    const { name, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh, slowQueryAlertMs, slowQueryAlertEmail, } = input;
     const credentials = {};
     if (host !== undefined)
         credentials.host = host;
@@ -100,6 +100,10 @@ function toUpdatePayload(input) {
         ...(name !== undefined && { name }),
         ...(readOnly !== undefined && { readOnly }),
         ...(statementTimeoutMs !== undefined && { statementTimeoutMs }),
+        // null is a meaningful value here ("clear the alert"), so forward it too —
+        // only `undefined` means "field not being changed".
+        ...(slowQueryAlertMs !== undefined && { slowQueryAlertMs }),
+        ...(slowQueryAlertEmail !== undefined && { slowQueryAlertEmail }),
         ...(Object.keys(credentials).length > 0 && { credentials }),
     };
 }
@@ -146,6 +150,7 @@ export const api = {
     enable2fa: () => http.post("/auth/2fa/enable").then((r) => r.data),
     verify2fa: (code) => http.post("/auth/2fa/verify", { code }).then((r) => r.data),
     disable2fa: (code) => http.post("/auth/2fa/disable", { code }).then((r) => r.data),
+    changePassword: (body) => http.post("/auth/change-password", body).then((r) => r.data),
     listConnections: (workspaceId) => http
         .get("/connections", { params: workspaceId ? { workspaceId } : undefined })
         .then((r) => r.data),
@@ -265,6 +270,40 @@ export const api = {
     explain: (connectionId, body) => http
         .post(`/connections/${connectionId}/query/explain`, body)
         .then((r) => r.data),
+    // ---- Plan regression detection ----
+    planCapture: (connectionId, sql) => http
+        .post(`/connections/${connectionId}/query/plan-capture`, { sql })
+        .then((r) => r.data),
+    planHistory: (connectionId, shapeHash, limit = 50) => http
+        .get(`/connections/${connectionId}/query/plan-history/${shapeHash}`, {
+        params: { limit },
+    })
+        .then((r) => r.data),
+    planRegressions: (connectionId, hours = 168, limit = 50) => http
+        .get(`/connections/${connectionId}/query/plan-regressions`, {
+        params: { hours, limit },
+    })
+        .then((r) => r.data),
+    planDiff: (connectionId, from, to) => http
+        .get(`/connections/${connectionId}/query/plan-diff`, { params: { from, to } })
+        .then((r) => r.data),
+    // ---- Server-side cursor streaming (Postgres) ----
+    cursorOpen: (connectionId, sql, pageSize = 1000) => http
+        .post(`/connections/${connectionId}/query/cursor`, {
+        sql,
+        pageSize,
+    })
+        .then((r) => r.data),
+    cursorFetch: (connectionId, cursorId, pageSize = 1000) => http
+        .post(`/connections/${connectionId}/query/cursor/${cursorId}/fetch`, { pageSize })
+        .then((r) => r.data),
+    cursorClose: (connectionId, cursorId) => http
+        .post(`/connections/${connectionId}/query/cursor/${cursorId}/close`)
+        .then((r) => r.data),
+    // ---- Cross-dialect transpilation ----
+    transpile: (connectionId, body) => http
+        .post(`/connections/${connectionId}/query/transpile`, body)
+        .then((r) => r.data),
     listApiKeys: () => http.get("/api-keys").then((r) => r.data),
     createApiKey: (body) => http.post("/api-keys", body).then((r) => r.data),
     revokeApiKey: (id) => http.post(`/api-keys/${id}/revoke`).then((r) => r.data),
@@ -301,6 +340,7 @@ export const api = {
         .get(`/connections/${connectionId}/migration-export/snapshots/${snapshotId}/diff`)
         .then((r) => r.data),
     federatedQuery: (body) => http.post("/federated/query", body).then((r) => r.data),
+    federatedExplain: (body) => http.post("/federated/explain", body).then((r) => r.data),
     estimateBackup: (connectionId, schema) => http
         .get(`/connections/${connectionId}/backup/estimate`, { params: schema ? { schema } : undefined })
         .then((r) => r.data),
@@ -582,4 +622,50 @@ export const api = {
     dismissAnnouncement: (id) => http.post(`/announcements/${id}/dismiss`).then((r) => r.data),
     // ---- Feature flags ----
     myFlags: () => http.get('/flags/my').then((r) => r.data),
+    // ---- SQL snippets ----
+    listSnippets: (connectionId) => http
+        .get("/snippets", { params: { connectionId } })
+        .then((r) => r.data),
+    createSnippet: (body) => http.post("/snippets", body).then((r) => r.data),
+    deleteSnippet: (id) => http.delete(`/snippets/${id}`).then((r) => r.data),
+    // ---- Sensitive data scan ----
+    scanSensitive: (connectionId) => http
+        .post(`/connections/${connectionId}/sensitive-scan`)
+        .then((r) => r.data),
+    // ---- Column masks (pairs with the scanner) ----
+    listColumnMasks: (connectionId) => http
+        .get(`/connections/${connectionId}/column-masks`)
+        .then((r) => r.data),
+    createColumnMask: (connectionId, body) => http.post(`/connections/${connectionId}/column-masks`, body).then((r) => r.data),
+    // ---- Self usage (AI quota for the signed-in user) ----
+    myAiUsage: () => http
+        .get('/ai/chats/quota')
+        .then((r) => r.data),
+    // ---- Customer audit log CSV export (owner-only) ----
+    exportAuditCsv: async (connectionId) => {
+        const res = await http.get(`/connections/${connectionId}/audit/export.csv`, {
+            responseType: "blob",
+        });
+        const url = URL.createObjectURL(res.data);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `audit-${connectionId}-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    },
+    // ---- Shareable read-only query links ----
+    createSharedQuery: (connectionId, body) => http
+        .post(`/connections/${connectionId}/shared-queries`, body)
+        .then((r) => r.data),
+    listSharedQueries: (connectionId) => http
+        .get(`/connections/${connectionId}/shared-queries`)
+        .then((r) => r.data),
+    revokeSharedQuery: (connectionId, shareId) => http.delete(`/connections/${connectionId}/shared-queries/${shareId}`).then((r) => r.data),
+    // Public — no auth header needed but http client tolerates it.
+    getSharedQueryMeta: (token) => http
+        .get(`/public/shared-queries/${token}`)
+        .then((r) => r.data),
+    runSharedQuery: (token) => http
+        .post(`/public/shared-queries/${token}/run`)
+        .then((r) => r.data),
 };

@@ -717,7 +717,10 @@ function toCreatePayload(input: CreateConnectionInput) {
 }
 
 function toUpdatePayload(input: Partial<CreateConnectionInput>) {
-  const { name, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh } = input;
+  const {
+    name, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh,
+    slowQueryAlertMs, slowQueryAlertEmail,
+  } = input;
   const credentials: Record<string, unknown> = {};
   if (host !== undefined) credentials.host = host;
   if (port !== undefined) credentials.port = port;
@@ -730,6 +733,10 @@ function toUpdatePayload(input: Partial<CreateConnectionInput>) {
     ...(name !== undefined && { name }),
     ...(readOnly !== undefined && { readOnly }),
     ...(statementTimeoutMs !== undefined && { statementTimeoutMs }),
+    // null is a meaningful value here ("clear the alert"), so forward it too —
+    // only `undefined` means "field not being changed".
+    ...(slowQueryAlertMs !== undefined && { slowQueryAlertMs }),
+    ...(slowQueryAlertEmail !== undefined && { slowQueryAlertEmail }),
     ...(Object.keys(credentials).length > 0 && { credentials }),
   };
 }

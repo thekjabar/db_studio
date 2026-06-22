@@ -1,9 +1,39 @@
 import {
   ArrayNotEmpty, IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Length, Max, Min,
-  ValidateIf, ValidateNested,
+  ValidateIf, ValidateNested, registerDecorator, type ValidationOptions,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Dialect } from '@prisma/client';
+
+/**
+ * Each element must be a plain, non-null, non-array object — i.e. a row's
+ * primary-key map like { id: "..." }. We use a hand-rolled validator instead of
+ * `@IsObject({ each: true })` because the global ValidationPipe runs with
+ * `enableImplicitConversion: true`, which makes per-element `@IsObject`
+ * unreliable on a bare `Record[]` (no `@Type()` class to anchor it) and was
+ * rejecting valid payloads with "each value in pks must be an object".
+ */
+function IsPlainObjectArray(opts?: ValidationOptions) {
+  return function (object: object, propertyName: string) {
+    registerDecorator({
+      name: 'isPlainObjectArray',
+      target: object.constructor,
+      propertyName,
+      options: opts,
+      validator: {
+        validate(value: unknown) {
+          return (
+            Array.isArray(value) &&
+            value.every((v) => v !== null && typeof v === 'object' && !Array.isArray(v))
+          );
+        },
+        defaultMessage() {
+          return `${propertyName} must be a non-empty array of objects`;
+        },
+      },
+    });
+  };
+}
 
 export class SshTunnelDto {
   @IsString() @Length(1, 253) host!: string;
@@ -77,12 +107,12 @@ export class DeleteRowDto {
 }
 
 export class BulkDeleteRowsDto {
-  @IsArray() @ArrayNotEmpty() @IsObject({ each: true })
+  @IsArray() @ArrayNotEmpty() @IsPlainObjectArray()
   pks!: Record<string, unknown>[];
 }
 
 export class BulkUpdateRowsDto {
-  @IsArray() @ArrayNotEmpty() @IsObject({ each: true })
+  @IsArray() @ArrayNotEmpty() @IsPlainObjectArray()
   pks!: Record<string, unknown>[];
   @IsObject() values!: Record<string, unknown>;
 }

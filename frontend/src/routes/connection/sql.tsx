@@ -371,6 +371,14 @@ export default function SqlRoute() {
   const startRun = (confirmDestructive?: boolean) => {
     if (run.isPending || !sql.trim()) return;
     const sqlToRun = resolveSqlToRun();
+    // Supabase-style guard: any destructive write (DELETE / DROP / TRUNCATE /
+    // UPDATE / ALTER) prompts for confirmation BEFORE running — even with a
+    // WHERE clause. `confirmDestructive` is only set when re-invoked from the
+    // confirm dialog, so we don't loop.
+    if (!confirmDestructive && isDestructiveSql(sqlToRun)) {
+      setConfirmSql(sqlToRun);
+      return;
+    }
     const params = extractQueryParams(sqlToRun);
     if (params.length > 0) {
       // Prefill from last-used values for this connection.
@@ -1017,9 +1025,10 @@ export default function SqlRoute() {
       <Dialog open={!!confirmSql} onOpenChange={(v) => !v && setConfirmSql(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Destructive query detected</DialogTitle>
+            <DialogTitle>Confirm destructive query</DialogTitle>
             <DialogDescription>
-              This query modifies data without a WHERE clause. Confirm to run.
+              This statement changes or removes data (DELETE / DROP / TRUNCATE / UPDATE / ALTER).
+              Review it and confirm to run.
             </DialogDescription>
           </DialogHeader>
           <pre className="rounded-md bg-muted p-3 text-xs font-mono overflow-auto max-h-40">{confirmSql}</pre>
@@ -1114,6 +1123,20 @@ export function extractQueryParams(sql: string): string[] {
 }
 
 /** Replace :name tokens with escaped SQL literals. */
+/**
+ * Does this statement modify or destroy data? Conservative leading-keyword
+ * match (after stripping comments/whitespace) covering DELETE / DROP /
+ * TRUNCATE / UPDATE / ALTER. Used to gate execution behind a confirm dialog,
+ * matching Supabase — even when a WHERE clause is present.
+ */
+function isDestructiveSql(sql: string): boolean {
+  const cleaned = sql
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\n]*/g, " ")
+    .trim();
+  return /^\s*(delete\s+from|delete|drop|truncate|update|alter)\b/i.test(cleaned);
+}
+
 function substituteParams(sql: string, values: Record<string, string>): string {
   return sql.replace(/(^|[^:\w]):([a-zA-Z_][a-zA-Z0-9_]*)/g, (full, pre: string, name: string) => {
     if (!(name in values)) return full;

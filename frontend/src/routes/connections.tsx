@@ -473,7 +473,7 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
               </button>
             ))}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>Name</Label>
               <Input required value={name} onChange={(e) => setName(e.target.value)} placeholder="My Database" />
@@ -519,7 +519,7 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
             <Label>Database</Label>
             <Input required value={database} onChange={(e) => setDatabase(e.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>User</Label>
               <Input required value={user} onChange={(e) => setUser(e.target.value)} />
@@ -529,7 +529,7 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
               <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label>SSL mode</Label>
               <Input value={sslMode} onChange={(e) => setSslMode(e.target.value)} placeholder="disable | require" />

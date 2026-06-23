@@ -300,12 +300,12 @@ export default function TableRoute() {
   return (
     <div className="h-full flex flex-col">
       <Tabs defaultValue="data" className="flex flex-col h-full">
-        <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+        <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-border flex-wrap">
           <TabsList>
             <TabsTrigger value="data">Data</TabsTrigger>
             <TabsTrigger value="definition">Definition</TabsTrigger>
           </TabsList>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 flex-wrap justify-end">
             <Button ref={filterBtnRef} size="sm" variant="ghost" onClick={openFilter}>
               <Filter className="h-3.5 w-3.5" /> Filter
               {filters.length > 0 && (

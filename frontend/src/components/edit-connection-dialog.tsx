@@ -142,7 +142,7 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
               <Label>Database</Label>
               <Input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="unchanged" />
             </div>
-            <div className="grid grid-cols-2 gap-3 mt-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
               <div className="space-y-1.5">
                 <Label>User</Label>
                 <Input value={user} onChange={(e) => setUser(e.target.value)} placeholder="unchanged" />
@@ -183,7 +183,7 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
             <p className="text-xs text-muted-foreground">
               Email when a query exceeds the threshold (max one alert per 15 min). Leave blank to disable.
             </p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Threshold (ms)</Label>
                 <Input

@@ -9,6 +9,7 @@ import { CryptoModule } from './crypto/crypto.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { ConnectionsModule } from './connections/connections.module';
+import { AgentsModule } from './agents/agents.module';
 import { DriversModule } from './drivers/drivers.module';
 import { QueryModule } from './query/query.module';
 import { QueryCacheModule } from './query/query-cache.module';
@@ -72,6 +73,7 @@ import { SnippetsModule } from './snippets/snippets.module';
     AuthModule,
     UsersModule,
     ConnectionsModule,
+    AgentsModule,
     DriversModule,
     QueryModule,
     QueryCacheModule,

@@ -8,6 +8,9 @@ import { AuditService } from '../audit/audit.service';
 import { ConnectionCredentials, IDatabaseDriver } from '../drivers/driver.interface';
 import { CreateConnectionDto, UpdateConnectionDto } from './connections.dto';
 import { QuotaService } from '../common/quota.service';
+import { AgentsService } from '../agents/agents.service';
+import { AgentRelayService } from '../agents/agent-relay.service';
+import { AgentDriver } from '../agents/agent.driver';
 
 const PURPOSE = (id: string) => `conn:${id}`;
 
@@ -57,6 +60,8 @@ export class ConnectionsService implements OnModuleDestroy {
     private readonly ssh: SshTunnelService,
     private readonly audit: AuditService,
     private readonly quota: QuotaService,
+    private readonly agents: AgentsService,
+    private readonly relay: AgentRelayService,
   ) {
     this.sweeper = setInterval(() => this.sweepIdle(), SWEEP_INTERVAL_MS);
     // Don't keep the process alive just for this.
@@ -116,6 +121,8 @@ export class ConnectionsService implements OnModuleDestroy {
       readOnly: c.readOnly, statementTimeoutMs: c.statementTimeoutMs,
       slowQueryAlertMs: c.slowQueryAlertMs ?? null,
       slowQueryAlertEmail: c.slowQueryAlertEmail ?? null,
+      connectVia: c.connectVia ?? 'direct',
+      agentId: c.agentId ?? null,
       ownerId: c.ownerId, workspaceId: c.workspaceId ?? null,
       createdAt: c.createdAt, updatedAt: c.updatedAt,
     };
@@ -147,6 +154,8 @@ export class ConnectionsService implements OnModuleDestroy {
         name: dto.name, dialect: dto.dialect, credentialsCt: credCt,
         readOnly: dto.readOnly ?? false,
         statementTimeoutMs: dto.statementTimeoutMs ?? 30_000,
+        connectVia: dto.connectVia ?? 'direct',
+        agentId: dto.connectVia === 'agent' ? dto.agentId ?? null : null,
         ownerId: userId,
         workspaceId,
       },
@@ -200,6 +209,11 @@ export class ConnectionsService implements OnModuleDestroy {
       // Slow-query alert config: undefined = keep, null = clear.
       ...(dto.slowQueryAlertMs !== undefined && { slowQueryAlertMs: dto.slowQueryAlertMs }),
       ...(dto.slowQueryAlertEmail !== undefined && { slowQueryAlertEmail: dto.slowQueryAlertEmail }),
+      // Routing: switching to "agent" sets the agentId; "direct" clears it.
+      ...(dto.connectVia !== undefined && {
+        connectVia: dto.connectVia,
+        agentId: dto.connectVia === 'agent' ? dto.agentId ?? existing.agentId ?? null : null,
+      }),
     };
     if (dto.workspaceId !== undefined) {
       // Verify the caller is a member of the destination workspace.
@@ -327,6 +341,20 @@ export class ConnectionsService implements OnModuleDestroy {
   ): Promise<IDatabaseDriver> {
     const c = await this.get(id);
     const readOnly = overrides.readOnly ?? c.readOnly;
+
+    // Agent-routed connection: the cloud can't reach the DB. Decrypt the creds
+    // and hand them to the in-network agent, which runs the real driver locally.
+    // Not pooled here — the AgentDriver is a thin RPC proxy; the agent owns the
+    // actual connection pool.
+    if (c.connectVia === 'agent' && c.agentId) {
+      const agentId = await this.agents.resolveConnectionAgent(id);
+      const creds = await this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
+      return new AgentDriver(this.relay, agentId, id, creds, c.dialect as Dialect, {
+        readOnly,
+        statementTimeoutMs: c.statementTimeoutMs,
+      });
+    }
+
     // Replica routing only kicks in for read-only drivers (viewer role or
     // explicit read-only connection). Writes always hit the primary.
     const wantsReplica = overrides.preferReplica && readOnly && c.replicasCt;

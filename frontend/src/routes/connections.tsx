@@ -393,7 +393,19 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [sslMode, setSslMode] = useState("");
   const [sshEnabled, setSshEnabled] = useState(false);
   const [ssh, setSsh] = useState<SshTunnelInput>(defaultSshTunnel);
+  const [connectVia, setConnectVia] = useState<"direct" | "agent">("direct");
+  const [agentId, setAgentId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
+
+  // Agents live per-workspace; list them from the user's first workspace
+  // (where a new connection lands by default).
+  const wsForAgentsQ = useQuery({ queryKey: ["workspaces"], queryFn: () => api.listWorkspaces() });
+  const agentWsId = wsForAgentsQ.data?.[0]?.id;
+  const agentsQ = useQuery({
+    queryKey: ["agents", agentWsId],
+    queryFn: () => api.listAgents(agentWsId!),
+    enabled: !!agentWsId && connectVia === "agent",
+  });
 
   const reset = () => {
     setName("");
@@ -406,6 +418,8 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     setSslMode("");
     setSshEnabled(false);
     setSsh(defaultSshTunnel());
+    setConnectVia("direct");
+    setAgentId("");
     setDialect("POSTGRES");
   };
 
@@ -424,7 +438,14 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         readOnly,
         sslMode: sslMode || undefined,
         ssh: sshEnabled ? ssh : undefined,
+        connectVia,
+        agentId: connectVia === "agent" ? agentId || null : null,
       };
+      if (connectVia === "agent" && !agentId) {
+        toast.error("Select an agent, or create one first on the Agents page.");
+        setSubmitting(false);
+        return;
+      }
       const created = await api.createConnection(input);
       toast.success("Connection created");
       try {
@@ -545,6 +566,45 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
             value={ssh}
             onChange={setSsh}
           />
+
+          {/* Routing: direct vs through a network agent (for IP-allowlisted DBs). */}
+          <div className="border-t border-border pt-4 space-y-2">
+            <Label>How should we reach this database?</Label>
+            <Select value={connectVia} onValueChange={(v) => setConnectVia(v as "direct" | "agent")}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="direct">Direct — our servers connect to it</SelectItem>
+                <SelectItem value="agent">Through a network agent (inside your network)</SelectItem>
+              </SelectContent>
+            </Select>
+            {connectVia === "agent" && (
+              <div className="space-y-1.5 pt-1">
+                <Label className="text-xs text-muted-foreground">Agent</Label>
+                {(agentsQ.data ?? []).filter((a) => !a.revokedAt).length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No agents yet.{" "}
+                    <Link to="/agents" className="text-primary hover:underline">Create one on the Agents page</Link>, run it
+                    inside your network, then come back.
+                  </p>
+                ) : (
+                  <Select value={agentId} onValueChange={setAgentId}>
+                    <SelectTrigger><SelectValue placeholder="Pick an agent" /></SelectTrigger>
+                    <SelectContent>
+                      {(agentsQ.data ?? []).filter((a) => !a.revokedAt).map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {a.name} ({a.status})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <p className="text-[11px] text-muted-foreground">
+                  The agent originates the DB connection from your network — allowlist only the agent's IP, never ours.
+                </p>
+              </div>
+            )}
+          </div>
+
           <DialogFooter className="pt-2">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button type="submit" disabled={submitting}>

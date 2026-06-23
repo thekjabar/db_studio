@@ -13,9 +13,10 @@ import { ColumnMasksService } from './column-masks.service';
 import { RowFiltersController } from './row-filters.controller';
 import { RowFiltersService } from './row-filters.service';
 import { SensitiveScanController } from './sensitive-scan.controller';
+import { AgentsModule } from '../agents/agents.module';
 
 @Module({
-  imports: [DriversModule, RbacModule, forwardRef(() => AuditModule), forwardRef(() => WebhooksModule)],
+  imports: [DriversModule, RbacModule, forwardRef(() => AuditModule), forwardRef(() => WebhooksModule), AgentsModule],
   controllers: [
     ConnectionsController,
     IntrospectionController,

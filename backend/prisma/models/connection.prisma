@@ -19,6 +19,15 @@ model Connection {
   /// `clientHeldKey=true`. Safe to expose over the API — a salt without the
   /// passphrase gives an attacker nothing.
   clientKeyKdfSalt String?
+  /// How the cloud reaches this database:
+  ///   "direct" — cloud connects straight to host:port (or via SSH tunnel).
+  ///   "agent"  — cloud relays queries to a WorkspaceAgent running inside the
+  ///              customer's network, which originates the DB connection
+  ///              locally. For IP-allowlisted DBs the cloud can never reach.
+  connectVia       String             @default("direct")
+  /// Which agent serves this connection when connectVia = "agent".
+  agentId          String?
+  agent            WorkspaceAgent?    @relation(fields: [agentId], references: [id], onDelete: SetNull)
   ownerId          String
   owner            User               @relation("OwnedConnections", fields: [ownerId], references: [id], onDelete: Cascade)
   workspaceId      String?

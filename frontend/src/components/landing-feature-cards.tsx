@@ -137,13 +137,18 @@ export function LandingFeatureCards() {
 function FeatureCard({ item }: { item: FeatureItem }) {
   const Icon = item.icon;
   return (
-    <div className={cn("group relative rounded-xl p-px overflow-hidden", "feature-card-gradient")}>
-      <div className="relative rounded-xl border border-border bg-card/80 backdrop-blur-sm p-5 h-full transition-colors group-hover:border-primary/30">
-        <div className="h-9 w-9 rounded-md bg-primary/10 border border-primary/20 flex items-center justify-center mb-3 transition-transform group-hover:scale-110">
-          <Icon className="h-4 w-4 text-primary" />
+    <div className={cn("group relative rounded-2xl p-px overflow-hidden", "feature-card-gradient")}>
+      <div className="relative rounded-2xl border border-border/80 bg-linear-to-b from-card to-card/40 backdrop-blur-sm p-6 h-full transition-all duration-300 group-hover:border-primary/40 group-hover:-translate-y-1 group-hover:shadow-xl group-hover:shadow-primary/10">
+        {/* Top sheen that brightens on hover. */}
+        <div
+          aria-hidden
+          className="absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-primary/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"
+        />
+        <div className="h-11 w-11 rounded-xl bg-linear-to-br from-primary/25 to-primary/5 border border-primary/30 flex items-center justify-center mb-4 shadow-sm shadow-primary/10 transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3">
+          <Icon className="h-5 w-5 text-primary" />
         </div>
-        <div className="font-semibold transition-colors group-hover:text-primary">{item.title}</div>
-        <div className="mt-1 text-sm text-muted-foreground leading-relaxed">{item.body}</div>
+        <div className="font-semibold text-[15px] transition-colors group-hover:text-primary">{item.title}</div>
+        <div className="mt-1.5 text-sm text-muted-foreground leading-relaxed">{item.body}</div>
       </div>
     </div>
   );

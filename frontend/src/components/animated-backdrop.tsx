@@ -16,7 +16,7 @@ export function AnimatedBackdrop() {
   return (
     <div
       aria-hidden
-      className="pointer-events-none fixed inset-0 -z-10 overflow-hidden landing-backdrop"
+      className="pointer-events-none fixed inset-0 z-0 overflow-hidden landing-backdrop"
     >
       {/* Dot grid — small primary-tinted dots on a huge transparent tile.
           Drift is pure background-position change so there's no layer to
@@ -59,6 +59,23 @@ export function AnimatedBackdrop() {
         style={{
           background:
             "radial-gradient(ellipse 70% 50% at 50% 0%, rgba(62,207,142,0.12), transparent 60%)",
+        }}
+      />
+
+      {/* Mid/lower-page ambient glows so sections below the hero sit on
+          atmosphere instead of flat black. Spread down the scroll. */}
+      <div
+        className="absolute inset-x-0 top-[40%] h-[50vh] opacity-50 dark:opacity-40 blur-3xl"
+        style={{
+          background:
+            "radial-gradient(ellipse 50% 50% at 20% 30%, rgba(62,207,142,0.18), transparent 60%), radial-gradient(ellipse 45% 45% at 85% 70%, rgba(43,165,114,0.14), transparent 60%)",
+        }}
+      />
+      <div
+        className="absolute inset-x-0 bottom-0 h-[55vh] opacity-50 dark:opacity-40 blur-3xl"
+        style={{
+          background:
+            "radial-gradient(ellipse 55% 50% at 70% 40%, rgba(62,207,142,0.14), transparent 60%), radial-gradient(ellipse 40% 40% at 15% 80%, rgba(43,165,114,0.12), transparent 60%)",
         }}
       />
     </div>

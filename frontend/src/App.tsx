@@ -52,8 +52,18 @@ import NotFoundPage from "@/routes/not-found";
 import { Loader2 } from "lucide-react";
 
 function Protected({ children }: { children: React.ReactNode }) {
-  const { accessToken } = useAuth();
+  const { accessToken, bootstrapping } = useAuth();
   const loc = useLocation();
+  // Still restoring the session from the refresh cookie — don't bounce to
+  // /login yet, just show a spinner on THIS protected route. Public pages
+  // (landing/login/etc.) never hit this and render instantly.
+  if (bootstrapping && !accessToken) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-background text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+    );
+  }
   if (!accessToken) return <Navigate to="/login" replace state={{ from: loc }} />;
   return <>{children}</>;
 }
@@ -62,8 +72,7 @@ function Protected({ children }: { children: React.ReactNode }) {
 const FOCUS_REFRESH_MIN_INTERVAL_MS = 5 * 60_000;
 
 export default function App() {
-  const [bootstrapping, setBootstrapping] = useState(true);
-  const { accessToken, setAccessToken, setUser } = useAuth();
+  const { accessToken, setAccessToken, setUser, setBootstrapping } = useAuth();
   const didBootstrap = useRef(false);
   const lastFocusRefresh = useRef(0);
 
@@ -118,14 +127,6 @@ export default function App() {
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [setAccessToken]);
-
-  if (bootstrapping) {
-    return (
-      <div className="h-screen w-screen flex items-center justify-center bg-background text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin" />
-      </div>
-    );
-  }
 
   return (
     <Routes>

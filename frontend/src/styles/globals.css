@@ -307,6 +307,91 @@ body {
   animation: landingFloat 4s ease-in-out infinite;
 }
 
+/* ============================================================
+   Premium hero redesign — backdrop, entrance, and interaction motion.
+   ============================================================ */
+
+/* Animated multi-stop mesh gradient that slowly drifts behind the hero. */
+@keyframes heroMeshDrift {
+  0%   { transform: translate3d(0,0,0) scale(1); }
+  50%  { transform: translate3d(2%, -2%, 0) scale(1.05); }
+  100% { transform: translate3d(0,0,0) scale(1); }
+}
+.hero-mesh {
+  background:
+    radial-gradient(50% 55% at 20% 0%, hsl(152 75% 45% / 0.45), transparent 60%),
+    radial-gradient(45% 50% at 80% 5%, hsl(172 75% 50% / 0.38), transparent 60%),
+    radial-gradient(55% 60% at 70% 60%, hsl(152 70% 42% / 0.30), transparent 65%),
+    radial-gradient(40% 45% at 25% 55%, hsl(190 75% 50% / 0.25), transparent 60%);
+  filter: blur(30px);
+  animation: heroMeshDrift 18s ease-in-out infinite;
+}
+
+/* Slowly drifting conic glow ring. */
+@keyframes heroConicSpin { to { transform: rotate(360deg); } }
+.hero-conic {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    hsl(152 70% 50% / 0.10) 60deg,
+    transparent 140deg,
+    hsl(172 70% 55% / 0.10) 240deg,
+    transparent 320deg
+  );
+  animation: heroConicSpin 30s linear infinite;
+}
+
+/* Fine grid that fades toward the edges — adds depth without noise. */
+.hero-grid {
+  background-image:
+    linear-gradient(to right, hsl(152 45% 55% / 0.10) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(152 45% 55% / 0.10) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 75% 70% at 50% 35%, black 20%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 35%, black 20%, transparent 80%);
+}
+
+/* Staggered entrance — plays once on load (not scroll). Use with inline
+   animation-delay for a cascade. */
+@keyframes heroRise {
+  from { opacity: 0; transform: translate3d(0, 18px, 0); filter: blur(6px); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); filter: blur(0); }
+}
+.hero-rise {
+  opacity: 0;
+  animation: heroRise 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Sheen sweep across the primary CTA on hover. */
+.cta-sheen { position: relative; overflow: hidden; }
+.cta-sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, hsl(0 0% 100% / 0.35) 50%, transparent 70%);
+  transform: translateX(-120%);
+  transition: transform 0.6s ease;
+}
+.cta-sheen:hover::after { transform: translateX(120%); }
+
+/* Soft pulsing glow ring for the CTA. */
+@keyframes ctaGlow {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(152 61% 50% / 0.0), 0 10px 30px -10px hsl(152 61% 45% / 0.5); }
+  50%      { box-shadow: 0 0 0 6px hsl(152 61% 50% / 0.10), 0 14px 40px -8px hsl(152 61% 45% / 0.6); }
+}
+.cta-glow { animation: ctaGlow 3s ease-in-out infinite; }
+
+/* Blinking caret for the hero mock's SQL editor. */
+@keyframes heroCaretBlink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.hero-caret { animation: heroCaretBlink 1.1s steps(1) infinite; }
+
+/* Floating product window — gentle bob + the tilt is applied inline via JS. */
+@keyframes heroWindowFloat {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
+}
+.hero-window-float { animation: heroWindowFloat 6s ease-in-out infinite; }
+
 /* Respect reduced-motion for all the landing animations above. Apply
    globally so any new keyframe we add is covered without ceremony. */
 @media (prefers-reduced-motion: reduce) {

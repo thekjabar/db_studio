@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, Database, Sparkles } from "lucide-react";
+import { ArrowRight, Database } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/lib/auth-store";
-import { LandingHeroDemo } from "@/components/landing-hero-demo";
+import { LandingHeroMock } from "@/components/landing-hero-mock";
 import { AnimatedBackdrop } from "@/components/animated-backdrop";
 import { LandingHowItWorks } from "@/components/landing-how-it-works";
 import { LandingStats } from "@/components/landing-stats";
@@ -10,7 +10,7 @@ import { LandingMarquee } from "@/components/landing-marquee";
 import { LandingShowcase } from "@/components/landing-showcase";
 import { LandingFeatureCards } from "@/components/landing-feature-cards";
 import { LandingPricing } from "@/components/landing-pricing";
-import { LandingTestimonials } from "@/components/landing-testimonials";
+// import { LandingTestimonials } from "@/components/landing-testimonials"; // hidden until real quotes
 import { LandingFaq } from "@/components/landing-faq";
 import { ScrollReveal } from "@/components/scroll-reveal";
 
@@ -22,6 +22,9 @@ export default function LandingPage() {
   return (
     <div className="relative min-h-screen bg-background text-foreground overflow-x-hidden">
       <AnimatedBackdrop />
+      {/* All content sits above the z-0 fixed backdrop so the ambient glows
+          show through the (mostly transparent) sections. */}
+      <div className="relative z-10">
       <header className="h-14 flex items-center justify-between px-6 border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-20">
         <Link to="/" className="flex items-center gap-2 font-semibold">
           <Database className="h-5 w-5 text-primary" />
@@ -61,73 +64,99 @@ export default function LandingPage() {
         </div>
       </header>
 
-      {/* Hero — two-column layout on desktop: copy on the left, live demo on the right.
-          On mobile the demo stacks below the copy so it's still visible without scrolling
-          past an empty header. */}
+      {/* Hero — dramatic, centered above a floating product window. Layered
+          animated backdrop (mesh + conic glow + fading grid) gives depth; the
+          copy cascades in on load via staggered hero-rise. */}
       <section className="relative overflow-hidden">
-        {/* Ambient gradient behind the hero — same recipe as the app shell's
-            gradient-bg utility but without importing it, since the landing
-            surface should stay a bit more muted. */}
-        <div
-          aria-hidden
-          className="absolute inset-0 -z-10"
-          style={{
-            background:
-              "radial-gradient(ellipse 70% 40% at 20% 20%, rgba(62,207,142,0.15), transparent 60%), radial-gradient(ellipse 60% 50% at 90% 80%, rgba(62,207,142,0.08), transparent 60%)",
-          }}
-        />
-        <div className="max-w-6xl mx-auto px-6 py-16 sm:py-24 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-12 items-center">
-          <div>
-            <div className="landing-float inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs text-muted-foreground mb-6">
-              <Sparkles className="h-3 w-3 text-primary" />
-              Every tool a DB admin actually needs, in one place
-            </div>
-            <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight leading-[1.1]">
-              The database studio for teams who
-              {" "}
-              <span className="landing-gradient-text">don't want five tools</span>.
-            </h1>
-            <p className="mt-6 text-base sm:text-lg text-muted-foreground max-w-xl">
-              Browse, query, schedule, back up, and share work across Postgres, MySQL, SQL Server,
-              and SQLite. One interface, role-aware, with an AI that actually knows your schema.
-            </p>
-            <div className="mt-8 flex items-center gap-3 flex-wrap">
-              {isAuthed ? (
-                <Link
-                  to="/connections"
-                  className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-5 py-2.5 text-sm font-medium"
-                >
-                  Go to your connections <ArrowRight className="h-4 w-4" />
-                </Link>
-              ) : (
-                <>
-                  <Link
-                    to="/signup"
-                    className="inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-md px-5 py-2.5 text-sm font-medium"
-                  >
-                    Get started free <ArrowRight className="h-4 w-4" />
-                  </Link>
-                  <Link
-                    to="/login"
-                    className="inline-flex items-center gap-2 border border-border hover:bg-accent rounded-md px-5 py-2.5 text-sm"
-                  >
-                    Sign in
-                  </Link>
-                </>
-              )}
-            </div>
-            <div className="mt-6 flex items-center gap-4 text-[11px] text-muted-foreground">
-              <span className="inline-flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Live demo →
-              </span>
-              <span>Postgres · MySQL · SQL Server · SQLite</span>
-            </div>
+        {/* Layered backdrop — z-0 so it paints above the page bg but below the
+            hero content (which is relative z-10). */}
+        <div aria-hidden className="absolute inset-0 z-0 pointer-events-none">
+          <div className="absolute inset-0 hero-grid opacity-80" />
+          <div className="absolute -top-1/3 left-1/2 -translate-x-1/2 h-[120%] w-[140%] hero-conic opacity-70" />
+          <div className="absolute inset-0 hero-mesh" />
+          {/* Fade the backdrop into the page below the hero. */}
+          <div className="absolute inset-x-0 bottom-0 h-40 bg-linear-to-b from-transparent to-background" />
+        </div>
+
+        <div className="relative z-10 max-w-5xl mx-auto px-6 pt-20 pb-10 sm:pt-28 text-center">
+          <div
+            className="hero-rise landing-float inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 px-3.5 py-1.5 text-xs text-foreground/80 mb-7 backdrop-blur-sm"
+            style={{ animationDelay: "0ms" }}
+          >
+            Every tool a DB team actually needs — in one studio
           </div>
 
-          <div className="landing-hero-respect-rm">
-            <LandingHeroDemo />
+          <h1
+            className="hero-rise text-5xl sm:text-6xl lg:text-7xl font-semibold tracking-tight leading-[1.05]"
+            style={{ animationDelay: "90ms" }}
+          >
+            One studio for your
+            <br className="hidden sm:block" />{" "}
+            <span className="landing-gradient-text">entire database</span>.
+          </h1>
+
+          <p
+            className="hero-rise mt-7 text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed"
+            style={{ animationDelay: "180ms" }}
+          >
+            Browse, query, schedule, and share across Postgres, MySQL, SQL Server, and SQLite —
+            role-aware, with an AI that actually knows your schema.
+          </p>
+
+          <div
+            className="hero-rise mt-9 flex items-center justify-center gap-3 flex-wrap"
+            style={{ animationDelay: "270ms" }}
+          >
+            {isAuthed ? (
+              <Link
+                to="/connections"
+                className="cta-sheen cta-glow inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg px-6 py-3 text-sm font-semibold"
+              >
+                Go to your connections <ArrowRight className="h-4 w-4" />
+              </Link>
+            ) : (
+              <>
+                <Link
+                  to="/signup"
+                  className="cta-sheen cta-glow inline-flex items-center gap-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg px-6 py-3 text-sm font-semibold"
+                >
+                  Get started free <ArrowRight className="h-4 w-4" />
+                </Link>
+                <Link
+                  to="/login"
+                  className="inline-flex items-center gap-2 border border-border bg-card/50 backdrop-blur-sm hover:bg-accent rounded-lg px-6 py-3 text-sm font-medium"
+                >
+                  Sign in
+                </Link>
+              </>
+            )}
           </div>
+
+          <div
+            className="hero-rise mt-6 flex items-center justify-center gap-4 text-[11px] text-muted-foreground"
+            style={{ animationDelay: "360ms" }}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              No credit card required
+            </span>
+            <span className="hidden sm:inline">Postgres · MySQL · SQL Server · SQLite</span>
+          </div>
+        </div>
+
+        {/* Floating product window, centered below the copy. */}
+        <div
+          className="hero-rise relative z-10 max-w-5xl mx-auto px-6 pb-20"
+          style={{ animationDelay: "450ms" }}
+        >
+          <div className="hero-window-float rounded-xl border border-border/70 bg-card/80 backdrop-blur-md shadow-2xl shadow-primary/10 overflow-hidden ring-1 ring-white/5">
+            <LandingHeroMock />
+          </div>
+          {/* Glow puddle under the window. */}
+          <div
+            aria-hidden
+            className="absolute -bottom-2 left-1/2 -translate-x-1/2 h-24 w-3/4 rounded-full bg-primary/20 blur-3xl"
+          />
         </div>
       </section>
 
@@ -147,8 +176,9 @@ export default function LandingPage() {
           scroll-reveal and hover gradient-border. */}
       <LandingFeatureCards />
 
-      {/* Social proof — testimonial cards. */}
-      <LandingTestimonials />
+      {/* Social proof — testimonial cards. Hidden until we have real, attributed
+          quotes. Re-enable by uncommenting <LandingTestimonials /> below. */}
+      {/* <LandingTestimonials /> */}
 
       {/* Pricing — three tiers, middle one highlighted. */}
       <LandingPricing />
@@ -193,6 +223,7 @@ export default function LandingPage() {
       <footer className="border-t border-border text-xs text-muted-foreground py-6 text-center">
         © {new Date().getFullYear()} Query Schema
       </footer>
+      </div>
     </div>
   );
 }

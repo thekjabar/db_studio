@@ -212,7 +212,7 @@ export default function AgentsPage() {
 {`docker run -d --name queryschema-agent --restart unless-stopped \\
   -e AGENT_RELAY_URL=https://database-api.mrwari.com \\
   -e AGENT_TOKEN=<the token shown on create> \\
-  queryschema/agent`}
+  karwanarch/agent`}
           </pre>
           <p>
             That's it — no repo to clone, no ports to open (it connects outbound only). It auto-restarts

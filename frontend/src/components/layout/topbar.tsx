@@ -58,7 +58,7 @@ export function TopBar({ connection, onOpenPalette, crumbs, onMenuClick }: Props
   const logout = async () => {
     const ok = await modal.confirm({
       title: "Log out?",
-      description: "You'll need to sign in again to continue using DB Studio.",
+      description: "You'll need to sign in again to continue using Query Schema.",
       confirmLabel: "Log out",
     });
     if (!ok) return;

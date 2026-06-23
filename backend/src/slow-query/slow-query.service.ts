@@ -128,7 +128,7 @@ export class SlowQueryService {
     this.alertLastSent.set(connectionId, Date.now());
     await this.email.send({
       to: [conn.slowQueryAlertEmail],
-      subject: `[DB Studio] Slow query on ${conn.name} — ${Math.round(durationMs)}ms`,
+      subject: `[Query Schema] Slow query on ${conn.name} — ${Math.round(durationMs)}ms`,
       body:
         `A query on connection "${conn.name}" exceeded your alert threshold ` +
         `(${conn.slowQueryAlertMs}ms).\n\nDuration: ${Math.round(durationMs)}ms\n\nSQL:\n${sql.slice(0, 2000)}\n\n` +

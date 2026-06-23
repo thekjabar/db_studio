@@ -51,7 +51,7 @@ export default function ApiKeysRoute() {
       <header className="h-14 flex items-center justify-between px-6 border-b border-border bg-card/50 backdrop-blur-sm">
         <Link to="/connections" className="flex items-center gap-2 font-semibold">
           <Database className="h-5 w-5 text-primary" />
-          DB Studio
+          Query Schema
         </Link>
         <div className="flex items-center gap-2">
           <Link to="/connections" className="text-sm text-muted-foreground hover:text-foreground">
@@ -69,7 +69,7 @@ export default function ApiKeysRoute() {
               <Key className="h-6 w-6" /> API keys
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Use these tokens to script against DB Studio. Send them as{" "}
+              Use these tokens to script against Query Schema. Send them as{" "}
               <code className="bg-muted px-1 rounded text-xs">Authorization: Bearer dbs_live_…</code>
               {" "}against <code className="bg-muted px-1 rounded text-xs">/api/v1/*</code>.
             </p>

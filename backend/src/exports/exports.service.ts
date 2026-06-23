@@ -136,7 +136,7 @@ export class ExportsService {
     if (recipients.length === 0) throw new BadRequestException('At least one email recipient required');
     await this.email.send({
       to: recipients,
-      subject: `[DB Studio] ${title} — ${rows.length} rows`,
+      subject: `[Query Schema] ${title} — ${rows.length} rows`,
       body: `${title}\n\nRows: ${rows.length}\n\nSee attachment for the full CSV.`,
       csv,
       filename: `${title.replace(/[^a-z0-9-_]+/gi, '_')}.csv`,

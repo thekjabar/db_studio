@@ -72,7 +72,7 @@ function Inner({ connectionId }: { connectionId: string }) {
             <WebhookIcon className="h-5 w-5" /> Webhooks
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            POST JSON to a URL when rows in a watched table change through DB Studio.
+            POST JSON to a URL when rows in a watched table change through Query Schema.
           </p>
         </div>
         <Button onClick={() => setDialogOpen(true)}>
@@ -83,7 +83,7 @@ function Inner({ connectionId }: { connectionId: string }) {
       <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
         <div>
-          <strong>Scope:</strong> Webhooks fire on row changes made through DB Studio's row APIs
+          <strong>Scope:</strong> Webhooks fire on row changes made through Query Schema's row APIs
           (Table view, bulk edit/delete). External writes to the target DB are not detected — that
           would require DB-native CDC (triggers / logical replication).
         </div>

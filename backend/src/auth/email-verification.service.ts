@@ -53,11 +53,11 @@ export class EmailVerificationService {
       try {
         await this.email.send({
           to: [email],
-          subject: 'Verify your DB Studio email',
+          subject: 'Verify your Query Schema email',
           body:
             `Click the link below to verify your email address. ` +
             `The link expires in 24 hours.\n\n${link}\n\n` +
-            `If you didn't sign up for DB Studio, you can ignore this email.`,
+            `If you didn't sign up for Query Schema, you can ignore this email.`,
         });
       } catch (err) {
         // Surface as a service-unavailable at the controller level. We keep

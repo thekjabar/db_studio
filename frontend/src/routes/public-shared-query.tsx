@@ -176,7 +176,7 @@ export default function PublicSharedQueryRoute() {
       </div>
 
       <footer className="border-t border-border bg-card/40 px-4 py-2 text-center text-[11px] text-muted-foreground">
-        Powered by DB Studio · read-only shared query
+        Powered by Query Schema · read-only shared query
       </footer>
     </div>
   );

@@ -152,7 +152,7 @@ function buildEmailHtml(input: {
     ${table}
     ${note.length ? `<p style="font-size:12px;color:#6b7280;margin-top:10px;">${note.map(escapeHtml).join(' ')}</p>` : ''}
     <p style="font-size:11px;color:#9ca3af;margin-top:16px;border-top:1px solid #f1f5f9;padding-top:10px;">
-      Sent by DB Studio · scheduled query
+      Sent by Query Schema · scheduled query
     </p>
   </div>`;
 }
@@ -331,7 +331,7 @@ export class SchedulerWorker implements OnModuleInit, OnModuleDestroy {
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean);
-        const subjectPrefix = condition ? '[DB Studio alert]' : '[DB Studio]';
+        const subjectPrefix = condition ? '[Query Schema alert]' : '[Query Schema]';
         const subject = condition
           ? `${subjectPrefix} ${schedule.name} — ${outcome.summary}`
           : `${subjectPrefix} ${schedule.name} — ${rows.length} rows`;

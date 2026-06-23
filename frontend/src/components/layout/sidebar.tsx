@@ -109,7 +109,7 @@ export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSche
       <div className="flex items-center justify-between px-3 py-2 border-b border-border">
         <Link to="/connections" className="flex items-center gap-2 font-semibold text-sm">
           <Database className="h-4 w-4 text-primary" />
-          <span>DB Studio</span>
+          <span>Query Schema</span>
         </Link>
         <Button size="icon" variant="ghost" className="h-6 w-6" onClick={onToggleCollapse}>
           <ChevronsLeft className="h-3.5 w-3.5" />

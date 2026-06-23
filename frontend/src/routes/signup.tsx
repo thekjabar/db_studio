@@ -56,13 +56,13 @@ export default function SignupPage() {
         <div className="flex flex-col items-center mb-8">
           <Link
             to="/"
-            aria-label="DB Studio home"
+            aria-label="Query Schema home"
             className="h-12 w-12 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center mb-3 hover:bg-primary/20 transition-colors"
           >
             <Database className="h-6 w-6 text-primary" />
           </Link>
           <h1 className="text-xl font-semibold">Create account</h1>
-          <p className="text-sm text-muted-foreground mt-1">Get started with DB Studio</p>
+          <p className="text-sm text-muted-foreground mt-1">Get started with Query Schema</p>
         </div>
         <div className="rounded-lg border border-border bg-card shadow-xl p-6">
           <form onSubmit={submit} className="space-y-4">

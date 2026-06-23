@@ -100,7 +100,7 @@ export default function ConnectionsPage() {
       <header className="h-14 flex items-center justify-between px-6 border-b border-border bg-card/50 backdrop-blur-sm">
         <Link to="/connections" className="flex items-center gap-2 font-semibold">
           <Database className="h-5 w-5 text-primary" />
-          DB Studio
+          Query Schema
         </Link>
         <div className="flex items-center gap-2">
           <Link to="/dashboards" className="text-sm text-muted-foreground hover:text-foreground">
@@ -320,7 +320,7 @@ function FirstRunGuide({ onCreate }: { onCreate: () => void }) {
         <div className="h-12 w-12 mx-auto rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center">
           <Database className="h-6 w-6 text-primary" />
         </div>
-        <h2 className="text-xl font-semibold">Welcome to DB Studio</h2>
+        <h2 className="text-xl font-semibold">Welcome to Query Schema</h2>
         <p className="text-sm text-muted-foreground">
           3 steps to a connected, queryable database. Most teams finish in under 2 minutes.
         </p>

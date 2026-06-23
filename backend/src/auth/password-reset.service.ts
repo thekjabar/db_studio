@@ -58,7 +58,7 @@ export class PasswordResetService {
       try {
         await this.email.send({
           to: [email],
-          subject: 'Reset your DB Studio password',
+          subject: 'Reset your Query Schema password',
           body:
             `Click the link below to reset your password. The link expires in ` +
             `1 hour and can only be used once.\n\n${link}\n\n` +

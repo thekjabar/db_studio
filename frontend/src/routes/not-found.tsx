@@ -11,7 +11,7 @@ export default function NotFoundPage() {
       <header className="h-14 flex items-center px-6 border-b border-border bg-card/50">
         <Link to="/" className="flex items-center gap-2 font-semibold">
           <Database className="h-5 w-5 text-primary" />
-          DB Studio
+          Query Schema
         </Link>
       </header>
 

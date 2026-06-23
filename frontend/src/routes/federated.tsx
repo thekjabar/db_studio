@@ -111,7 +111,7 @@ export default function FederatedRoute() {
       <header className="h-14 flex items-center justify-between px-6 border-b border-border bg-card/50 backdrop-blur-sm">
         <Link to="/connections" className="flex items-center gap-2 font-semibold">
           <Database className="h-5 w-5 text-primary" />
-          DB Studio
+          Query Schema
         </Link>
         <div className="flex items-center gap-2">
           <Link to="/connections" className="text-sm text-muted-foreground hover:text-foreground">

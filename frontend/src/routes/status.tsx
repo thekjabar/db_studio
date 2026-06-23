@@ -53,7 +53,7 @@ export default function StatusPage() {
     <div className="min-h-screen bg-background">
       <header className="h-14 flex items-center px-6 border-b border-border bg-card/50">
         <Database className="h-5 w-5 text-primary mr-2" />
-        <span className="font-semibold">DB Studio · Status</span>
+        <span className="font-semibold">Query Schema · Status</span>
         <span className="ml-auto text-[11px] text-muted-foreground">
           As of {format(new Date(s.asOf), "MMM d HH:mm:ss")}
         </span>

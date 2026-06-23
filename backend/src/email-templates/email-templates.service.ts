@@ -77,7 +77,7 @@ export class EmailTemplatesService {
     });
   }
 
-  /** `render('welcome', { appName: 'DB Studio', ... })` */
+  /** `render('welcome', { appName: 'Query Schema', ... })` */
   async render(name: string, vars: Record<string, string | number>) {
     const row = await this.prisma.emailTemplate.findUnique({ where: { name } });
     const t = row ?? (DEFAULTS[name]

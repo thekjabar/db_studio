@@ -170,7 +170,7 @@ export default function LoginPage() {
           <div className="flex flex-col items-center mb-8">
             <Link
               to="/"
-              aria-label="DB Studio home"
+              aria-label="Query Schema home"
               className="h-12 w-12 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center mb-3 hover:bg-primary/20 transition-colors"
             >
               <Database className="h-6 w-6 text-primary" />
@@ -214,12 +214,12 @@ export default function LoginPage() {
         <div className="flex flex-col items-center mb-8">
           <Link
             to="/"
-            aria-label="DB Studio home"
+            aria-label="Query Schema home"
             className="h-12 w-12 rounded-xl bg-primary/15 border border-primary/30 flex items-center justify-center mb-3 hover:bg-primary/20 transition-colors"
           >
             <Database className="h-6 w-6 text-primary" />
           </Link>
-          <h1 className="text-xl font-semibold">Sign in to DB Studio</h1>
+          <h1 className="text-xl font-semibold">Sign in to Query Schema</h1>
           <p className="text-sm text-muted-foreground mt-1">Welcome back</p>
         </div>
         <div className="rounded-lg border border-border bg-card shadow-xl p-6">

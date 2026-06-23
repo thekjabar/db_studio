@@ -37,7 +37,6 @@ import MigrationExportRoute from "@/routes/connection/migration-export";
 import WebhooksRoute from "@/routes/connection/webhooks";
 import SchedulesRoute from "@/routes/schedules";
 import FederatedRoute from "@/routes/federated";
-import AgentsPage from "@/routes/agents";
 import ApiKeysRoute from "@/routes/api-keys";
 import WorkspaceSsoRoute from "@/routes/workspace-sso";
 import DashboardsListRoute from "@/routes/dashboards";
@@ -150,14 +149,6 @@ export default function App() {
         element={
           <Protected>
             <SchedulesRoute />
-          </Protected>
-        }
-      />
-      <Route
-        path="/agents"
-        element={
-          <Protected>
-            <AgentsPage />
           </Protected>
         }
       />

@@ -97,23 +97,9 @@ export interface Connection {
   slowQueryAlertMs?: number | null;
   slowQueryAlertEmail?: string | null;
   requireReview?: boolean;
-  connectVia?: "direct" | "agent";
-  agentId?: string | null;
   workspaceId?: string | null;
   createdAt?: string;
   updatedAt?: string;
-}
-
-export interface WorkspaceAgent {
-  id: string;
-  workspaceId: string;
-  name: string;
-  tokenPrefix: string;
-  status: "online" | "offline";
-  lastSeenAt: string | null;
-  agentVersion: string | null;
-  revokedAt: string | null;
-  createdAt: string;
 }
 
 export interface SshTunnelInput {
@@ -140,8 +126,6 @@ export interface CreateConnectionInput {
   slowQueryAlertMs?: number | null;
   slowQueryAlertEmail?: string | null;
   ssh?: SshTunnelInput | null;
-  connectVia?: "direct" | "agent";
-  agentId?: string | null;
 }
 
 export interface TableInfo {
@@ -720,7 +704,7 @@ export interface SchemaChangeResponse {
 
 // ---- API functions ----
 function toCreatePayload(input: CreateConnectionInput) {
-  const { name, dialect, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh, connectVia, agentId } = input;
+  const { name, dialect, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh } = input;
   const credentials: Record<string, unknown> = { host, port, database, user, password, sslMode };
   if (ssh) credentials.ssh = ssh;
   return {
@@ -729,15 +713,13 @@ function toCreatePayload(input: CreateConnectionInput) {
     readOnly,
     statementTimeoutMs,
     credentials,
-    ...(connectVia && { connectVia }),
-    ...(connectVia === "agent" && agentId ? { agentId } : {}),
   };
 }
 
 function toUpdatePayload(input: Partial<CreateConnectionInput>) {
   const {
     name, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh,
-    slowQueryAlertMs, slowQueryAlertEmail, connectVia, agentId,
+    slowQueryAlertMs, slowQueryAlertEmail,
   } = input;
   const credentials: Record<string, unknown> = {};
   if (host !== undefined) credentials.host = host;
@@ -755,8 +737,6 @@ function toUpdatePayload(input: Partial<CreateConnectionInput>) {
     // only `undefined` means "field not being changed".
     ...(slowQueryAlertMs !== undefined && { slowQueryAlertMs }),
     ...(slowQueryAlertEmail !== undefined && { slowQueryAlertEmail }),
-    ...(connectVia !== undefined && { connectVia }),
-    ...(agentId !== undefined && { agentId }),
     ...(Object.keys(credentials).length > 0 && { credentials }),
   };
 }
@@ -1216,18 +1196,6 @@ export const api = {
         };
       }>(`/connections/${connectionId}/migration-export/snapshots/${snapshotId}/diff`)
       .then((r) => r.data),
-
-  // ---- Network agents (per-workspace) ----
-  listAgents: (workspaceId: string) =>
-    http.get<WorkspaceAgent[]>(`/workspaces/${workspaceId}/agents`).then((r) => r.data),
-  createAgent: (workspaceId: string, name: string) =>
-    http
-      .post<WorkspaceAgent & { token: string }>(`/workspaces/${workspaceId}/agents`, { name })
-      .then((r) => r.data),
-  revokeAgent: (workspaceId: string, agentId: string) =>
-    http.post<WorkspaceAgent>(`/workspaces/${workspaceId}/agents/${agentId}/revoke`).then((r) => r.data),
-  deleteAgent: (workspaceId: string, agentId: string) =>
-    http.delete(`/workspaces/${workspaceId}/agents/${agentId}`).then((r) => r.data),
 
   federatedQuery: (body: {
     sources: { alias: string; connectionId: string }[];

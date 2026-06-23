@@ -125,7 +125,7 @@ export function LandingHeroDemo() {
           <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/70" />
           <div className="ml-3 flex items-center gap-1.5 text-[11px] text-muted-foreground">
             <Database className="h-3 w-3 text-primary" />
-            <span className="font-mono">studio.dbstudio.app</span>
+            <span className="font-mono">app.queryschema.com</span>
           </div>
         </div>
 

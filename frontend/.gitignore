@@ -5,3 +5,6 @@ dist
 *.log
 .vite
 .DS_Store
+
+# Compiled TS output should never be committed alongside source
+src/**/*.js

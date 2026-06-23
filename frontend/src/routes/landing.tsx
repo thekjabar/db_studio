@@ -9,6 +9,9 @@ import { LandingStats } from "@/components/landing-stats";
 import { LandingMarquee } from "@/components/landing-marquee";
 import { LandingShowcase } from "@/components/landing-showcase";
 import { LandingFeatureCards } from "@/components/landing-feature-cards";
+import { LandingPricing } from "@/components/landing-pricing";
+import { LandingTestimonials } from "@/components/landing-testimonials";
+import { LandingFaq } from "@/components/landing-faq";
 import { ScrollReveal } from "@/components/scroll-reveal";
 
 
@@ -25,6 +28,12 @@ export default function LandingPage() {
           Query Schema
         </Link>
         <div className="flex items-center gap-2">
+          <a
+            href="#pricing"
+            className="hidden sm:inline text-sm text-muted-foreground hover:text-foreground px-3 py-1.5"
+          >
+            Pricing
+          </a>
           <ThemeToggle />
           {isAuthed ? (
             <Link
@@ -69,14 +78,14 @@ export default function LandingPage() {
         />
         <div className="max-w-6xl mx-auto px-6 py-16 sm:py-24 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)] gap-12 items-center">
           <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground mb-6">
-              <Sparkles className="h-3 w-3" />
+            <div className="landing-float inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs text-muted-foreground mb-6">
+              <Sparkles className="h-3 w-3 text-primary" />
               Every tool a DB admin actually needs, in one place
             </div>
-            <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight">
+            <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight leading-[1.1]">
               The database studio for teams who
               {" "}
-              <span className="text-primary">don't want five tools</span>.
+              <span className="landing-gradient-text">don't want five tools</span>.
             </h1>
             <p className="mt-6 text-base sm:text-lg text-muted-foreground max-w-xl">
               Browse, query, schedule, back up, and share work across Postgres, MySQL, SQL Server,
@@ -138,6 +147,15 @@ export default function LandingPage() {
           scroll-reveal and hover gradient-border. */}
       <LandingFeatureCards />
 
+      {/* Social proof — testimonial cards. */}
+      <LandingTestimonials />
+
+      {/* Pricing — three tiers, middle one highlighted. */}
+      <LandingPricing />
+
+      {/* FAQ — self-contained accordion. */}
+      <LandingFaq />
+
       {/* Closing call-out */}
       <section className="landing-animations max-w-5xl mx-auto px-6 py-24">
         <ScrollReveal from="up">
@@ -154,11 +172,11 @@ export default function LandingPage() {
               }}
             />
             <h2 className="relative text-3xl sm:text-4xl font-semibold tracking-tight">
-              Open source. Self-hostable. <span className="text-primary">Yours.</span>
+              One studio for your whole team. <span className="text-primary">Secure by default.</span>
             </h2>
             <p className="relative mt-4 text-muted-foreground max-w-xl mx-auto">
-              Run it in your infra, point it at your databases, give your team access. Connection
-              credentials are encrypted with AES-256-GCM and never leave your server.
+              Connect your databases, invite your team, and start in minutes. Connection credentials
+              are encrypted with AES-256-GCM, access is role-aware, and every action is audit-logged.
             </p>
             <div className="relative mt-8 flex items-center justify-center gap-3 flex-wrap">
               <Link

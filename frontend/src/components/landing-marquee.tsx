@@ -5,7 +5,6 @@ import {
   Database,
   Key,
   MessageSquare,
-  Server,
   ShieldCheck,
   Sparkles,
   Terminal,
@@ -33,7 +32,6 @@ const PILLS = [
   { icon: ShieldCheck, label: "OIDC SSO" },
   { icon: Terminal, label: "CLI" },
   { icon: Braces, label: "Terraform" },
-  { icon: Server, label: "Self-host" },
   { icon: Boxes, label: "Docker" },
 ] as const;
 

@@ -276,6 +276,37 @@ body {
   initial-value: 0deg;
 }
 
+/* Animated gradient text — used on the hero headline accent word. The
+   background sweeps horizontally and is clipped to the text. */
+@keyframes landingGradientText {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+.landing-gradient-text {
+  background-image: linear-gradient(
+    100deg,
+    hsl(152 65% 45%),
+    hsl(152 80% 60%),
+    hsl(172 70% 55%),
+    hsl(152 65% 45%)
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: landingGradientText 6s ease-in-out infinite;
+}
+
+/* Soft float for the hero badge / accent chips. */
+@keyframes landingFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+.landing-float {
+  animation: landingFloat 4s ease-in-out infinite;
+}
+
 /* Respect reduced-motion for all the landing animations above. Apply
    globally so any new keyframe we add is covered without ceremony. */
 @media (prefers-reduced-motion: reduce) {

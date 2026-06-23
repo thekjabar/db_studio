@@ -206,18 +206,14 @@ export default function AgentsPage() {
         </div>
 
         <div className="rounded-md border border-border bg-card/50 p-4 text-xs text-muted-foreground space-y-1.5">
-          <div className="font-medium text-foreground">Running an agent — one command</div>
-          <p>On any machine inside your network that can reach the database, run:</p>
+          <div className="font-medium text-foreground">Running an agent</div>
+          <p>On a machine inside your network (that can reach the database), run:</p>
           <pre className="bg-muted rounded p-2 font-mono overflow-x-auto">
-{`docker run -d --name queryschema-agent --restart unless-stopped \\
-  -e AGENT_RELAY_URL=https://database-api.mrwari.com \\
-  -e AGENT_TOKEN=<the token shown on create> \\
-  queryschema/agent`}
+{`AGENT_RELAY_URL=https://database-api.mrwari.com \\
+AGENT_TOKEN=<the token shown on create> \\
+npm run agent`}
           </pre>
-          <p>
-            That's it — no repo to clone, no ports to open (it connects outbound only). It auto-restarts
-            and reconnects. Then create a connection and set its routing to “Through a network agent”.
-          </p>
+          <p>It connects outbound only — no inbound ports to open. Then set a connection's routing to “Through agent”.</p>
         </div>
       </div>
 

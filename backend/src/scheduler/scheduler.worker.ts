@@ -8,6 +8,7 @@ import { ConnectionsService } from '../connections/connections.service';
 import { AppConfigService } from '../config/config.service';
 import { QueuesService } from './queues.service';
 import { EmailService } from './email.service';
+import { renderEmail } from './email-layout';
 import {
   QUEUE_EMAIL,
   QUEUE_EXEC,
@@ -140,21 +141,23 @@ function buildEmailHtml(input: {
     note.push(`Showing first ${EMAIL_PREVIEW_ROWS} of ${rows.length} rows — full results in the attached CSV.`);
   if (extraCols) note.push(`Some columns hidden in this preview; the CSV has them all.`);
 
-  return `
-  <div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#111827;max-width:760px;">
-    <div style="margin-bottom:12px;">
-      <div style="font-size:16px;font-weight:600;">${escapeHtml(name)}</div>
-      <div style="font-size:13px;color:#6b7280;margin-top:2px;">
-        ${isAlert ? `🔔 Alert fired — ${escapeHtml(alertSummary ?? '')} · ` : ''}${rows.length} row${rows.length === 1 ? '' : 's'} · ${durationMs}ms
-      </div>
-    </div>
-    ${chart}
-    ${table}
-    ${note.length ? `<p style="font-size:12px;color:#6b7280;margin-top:10px;">${note.map(escapeHtml).join(' ')}</p>` : ''}
-    <p style="font-size:11px;color:#9ca3af;margin-top:16px;border-top:1px solid #f1f5f9;padding-top:10px;">
-      Sent by Query Schema · scheduled query
-    </p>
-  </div>`;
+  // The result preview (chart + table) sits on a light surface for data
+  // readability, inside the branded dark shell. Wrapped in a white rounded
+  // panel so it reads cleanly against the dark card.
+  const meta = `${isAlert ? `🔔 Alert fired — ${escapeHtml(alertSummary ?? '')} · ` : ''}${rows.length} row${rows.length === 1 ? '' : 's'} · ${durationMs}ms`;
+  const panel = `
+    <div style="font-size:13px;color:#8a938f;margin:0 0 14px;">${meta}</div>
+    <div style="background:#ffffff;border-radius:10px;padding:14px;color:#111827;">
+      ${chart}
+      ${table}
+      ${note.length ? `<p style="font-size:12px;color:#6b7280;margin-top:10px;">${note.map(escapeHtml).join(' ')}</p>` : ''}
+    </div>`;
+
+  return renderEmail({
+    title: name,
+    html: panel,
+    footer: 'Sent by Query Schema · scheduled query',
+  });
 }
 
 @Injectable()

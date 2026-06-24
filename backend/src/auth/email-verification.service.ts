@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppConfigService } from '../config/config.service';
 import { EmailService } from '../scheduler/email.service';
+import { renderEmail } from '../scheduler/email-layout';
 
 // Tokens live for 24 hours — long enough to accommodate an email sitting in an
 // inbox for a day, short enough that a leaked token can't be used next month.
@@ -58,6 +59,13 @@ export class EmailVerificationService {
             `Click the link below to verify your email address. ` +
             `The link expires in 24 hours.\n\n${link}\n\n` +
             `If you didn't sign up for Query Schema, you can ignore this email.`,
+          html: renderEmail({
+            title: 'Verify your email',
+            intro:
+              'Welcome to Query Schema! Confirm your email address to finish setting up your account. This link expires in 24 hours.',
+            button: { label: 'Verify email', url: link },
+            note: "If you didn't sign up for Query Schema, you can safely ignore this email.",
+          }),
         });
       } catch (err) {
         // Surface as a service-unavailable at the controller level. We keep

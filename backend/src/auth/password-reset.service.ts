@@ -4,6 +4,7 @@ import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppConfigService } from '../config/config.service';
 import { EmailService } from '../scheduler/email.service';
+import { renderEmail } from '../scheduler/email-layout';
 
 // Password reset tokens are shorter-lived than email verification — one hour
 // matches industry norms (Stripe, GitHub, etc.). Long enough to cover the
@@ -63,6 +64,13 @@ export class PasswordResetService {
             `Click the link below to reset your password. The link expires in ` +
             `1 hour and can only be used once.\n\n${link}\n\n` +
             `If you didn't request this, you can safely ignore the email.`,
+          html: renderEmail({
+            title: 'Reset your password',
+            intro:
+              "We got a request to reset your Query Schema password. Click the button below to choose a new one. This link expires in 1 hour and can only be used once.",
+            button: { label: 'Reset password', url: link },
+            note: "If you didn't request this, you can safely ignore this email — your password won't change.",
+          }),
         });
       } catch (err) {
         this.log.warn(`reset email failed: ${(err as Error).message}`);

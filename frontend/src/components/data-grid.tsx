@@ -62,7 +62,31 @@ function formatValue(v: unknown, kind: CellKind): string {
       return String(v);
     }
   }
+  // Render timestamps/dates in the viewer's LOCAL timezone. DB stores UTC
+  // (the trailing "Z"); showing raw UTC confuses users in other timezones.
+  // The exact raw value stays available on hover (see Cell `title`).
+  if ((kind === "datetime" || kind === "date") && typeof v === "string") {
+    const local = formatLocalDate(v, kind);
+    if (local) return local;
+  }
   return String(v);
+}
+
+/**
+ * Convert an ISO-ish timestamp string to local time. Returns null if it
+ * doesn't parse (so we fall back to the raw value rather than show "Invalid
+ * Date"). `date`-only values render without a time component.
+ */
+function formatLocalDate(raw: string, kind: CellKind): string | null {
+  // Only attempt parsing on strings that look like a date/timestamp — avoids
+  // mangling e.g. a "time" column like "14:30:00" or odd text.
+  if (!/^\d{4}-\d{2}-\d{2}/.test(raw)) return null;
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return null;
+  if (kind === "date") {
+    return d.toLocaleDateString();
+  }
+  return d.toLocaleString();
 }
 
 function typeIconColor(type?: string): string {
@@ -519,10 +543,11 @@ function Cell({ kind, value }: { kind: CellKind; value: unknown }) {
   }
   if (kind === "date" || kind === "datetime") {
     const raw = String(value);
-    const m = raw.match(/^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}))?/);
-    const pretty = m ? (m[2] ? `${m[1]} ${m[2]}` : m[1]) : raw;
+    // Local-time display (formatValue converts UTC → viewer's timezone);
+    // raw stored value (usually UTC) stays on hover.
+    const pretty = formatValue(value, kind);
     return (
-      <span className="font-mono text-cyan-700 dark:text-cyan-400" title={raw}>
+      <span className="font-mono text-cyan-700 dark:text-cyan-400" title={`${raw} (raw)`}>
         {pretty}
       </span>
     );

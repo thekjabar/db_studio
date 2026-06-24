@@ -45,7 +45,9 @@ RUN DATABASE_URL="postgresql://u:p@localhost:5432/d" pnpm exec prisma generate
 # Layer 3: build — only re-runs on code changes.
 COPY src ./src
 COPY scripts ./scripts
-COPY nest-cli.json tsconfig.json ./
+COPY nest-cli.json tsconfig.json .swcrc ./
+# SWC (Rust) compiler — ~10x faster than tsc. Type-checking is skipped here
+# (typeCheck:false in nest-cli.json) since CI / `tsc --noEmit` covers types.
 RUN NODE_OPTIONS=--max-old-space-size=1536 pnpm exec nest build
 
 EXPOSE 3000

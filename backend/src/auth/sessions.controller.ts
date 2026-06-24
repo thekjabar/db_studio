@@ -1,5 +1,5 @@
 import { Controller, Delete, Get, HttpCode, Param, Req, UseGuards } from '@nestjs/common';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { createHash } from 'crypto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser, AuthUser } from './decorators/current-user.decorator';

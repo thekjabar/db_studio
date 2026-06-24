@@ -12,7 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { IsBoolean } from 'class-validator';
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { Public } from '../auth/decorators/public.decorator';

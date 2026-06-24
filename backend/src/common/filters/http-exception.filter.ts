@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import * as Sentry from '@sentry/node';
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 
 /**
  * Global exception filter that sanitizes responses so that stack traces, raw

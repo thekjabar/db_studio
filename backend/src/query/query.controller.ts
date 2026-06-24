@@ -2,7 +2,7 @@ import {
   BadRequestException, Body, Controller, ForbiddenException, Get, HttpCode, Param, Post, Query, Req, UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 import { Dialect, Role } from '@prisma/client';
 import { ConnectionsService } from '../connections/connections.service';

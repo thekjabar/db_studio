@@ -1,5 +1,5 @@
 import { Controller, Get, Req, Res, UseGuards } from '@nestjs/common';
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { AppConfigService } from '../config/config.service';
 import { Public } from './decorators/public.decorator';

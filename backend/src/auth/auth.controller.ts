@@ -11,7 +11,7 @@ import {
 import { Throttle } from '@nestjs/throttler';
 import { IsEmail, IsString, Length } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 
 /** Normalize email so case/whitespace variants resolve to one account. */
 const normalizeEmail = ({ value }: { value: unknown }) =>

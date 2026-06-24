@@ -1,6 +1,6 @@
 import { BadRequestException, Controller, Get, Param, Query, Res, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { Response } from 'express';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RbacGuard } from '../rbac/rbac.guard';
 import { RequireRole } from '../rbac/rbac.decorator';

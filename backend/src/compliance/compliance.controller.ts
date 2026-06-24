@@ -1,5 +1,5 @@
 import { Controller, Delete, Get, HttpCode, Param, Post, Query, Res, UseGuards } from '@nestjs/common';
-import { Response } from 'express';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { AdminGuard } from '../auth/guards/admin.guard';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';

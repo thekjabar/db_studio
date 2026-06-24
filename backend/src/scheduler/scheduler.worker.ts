@@ -8,7 +8,7 @@ import { ConnectionsService } from '../connections/connections.service';
 import { AppConfigService } from '../config/config.service';
 import { QueuesService } from './queues.service';
 import { EmailService } from './email.service';
-import { renderEmail } from './email-layout';
+import { renderEmail, formatDateInZone } from './email-layout';
 import {
   QUEUE_EMAIL,
   QUEUE_EXEC,
@@ -99,34 +99,18 @@ function buildEmailChart(rows: Record<string, unknown>[]): string {
   </table>`;
 }
 
-/** Months for compact, locale-independent date formatting. */
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-/** Format an ISO timestamp as a clean, human-readable, explicitly-UTC string,
- *  e.g. "Jun 11, 2026, 19:34 UTC". Email clients run no JS, so we can't show
- *  the *reader's* local time — an explicit timezone is the unambiguous choice. */
-function formatEmailDate(raw: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(raw)) return null;
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return null;
-  const dd = String(d.getUTCDate()).padStart(2, '0');
-  const hh = String(d.getUTCHours()).padStart(2, '0');
-  const mi = String(d.getUTCMinutes()).padStart(2, '0');
-  return `${MONTHS[d.getUTCMonth()]} ${dd}, ${d.getUTCFullYear()}, ${hh}:${mi} UTC`;
-}
-
-function cellText(v: unknown): string {
+function cellText(v: unknown, tz?: string | null): string {
   if (v === null || v === undefined) return '';
-  // Date object → clean UTC string.
-  if (v instanceof Date) return formatEmailDate(v.toISOString()) ?? v.toISOString();
+  // Date object → formatted in the schedule's timezone.
+  if (v instanceof Date) return formatDateInZone(v.toISOString(), tz) ?? v.toISOString();
   let s = typeof v === 'object' ? JSON.stringify(v) : String(v);
   // Some drivers/JSON round-trips wrap a string value in literal quotes — strip
   // a single layer so "2026-06-11T…Z" shows without the quotes.
   if (s.length >= 2 && s.startsWith('"') && s.endsWith('"') && !s.slice(1, -1).includes('"')) {
     s = s.slice(1, -1);
   }
-  // ISO timestamp string → clean UTC display.
-  const asDate = formatEmailDate(s);
+  // ISO timestamp string → formatted in the schedule's timezone.
+  const asDate = formatDateInZone(s, tz);
   if (asDate) return asDate;
   return s.length > EMAIL_CELL_MAX ? s.slice(0, EMAIL_CELL_MAX) + '…' : s;
 }
@@ -142,8 +126,10 @@ function buildEmailHtml(input: {
   durationMs: number;
   isAlert: boolean;
   alertSummary: string | null;
+  /** Schedule's timezone — dates in the result are formatted in this zone. */
+  timezone?: string | null;
 }): string {
-  const { name, rows, durationMs, isAlert, alertSummary } = input;
+  const { name, rows, durationMs, isAlert, alertSummary, timezone } = input;
   const headers = rows.length ? Object.keys(rows[0]).slice(0, EMAIL_PREVIEW_COLS) : [];
   const previewRows = rows.slice(0, EMAIL_PREVIEW_ROWS);
   const extraCols = rows.length && Object.keys(rows[0]).length > EMAIL_PREVIEW_COLS;

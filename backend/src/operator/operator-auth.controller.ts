@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Post, Req, Res, UseGuards, UnauthorizedException } from '@nestjs/common';
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import { IsEmail, IsString, MinLength } from 'class-validator';
 import { OperatorAuthService } from './operator-auth.service';
 import { OperatorGuard, OperatorRequest } from './operator.guard';

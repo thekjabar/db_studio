@@ -1,5 +1,5 @@
 import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
-import { Response } from 'express';
+import type { Response } from 'express';
 import { OperatorGuard } from './operator.guard';
 import { OperatorAuditService } from './operator-audit.service';
 import { Public } from '../auth/decorators/public.decorator';

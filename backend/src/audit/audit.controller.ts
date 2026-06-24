@@ -1,5 +1,5 @@
 import { Controller, Get, HttpCode, Param, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import { AuditService } from './audit.service';
 import { AuditRevertService } from './audit-revert.service';
 import { RbacGuard } from '../rbac/rbac.guard';

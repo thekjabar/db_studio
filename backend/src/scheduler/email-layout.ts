@@ -38,6 +38,38 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * Format an ISO timestamp for an email, in a SPECIFIC timezone (emails run no
+ * JS, so we can't read the reader's PC clock — we format server-side in the
+ * recipient's known zone and label it). `tz` is an IANA zone like
+ * "Asia/Baghdad" or "America/New_York"; falsy → UTC.
+ *
+ * Returns null if the string isn't a timestamp (so callers fall back to raw).
+ * e.g. "Jun 11, 2026, 22:34 (Asia/Baghdad)".
+ */
+export function formatDateInZone(raw: string, tz?: string | null): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(raw)) return null;
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return null;
+  const zone = tz || 'UTC';
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: zone,
+      year: 'numeric', month: 'short', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(d);
+    // Label with the zone so it's unambiguous. UTC shown as "UTC", others by name.
+    const label = zone === 'UTC' ? 'UTC' : zone;
+    return `${parts} (${label})`;
+  } catch {
+    // Invalid IANA zone → fall back to UTC.
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC', year: 'numeric', month: 'short', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(d) + ' (UTC)';
+  }
+}
+
 /** Wrap content in the branded email shell. */
 export function renderEmail(c: EmailContent): string {
   const year = 2026; // stamped at build; avoids Date.now() in pure layout

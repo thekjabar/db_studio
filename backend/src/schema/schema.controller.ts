@@ -2,7 +2,7 @@ import {
   BadRequestException, Body, Controller, Delete, Param, Patch, Post, Query, Req, UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { IsArray, IsBoolean, IsOptional, IsString, Length, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Role } from '@prisma/client';

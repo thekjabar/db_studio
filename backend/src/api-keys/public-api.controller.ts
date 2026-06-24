@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Get, HttpCode, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { IsArray, IsBoolean, IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 import { Role } from '@prisma/client';
 import { ApiKeyGuard } from './api-key.guard';

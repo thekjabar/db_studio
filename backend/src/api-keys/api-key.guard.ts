@@ -1,5 +1,5 @@
 import { CanActivate, ExecutionContext, HttpException, Inject, Injectable, Optional, UnauthorizedException } from '@nestjs/common';
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import type Redis from 'ioredis';
 import { ApiKeysService } from './api-keys.service';
 import { AppConfigService } from '../config/config.service';

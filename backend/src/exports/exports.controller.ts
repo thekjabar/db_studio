@@ -1,6 +1,6 @@
 import { Body, Controller, HttpCode, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { IsIn, IsOptional, IsString, Length } from 'class-validator';
 import { Role } from '@prisma/client';
 import { RbacGuard } from '../rbac/rbac.guard';

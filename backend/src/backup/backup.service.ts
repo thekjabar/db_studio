@@ -5,7 +5,7 @@ import {
   NotImplementedException,
 } from '@nestjs/common';
 import { spawn } from 'child_process';
-import { Response } from 'express';
+import type { Response } from 'express';
 import { Dialect, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';

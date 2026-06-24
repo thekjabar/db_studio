@@ -2,7 +2,7 @@ import {
   Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { ConnectionsService } from './connections.service';
 import { RbacGuard } from '../rbac/rbac.guard';
 import { RequireRole, RequireTableRole } from '../rbac/rbac.decorator';

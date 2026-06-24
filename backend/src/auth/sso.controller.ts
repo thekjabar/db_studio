@@ -12,7 +12,7 @@ import {
   UseGuards,
   ForbiddenException,
 } from '@nestjs/common';
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import { IsBoolean, IsOptional, IsString, Length } from 'class-validator';
 import { AppConfigService } from '../config/config.service';
 import { PrismaService } from '../prisma/prisma.service';

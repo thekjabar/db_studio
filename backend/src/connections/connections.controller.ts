@@ -1,7 +1,7 @@
 import {
   Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Query, Req, UseGuards,
 } from '@nestjs/common';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { ConnectionsService } from './connections.service';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
 import { CreateConnectionDto, UpdateConnectionDto } from './connections.dto';

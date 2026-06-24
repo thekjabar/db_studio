@@ -86,11 +86,11 @@ function buildEmailChart(rows: Record<string, unknown>[]): string {
       const pct = Math.max(3, Math.round((Math.abs(v) / max) * 100));
       const label = escapeHtml(cellText(r[labelCol]).slice(0, 32));
       return `<tr>
-        <td style="padding:7px 12px 7px 0;font-size:13px;color:#374151;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;">${label}</td>
+        <td style="padding:7px 12px 7px 0;font-size:13px;color:#b7bfbb;white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;">${label}</td>
         <td style="width:100%;padding:7px 0;vertical-align:middle;">
           <div style="background:linear-gradient(90deg,#34d399,#10b981);height:18px;width:${pct}%;border-radius:5px;min-width:4px;"></div>
         </td>
-        <td style="padding:7px 0 7px 12px;font-size:13px;font-weight:600;color:#111827;white-space:nowrap;text-align:right;">${escapeHtml(fmt(v))}</td>
+        <td style="padding:7px 0 7px 12px;font-size:13px;font-weight:600;color:#e6eae8;white-space:nowrap;text-align:right;">${escapeHtml(fmt(v))}</td>
       </tr>`;
     })
     .join('');
@@ -125,17 +125,17 @@ function buildEmailHtml(input: {
   const headerCells = headers
     .map(
       (h) =>
-        `<th style="text-align:left;padding:9px 14px;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#6b7280;white-space:nowrap;">${escapeHtml(h)}</th>`,
+        `<th style="text-align:left;padding:9px 14px;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;color:#8a938f;white-space:nowrap;border-bottom:1px solid #262b29;">${escapeHtml(h)}</th>`,
     )
     .join('');
 
   const bodyRows = previewRows
     .map((r, i) => {
-      const bg = i % 2 ? '#f8fafc' : '#ffffff';
+      const bg = i % 2 ? '#1a1e1f' : '#15181a';
       const cells = headers
         .map(
           (h) =>
-            `<td style="padding:9px 14px;font-size:13px;color:#1f2937;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(cellText(r[h]))}</td>`,
+            `<td style="padding:9px 14px;font-size:13px;color:#d7dcd9;white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;border-bottom:1px solid #20251f;">${escapeHtml(cellText(r[h]))}</td>`,
         )
         .join('');
       return `<tr style="background:${bg};">${cells}</tr>`;
@@ -143,13 +143,13 @@ function buildEmailHtml(input: {
     .join('');
 
   const table = rows.length
-    ? `<div style="overflow:hidden;border:1px solid #e5e7eb;border-radius:10px;">
+    ? `<div style="overflow:hidden;border:1px solid #262b29;border-radius:10px;">
          <table cellspacing="0" cellpadding="0" style="border-collapse:collapse;width:100%;font-family:-apple-system,Segoe UI,Roboto,sans-serif;">
-           <thead><tr style="background:#f1f5f9;">${headerCells}</tr></thead>
+           <thead><tr style="background:#191d1c;">${headerCells}</tr></thead>
            <tbody>${bodyRows}</tbody>
          </table>
        </div>`
-    : `<p style="color:#6b7280;font-style:italic;margin:0;">Query returned no rows.</p>`;
+    : `<p style="color:#8a938f;font-style:italic;margin:0;">Query returned no rows.</p>`;
 
   // Inline bar chart for aggregate-ish results: first text column = label,
   // first numeric column = value. Email clients strip SVG (Gmail), so bars
@@ -161,17 +161,14 @@ function buildEmailHtml(input: {
     note.push(`Showing first ${EMAIL_PREVIEW_ROWS} of ${rows.length} rows — full results in the attached CSV.`);
   if (extraCols) note.push(`Some columns hidden in this preview; the CSV has them all.`);
 
-  // The result preview (chart + table) sits on a light surface for data
-  // readability, inside the branded dark shell. Wrapped in a white rounded
-  // panel so it reads cleanly against the dark card.
+  // Result preview (chart + table) rendered in the same dark palette as the
+  // branded shell — one consistent surface, no white panel.
   const meta = `${isAlert ? `🔔 Alert fired — ${escapeHtml(alertSummary ?? '')} · ` : ''}${rows.length} row${rows.length === 1 ? '' : 's'} · ${durationMs}ms`;
   const panel = `
     <div style="font-size:13px;color:#8a938f;margin:0 0 14px;">${meta}</div>
-    <div style="background:#ffffff;border-radius:10px;padding:14px;color:#111827;">
-      ${chart}
-      ${table}
-      ${note.length ? `<p style="font-size:12px;color:#6b7280;margin-top:10px;">${note.map(escapeHtml).join(' ')}</p>` : ''}
-    </div>`;
+    ${chart}
+    ${table}
+    ${note.length ? `<p style="font-size:12px;color:#8a938f;margin-top:12px;">${note.map(escapeHtml).join(' ')}</p>` : ''}`;
 
   return renderEmail({
     title: name,

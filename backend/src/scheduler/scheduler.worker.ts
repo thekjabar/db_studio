@@ -99,9 +99,35 @@ function buildEmailChart(rows: Record<string, unknown>[]): string {
   </table>`;
 }
 
+/** Months for compact, locale-independent date formatting. */
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Format an ISO timestamp as a clean, human-readable, explicitly-UTC string,
+ *  e.g. "Jun 11, 2026, 19:34 UTC". Email clients run no JS, so we can't show
+ *  the *reader's* local time — an explicit timezone is the unambiguous choice. */
+function formatEmailDate(raw: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(raw)) return null;
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return null;
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mi = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${MONTHS[d.getUTCMonth()]} ${dd}, ${d.getUTCFullYear()}, ${hh}:${mi} UTC`;
+}
+
 function cellText(v: unknown): string {
   if (v === null || v === undefined) return '';
-  const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  // Date object → clean UTC string.
+  if (v instanceof Date) return formatEmailDate(v.toISOString()) ?? v.toISOString();
+  let s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  // Some drivers/JSON round-trips wrap a string value in literal quotes — strip
+  // a single layer so "2026-06-11T…Z" shows without the quotes.
+  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"') && !s.slice(1, -1).includes('"')) {
+    s = s.slice(1, -1);
+  }
+  // ISO timestamp string → clean UTC display.
+  const asDate = formatEmailDate(s);
+  if (asDate) return asDate;
   return s.length > EMAIL_CELL_MAX ? s.slice(0, EMAIL_CELL_MAX) + '…' : s;
 }
 

@@ -76,7 +76,14 @@ export function renderEmail(c: EmailContent): string {
         <tr><td style="padding:0 4px 20px;">
           <table role="presentation" cellpadding="0" cellspacing="0"><tr>
             <td style="vertical-align:middle;">
-              <span style="display:inline-block;width:28px;height:28px;border-radius:7px;background:${ACCENT};text-align:center;line-height:28px;font-size:15px;font-weight:700;color:#06120c;">Q</span>
+              <!-- App logo: green circle with a white play triangle. Built with
+                   a CSS border-triangle (no image/SVG) so it renders in Gmail
+                   etc. The triangle is centered in a 30px circle. -->
+              <table role="presentation" cellpadding="0" cellspacing="0" style="width:30px;height:30px;border-radius:50%;background:${ACCENT};">
+                <tr><td align="center" style="vertical-align:middle;text-align:center;">
+                  <span style="display:inline-block;width:0;height:0;border-style:solid;border-width:6px 0 6px 10px;border-color:transparent transparent transparent #06120c;margin-left:2px;"></span>
+                </td></tr>
+              </table>
             </td>
             <td style="vertical-align:middle;padding-left:10px;font-size:16px;font-weight:600;color:${TEXT};font-family:Inter,Segoe UI,Helvetica,Arial,sans-serif;">${BRAND}</td>
           </tr></table>

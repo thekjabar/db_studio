@@ -4,6 +4,7 @@ import type Redis from 'ioredis';
 import { Public } from '../auth/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { REDIS_CLIENT } from '../scheduler/scheduler.constants';
+import { EgressIpService } from './egress-ip.service';
 
 /**
  * Two endpoints:
@@ -21,8 +22,17 @@ import { REDIS_CLIENT } from '../scheduler/scheduler.constants';
 export class HealthController {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly egress: EgressIpService,
     @Optional() @Inject(REDIS_CLIENT) private readonly redis: Redis | null = null,
   ) {}
+
+  /** Public: the outbound IP customers add to their DB allowlist. Null if the
+   *  server couldn't detect it and no EGRESS_IP override is set. */
+  @Public()
+  @Get('egress-ip')
+  egressIp() {
+    return { ip: this.egress.get() };
+  }
 
   @Public()
   @Get()

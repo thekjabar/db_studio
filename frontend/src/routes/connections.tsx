@@ -394,6 +394,16 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [sshEnabled, setSshEnabled] = useState(false);
   const [ssh, setSsh] = useState<SshTunnelInput>(defaultSshTunnel);
   const [submitting, setSubmitting] = useState(false);
+  const [testFailed, setTestFailed] = useState(false);
+
+  // Our outbound IP — shown so customers with a DB IP allowlist know what to
+  // permit. Fetched once when the dialog opens.
+  const egressQ = useQuery({
+    queryKey: ["egress-ip"],
+    queryFn: () => api.getEgressIp(),
+    enabled: open,
+    staleTime: 60 * 60_000,
+  });
 
   const reset = () => {
     setName("");
@@ -407,6 +417,7 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     setSshEnabled(false);
     setSsh(defaultSshTunnel());
     setDialect("POSTGRES");
+    setTestFailed(false);
   };
 
   const submit = async (e: FormEvent) => {
@@ -427,16 +438,25 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
       };
       const created = await api.createConnection(input);
       toast.success("Connection created");
+      let ok = false;
       try {
         const r = await api.testConnection(created.id);
+        ok = r.ok;
         if (r.ok) toast.success(`Test OK${r.serverVersion ? ` — ${r.serverVersion}` : ""}`);
         else toast.warning(r.message || "Created but test failed");
       } catch (err) {
         toast.warning("Created but test failed: " + extractErrorMessage(err));
       }
       qc.invalidateQueries({ queryKey: ["connections"] });
-      reset();
-      onOpenChange(false);
+      if (ok) {
+        reset();
+        setTestFailed(false);
+        onOpenChange(false);
+      } else {
+        // Keep the dialog open and surface the allowlist hint so the user can
+        // fix the firewall and retry rather than losing their input.
+        setTestFailed(true);
+      }
     } catch (err) {
       toast.error(extractErrorMessage(err));
     } finally {
@@ -545,12 +565,75 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
             value={ssh}
             onChange={setSsh}
           />
+
+          {/* Allowlist hint. Prominent red callout after a failed Test; a quiet
+              always-visible note otherwise. */}
+          {egressQ.data && (
+            <div
+              className={
+                "rounded-md border px-3 py-2.5 text-xs " +
+                (testFailed
+                  ? "border-destructive/40 bg-destructive/10 text-foreground"
+                  : "border-border bg-muted/40 text-muted-foreground")
+              }
+            >
+              {testFailed && (
+                <div className="font-medium text-destructive mb-1">
+                  Connection test failed — is your database blocking us?
+                </div>
+              )}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span>
+                  If your database has an IP allowlist / firewall, add our server IP:
+                </span>
+                <code className="rounded bg-background border border-border px-1.5 py-0.5 font-mono select-all">
+                  {egressQ.data}
+                </code>
+                <button
+                  type="button"
+                  className="underline hover:text-foreground"
+                  onClick={() => {
+                    navigator.clipboard.writeText(egressQ.data!).then(
+                      () => toast.success("IP copied"),
+                      () => {},
+                    );
+                  }}
+                >
+                  Copy
+                </button>
+              </div>
+            </div>
+          )}
+          {testFailed && !egressQ.data && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-xs">
+              <div className="font-medium text-destructive mb-1">Connection test failed.</div>
+              Check host/port/credentials and SSL mode. If your database has an IP allowlist,
+              contact support for our server IP to add.
+            </div>
+          )}
+
           <DialogFooter className="pt-2">
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              Create & test
-            </Button>
+            {testFailed ? (
+              // Connection is already created; let the user close and fix their
+              // firewall, then Test from the list (avoids a duplicate create).
+              <Button
+                type="button"
+                onClick={() => {
+                  reset();
+                  onOpenChange(false);
+                }}
+              >
+                Done — I'll allowlist & test
+              </Button>
+            ) : (
+              <>
+                <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+                <Button type="submit" disabled={submitting}>
+                  {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Create & test
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>

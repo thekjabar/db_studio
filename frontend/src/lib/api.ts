@@ -1565,6 +1565,15 @@ export const api = {
   revokeOtherSessions: () =>
     http.delete<{ revoked: number }>("/auth/sessions").then((r) => r.data),
 
+  /** The server's outbound IP — customers add this to their DB IP allowlist.
+   *  Lives at /health/egress-ip (outside the /api prefix). Returns null if the
+   *  server couldn't determine it. */
+  getEgressIp: () =>
+    axios
+      .get<{ ip: string | null }>(`${API_URL.replace(/\/api\/?$/, "")}/health/egress-ip`)
+      .then((r) => r.data.ip)
+      .catch(() => null),
+
   publicStatus: () =>
     http
       .get<{

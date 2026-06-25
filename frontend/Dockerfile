@@ -21,7 +21,9 @@ RUN --mount=type=cache,id=pnpm-fe,target=/pnpm/store \
 COPY . .
 ARG VITE_API_URL=/api
 ENV VITE_API_URL=${VITE_API_URL}
-RUN pnpm build
+# `build:fast` = vite/esbuild only, no tsc type-check — much faster image
+# build. Types are enforced separately (pnpm typecheck / CI).
+RUN pnpm build:fast
 
 FROM nginx:1.27-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html

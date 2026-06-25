@@ -101,7 +101,9 @@ export class OperatorAuthService {
     // Same generic error regardless of cause — don't leak which field was wrong.
     if (!op) throw new UnauthorizedException('Invalid credentials');
     if (op.disabledAt) throw new ForbiddenException('Operator account disabled');
-    const ok = await argon2.verify(op.passwordHash, password);
+    // `.catch(() => false)` so a malformed/corrupt stored hash is treated as a
+    // failed login (401) rather than throwing an unhandled 500.
+    const ok = await argon2.verify(op.passwordHash, password).catch(() => false);
     if (!ok) throw new UnauthorizedException('Invalid credentials');
     await this.prisma.operator.update({
       where: { id: op.id },

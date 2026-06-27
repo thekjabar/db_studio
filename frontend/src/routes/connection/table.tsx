@@ -128,6 +128,23 @@ export default function TableRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, pageSize, filters, sorts]);
 
+  // When the table (or schema/connection) changes, clear filters/sorts/page —
+  // a filter built for one table's columns is invalid on another and would
+  // otherwise carry over (showing a stale "Filter 1" with a blank column).
+  // Skip the first render so URL-shared filters still hydrate on load.
+  const tableKey = `${id}/${schema}/${table}`;
+  const prevTableKey = useRef(tableKey);
+  useEffect(() => {
+    if (prevTableKey.current === tableKey) return; // same table (incl. first mount)
+    prevTableKey.current = tableKey;
+    setFilters([]);
+    setSorts([]);
+    setPage(0);
+    setSelected(new Set());
+    setFilterOpen(false);
+    setSortOpen(false);
+  }, [tableKey]);
+
   const filterBtnRef = useRef<HTMLButtonElement | null>(null);
   const sortBtnRef = useRef<HTMLButtonElement | null>(null);
   const pageSizeBtnRef = useRef<HTMLButtonElement | null>(null);

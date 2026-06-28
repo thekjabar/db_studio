@@ -48,11 +48,14 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
 
   const [alertMs, setAlertMs] = useState("");
   const [alertEmail, setAlertEmail] = useState("");
+  // Statement timeout in SECONDS (UI), stored as ms. Empty = use default (30s).
+  const [timeoutSec, setTimeoutSec] = useState("");
 
   useEffect(() => {
     if (!connection) return;
     setName(connection.name);
     setReadOnly(!!connection.readOnly);
+    setTimeoutSec(connection.statementTimeoutMs ? String(Math.round(connection.statementTimeoutMs / 1000)) : "");
     setAlertMs(connection.slowQueryAlertMs ? String(connection.slowQueryAlertMs) : "");
     setAlertEmail(connection.slowQueryAlertEmail ?? "");
     // Credentials start blank — user fills only what changes.
@@ -83,6 +86,15 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
     const patch: Parameters<typeof api.updateConnection>[1] = {};
     if (name !== connection.name) patch.name = name;
     if (readOnly !== !!connection.readOnly) patch.readOnly = readOnly;
+    // Statement timeout: convert seconds → ms, clamp to backend bounds (1s–600s).
+    {
+      const cur = connection.statementTimeoutMs ?? 30000;
+      const sec = timeoutSec.trim() === "" ? 30 : Number(timeoutSec);
+      if (Number.isFinite(sec) && sec >= 1) {
+        const ms = Math.min(600_000, Math.max(1000, Math.round(sec * 1000)));
+        if (ms !== cur) patch.statementTimeoutMs = ms;
+      }
+    }
     if (host) patch.host = host;
     if (port !== "" && Number.isFinite(port)) patch.port = Number(port);
     if (database) patch.database = database;
@@ -176,6 +188,22 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
                 Prevent writes from this connection.
               </div>
             </div>
+          </div>
+
+          <div className="space-y-1.5 pt-2">
+            <div className="text-sm font-medium">Statement timeout (seconds)</div>
+            <p className="text-xs text-muted-foreground">
+              Cancel queries that run longer than this. Default 30s. Raise it for heavy analytical queries (max 600s).
+            </p>
+            <Input
+              type="number"
+              min={1}
+              max={600}
+              value={timeoutSec}
+              onChange={(e) => setTimeoutSec(e.target.value)}
+              placeholder="30"
+              className="w-40"
+            />
           </div>
 
           <div className="border-t border-border pt-4 space-y-2">

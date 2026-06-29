@@ -741,6 +741,57 @@ function toUpdatePayload(input: Partial<CreateConnectionInput>) {
   };
 }
 
+export interface DbUser {
+  name: string;
+  superuser: boolean;
+  can_login: boolean;
+  create_db: boolean;
+  create_role: boolean;
+  inherit: boolean;
+  replication: boolean;
+  connection_limit: number;
+  valid_until: string | null;
+  member_of: string[];
+}
+
+export interface DbUserPrivileges {
+  database: { database: string; privilege_type: string }[];
+  schema: { schema: string; privilege_type: string }[];
+  table: { schema: string; table: string; privilege_type: string; is_grantable: string }[];
+}
+
+export interface CreateDbUserInput {
+  name: string;
+  password?: string;
+  login?: boolean;
+  superuser?: boolean;
+  createDb?: boolean;
+  createRole?: boolean;
+  connectionLimit?: number;
+  validUntil?: string;
+}
+
+export interface AlterDbUserInput {
+  password?: string;
+  login?: boolean;
+  superuser?: boolean;
+  createDb?: boolean;
+  createRole?: boolean;
+  connectionLimit?: number;
+  validUntil?: string;
+}
+
+export type PrivilegeLevel = "database" | "schema" | "table";
+
+export interface GrantInput {
+  role: string;
+  level: PrivilegeLevel;
+  privileges: string[];
+  schema?: string;
+  table?: string;
+  withGrantOption?: boolean;
+}
+
 export const api = {
   signup: async (input: { email: string; password: string; displayName?: string }) => {
     const { data } = await http.post<
@@ -2014,4 +2065,22 @@ export const api = {
         durationMs: number;
       }>(`/public/shared-queries/${token}/run`)
       .then((r) => r.data),
+
+  // ---- Database users / roles (manage roles on the connected Postgres) ----
+  listDbUsers: (id: string) =>
+    http.get<DbUser[]>(`/connections/${id}/db-users`).then((r) => r.data),
+  getDbUserPrivileges: (id: string, role: string) =>
+    http
+      .get<DbUserPrivileges>(`/connections/${id}/db-users/${encodeURIComponent(role)}/privileges`)
+      .then((r) => r.data),
+  createDbUser: (id: string, body: CreateDbUserInput) =>
+    http.post(`/connections/${id}/db-users`, body).then((r) => r.data),
+  alterDbUser: (id: string, role: string, body: AlterDbUserInput) =>
+    http.patch(`/connections/${id}/db-users/${encodeURIComponent(role)}`, body).then((r) => r.data),
+  dropDbUser: (id: string, role: string) =>
+    http.delete(`/connections/${id}/db-users/${encodeURIComponent(role)}`).then((r) => r.data),
+  grantDbPrivilege: (id: string, body: GrantInput) =>
+    http.post(`/connections/${id}/db-users/grant`, body).then((r) => r.data),
+  revokeDbPrivilege: (id: string, body: GrantInput) =>
+    http.post(`/connections/${id}/db-users/revoke`, body).then((r) => r.data),
 };

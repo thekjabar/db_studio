@@ -52,6 +52,7 @@ import { AbuseModule } from './abuse/abuse.module';
 import { RetentionModule } from './retention/retention.module';
 import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
 import { SnippetsModule } from './snippets/snippets.module';
+import { DbUsersModule } from './db-users/db-users.module';
 
 @Module({
   imports: [
@@ -114,6 +115,7 @@ import { SnippetsModule } from './snippets/snippets.module';
     RetentionModule,
     FeatureFlagsModule,
     SnippetsModule,
+    DbUsersModule,
   ],
   controllers: [HealthController],
   providers: [{ provide: APP_GUARD, useClass: AppThrottlerGuard }],

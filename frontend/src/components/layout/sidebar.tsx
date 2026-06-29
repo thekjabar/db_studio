@@ -30,6 +30,7 @@ import {
   GitCompare,
   ScanSearch,
   TrendingDown,
+  Users,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -219,12 +220,13 @@ export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSche
         <NavSection
           label="Governance"
           storageKey="sidebar.gov"
-          paths={["/row-filters", "/docs", "/permissions"]}
+          paths={["/row-filters", "/docs", "/permissions", "/db-users"]}
           connectionId={connectionId}
         >
           <NavItem to={`/c/${connectionId}/docs`} icon={<BookMarked className="h-3.5 w-3.5" />} label="Docs" />
           <NavItem to={`/c/${connectionId}/row-filters`} icon={<Filter className="h-3.5 w-3.5" />} label="Row filters" />
           <NavItem to={`/c/${connectionId}/permissions`} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Permissions" />
+          <NavItem to={`/c/${connectionId}/db-users`} icon={<Users className="h-3.5 w-3.5" />} label="Database users" />
           <NavItem to={`/c/${connectionId}/sensitive`} icon={<ScanSearch className="h-3.5 w-3.5" />} label="Sensitive data" />
         </NavSection>
 

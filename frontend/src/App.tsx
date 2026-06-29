@@ -30,6 +30,7 @@ import AiChatRoute from "@/routes/connection/ai-chat";
 import MigrationBuilderRoute from "@/routes/connection/migration-builder";
 import SavedRoute from "@/routes/connection/saved";
 import PermissionsRoute from "@/routes/connection/permissions";
+import DbUsersRoute from "@/routes/connection/db-users";
 import BackupRoute from "@/routes/connection/backup";
 import SlowQueriesRoute from "@/routes/connection/slow-queries";
 import PlanRegressionsRoute from "@/routes/connection/plan-regressions";
@@ -248,6 +249,7 @@ export default function App() {
         <Route path="migrate" element={<MigrationBuilderRoute />} />
         <Route path="saved" element={<SavedRoute />} />
         <Route path="permissions" element={<PermissionsRoute />} />
+        <Route path="db-users" element={<DbUsersRoute />} />
         <Route path="backup" element={<BackupRoute />} />
         <Route path="slow-queries" element={<SlowQueriesRoute />} />
         <Route path="plan-regressions" element={<PlanRegressionsRoute />} />

@@ -106,10 +106,10 @@ function DbUsersInner({ connectionId }: { connectionId: string }) {
                   <AttributeBadges u={u} />
                 </td>
                 <td className="px-3 py-2">
-                  {u.member_of.length === 0
+                  {memberOf(u).length === 0
                     ? <span className="text-muted-foreground">—</span>
                     : <div className="flex flex-wrap gap-1">
-                        {u.member_of.map((m) => <Badge key={m} variant="secondary">{m}</Badge>)}
+                        {memberOf(u).map((m) => <Badge key={m} variant="secondary">{m}</Badge>)}
                       </div>}
                 </td>
                 <td className="px-3 py-2">
@@ -139,6 +139,18 @@ function DbUsersInner({ connectionId }: { connectionId: string }) {
       )}
     </div>
   );
+}
+
+/** Defensive: member_of should be a string[] from the API, but coerce anything
+ *  else (null, a Postgres array literal like "{a,b}") so the view never crashes. */
+function memberOf(u: DbUser): string[] {
+  const v = u.member_of as unknown;
+  if (Array.isArray(v)) return v as string[];
+  if (typeof v === "string") {
+    const inner = v.replace(/^\{|\}$/g, "").trim();
+    return inner ? inner.split(",").map((s) => s.replace(/^"|"$/g, "")) : [];
+  }
+  return [];
 }
 
 function AttributeBadges({ u }: { u: DbUser }) {

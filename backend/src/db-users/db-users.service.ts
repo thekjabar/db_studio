@@ -61,11 +61,15 @@ export class DbUsersService {
           r.rolreplication                            AS replication,
           r.rolconnlimit                              AS connection_limit,
           r.rolvaliduntil                             AS valid_until,
-          ARRAY(
-            SELECT g.rolname FROM pg_auth_members m
-            JOIN pg_roles g ON g.oid = m.roleid
-            WHERE m.member = r.oid
-            ORDER BY g.rolname
+          -- Return as jsonb so the pg driver parses it into a real JS array.
+          -- (ARRAY(subquery) comes back as a raw text literal like "{}" because
+          -- its type OID is unknown to node-postgres, which then can't .map().)
+          COALESCE(
+            (SELECT jsonb_agg(g.rolname ORDER BY g.rolname)
+               FROM pg_auth_members m
+               JOIN pg_roles g ON g.oid = m.roleid
+              WHERE m.member = r.oid),
+            '[]'::jsonb
           )                                           AS member_of
         FROM pg_roles r
         WHERE r.rolname NOT LIKE 'pg\\_%'

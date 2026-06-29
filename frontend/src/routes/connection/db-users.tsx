@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Trash2, UserPlus, KeyRound, ShieldCheck, X } from "lucide-react";
+import { Loader2, Trash2, UserPlus, KeyRound, ShieldCheck, ShieldOff, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   api, extractErrorMessage,
@@ -47,6 +47,12 @@ function DbUsersInner({ connectionId }: { connectionId: string }) {
   const dropUser = useMutation({
     mutationFn: (role: string) => api.dropDbUser(connectionId, role),
     onSuccess: () => { toast.success("User dropped"); invalidate(); },
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
+  const setBypass = useMutation({
+    mutationFn: ({ role, on }: { role: string; on: boolean }) => api.alterDbUser(connectionId, role, { bypassRls: on }),
+    onSuccess: (_d, v) => { toast.success(v.on ? "RLS bypass enabled — user can read all rows" : "RLS bypass disabled"); invalidate(); },
     onError: (e) => toast.error(extractErrorMessage(e)),
   });
 
@@ -114,6 +120,11 @@ function DbUsersInner({ connectionId }: { connectionId: string }) {
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex justify-end gap-1">
+                    <Button variant="ghost" size="icon" className={`h-8 w-8 ${u.bypass_rls ? "text-amber-500" : ""}`}
+                      title={u.bypass_rls ? "RLS bypass ON — click to disable" : "Enable RLS bypass (read all rows, e.g. Supabase)"}
+                      onClick={() => setBypass.mutate({ role: u.name, on: !u.bypass_rls })} disabled={setBypass.isPending}>
+                      {u.bypass_rls ? <ShieldCheck className="h-4 w-4" /> : <ShieldOff className="h-4 w-4" />}
+                    </Button>
                     <Button variant="ghost" size="icon" className="h-8 w-8" title="Privileges"
                       onClick={() => setPrivFor(u.name)}>
                       <KeyRound className="h-4 w-4" />
@@ -156,6 +167,7 @@ function memberOf(u: DbUser): string[] {
 function AttributeBadges({ u }: { u: DbUser }) {
   const flags: { label: string; on: boolean; variant: "default" | "warning" | "secondary" }[] = [
     { label: "SUPERUSER", on: u.superuser, variant: "warning" },
+    { label: "BYPASSRLS", on: u.bypass_rls, variant: "warning" },
     { label: "CREATEDB", on: u.create_db, variant: "secondary" },
     { label: "CREATEROLE", on: u.create_role, variant: "secondary" },
     { label: "REPLICATION", on: u.replication, variant: "secondary" },
@@ -176,17 +188,18 @@ function CreateUserForm({ connectionId, onCreated }: { connectionId: string; onC
   const [superuser, setSuperuser] = useState(false);
   const [createDb, setCreateDb] = useState(false);
   const [createRole, setCreateRole] = useState(false);
+  const [bypassRls, setBypassRls] = useState(false);
 
   const create = useMutation({
     mutationFn: () =>
       api.createDbUser(connectionId, {
         name: name.trim(),
         password: password || undefined,
-        login, superuser, createDb, createRole,
+        login, superuser, createDb, createRole, bypassRls,
       }),
     onSuccess: () => {
       toast.success(`User "${name.trim()}" created`);
-      setName(""); setPassword(""); setSuperuser(false); setCreateDb(false); setCreateRole(false); setLogin(true);
+      setName(""); setPassword(""); setSuperuser(false); setCreateDb(false); setCreateRole(false); setBypassRls(false); setLogin(true);
       onCreated();
     },
     onError: (e) => toast.error(extractErrorMessage(e)),
@@ -217,7 +230,12 @@ function CreateUserForm({ connectionId, onCreated }: { connectionId: string; onC
         <CheckOpt label="Superuser" checked={superuser} onChange={setSuperuser} />
         <CheckOpt label="Create databases" checked={createDb} onChange={setCreateDb} />
         <CheckOpt label="Create roles" checked={createRole} onChange={setCreateRole} />
+        <CheckOpt label="Bypass RLS" checked={bypassRls} onChange={setBypassRls} />
       </div>
+      <p className="text-xs text-muted-foreground">
+        Tip: on Supabase (and any DB using row-level security), enable <b>Bypass RLS</b> so this user can
+        read all rows — otherwise it sees tables but no data.
+      </p>
       <div className="flex justify-end">
         <Button type="submit" disabled={create.isPending}>
           {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}

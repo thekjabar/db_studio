@@ -749,6 +749,7 @@ export interface DbUser {
   create_role: boolean;
   inherit: boolean;
   replication: boolean;
+  bypass_rls: boolean;
   connection_limit: number;
   valid_until: string | null;
   member_of: string[];
@@ -767,6 +768,7 @@ export interface CreateDbUserInput {
   superuser?: boolean;
   createDb?: boolean;
   createRole?: boolean;
+  bypassRls?: boolean;
   connectionLimit?: number;
   validUntil?: string;
 }
@@ -777,6 +779,7 @@ export interface AlterDbUserInput {
   superuser?: boolean;
   createDb?: boolean;
   createRole?: boolean;
+  bypassRls?: boolean;
   connectionLimit?: number;
   validUntil?: string;
 }

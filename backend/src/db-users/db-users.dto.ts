@@ -12,6 +12,9 @@ export class CreateDbUserDto {
   @IsOptional() @IsBoolean() createDb?: boolean;
   @IsOptional() @IsBoolean() createRole?: boolean;
   @IsOptional() @IsBoolean() inherit?: boolean;
+  // BYPASSRLS: the role ignores row-level security policies (sees all rows).
+  // Essential for admin/operator users on Supabase DBs where RLS is on.
+  @IsOptional() @IsBoolean() bypassRls?: boolean;
   @IsOptional() @IsInt() @Min(1) @Max(100000) connectionLimit?: number;
   // ISO date string; role login expires after this instant.
   @IsOptional() @IsString() @Length(1, 40) validUntil?: string;
@@ -23,6 +26,7 @@ export class AlterDbUserDto {
   @IsOptional() @IsBoolean() superuser?: boolean;
   @IsOptional() @IsBoolean() createDb?: boolean;
   @IsOptional() @IsBoolean() createRole?: boolean;
+  @IsOptional() @IsBoolean() bypassRls?: boolean;
   @IsOptional() @IsInt() @Min(-1) @Max(100000) connectionLimit?: number;
   @IsOptional() @IsString() @Length(0, 40) validUntil?: string; // empty string clears it
 }

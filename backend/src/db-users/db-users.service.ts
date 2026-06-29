@@ -59,6 +59,7 @@ export class DbUsersService {
           r.rolcreaterole                             AS create_role,
           r.rolinherit                                AS inherit,
           r.rolreplication                            AS replication,
+          r.rolbypassrls                              AS bypass_rls,
           r.rolconnlimit                              AS connection_limit,
           r.rolvaliduntil                             AS valid_until,
           -- Return as jsonb so the pg driver parses it into a real JS array.
@@ -139,6 +140,7 @@ export class DbUsersService {
     if (dto.superuser) opts.push('SUPERUSER');
     if (dto.createDb) opts.push('CREATEDB');
     if (dto.createRole) opts.push('CREATEROLE');
+    if (dto.bypassRls) opts.push('BYPASSRLS');
     if (dto.inherit === false) opts.push('NOINHERIT');
     if (typeof dto.connectionLimit === 'number') {
       opts.push(`CONNECTION LIMIT ${Math.trunc(dto.connectionLimit)}`);
@@ -173,6 +175,8 @@ export class DbUsersService {
     if (dto.createDb === false) opts.push('NOCREATEDB');
     if (dto.createRole === true) opts.push('CREATEROLE');
     if (dto.createRole === false) opts.push('NOCREATEROLE');
+    if (dto.bypassRls === true) opts.push('BYPASSRLS');
+    if (dto.bypassRls === false) opts.push('NOBYPASSRLS');
     if (typeof dto.connectionLimit === 'number') {
       opts.push(`CONNECTION LIMIT ${Math.trunc(dto.connectionLimit)}`);
     }

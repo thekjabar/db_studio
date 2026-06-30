@@ -1,5 +1,6 @@
 import * as React from "react";
-import { Check, Key, Maximize2 } from "lucide-react";
+import { Check, Copy, Key, Maximize2 } from "lucide-react";
+import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
@@ -404,7 +405,7 @@ export function DataGrid({
                         }}
                         style={{ width: w, minWidth: w, maxWidth: w }}
                         className={cn(
-                          "border-b border-r border-border px-3 py-1.5 whitespace-nowrap overflow-hidden",
+                          "group/cell relative border-b border-r border-border px-3 py-1.5 whitespace-nowrap overflow-hidden",
                           kind === "number" && "text-right tabular-nums",
                           isActive && "ring-1 ring-inset ring-primary bg-primary/5",
                         )}
@@ -420,7 +421,10 @@ export function DataGrid({
                             onCancel={() => setEditing(null)}
                           />
                         ) : (
-                          <Cell kind={kind} value={value} />
+                          <>
+                            <Cell kind={kind} value={value} />
+                            {kind !== "null" && <CopyCellButton value={value} kind={kind} />}
+                          </>
                         )}
                       </td>
                     );
@@ -496,6 +500,56 @@ function InlineEditor({
       }}
       className="w-full bg-background border border-ring rounded px-1.5 py-0.5 outline-none text-xs"
     />
+  );
+}
+
+/** The text we copy for a cell: the raw stored value (full JSON, raw
+ *  timestamp, exact string) — what you'd paste into a query, not the
+ *  truncated/localized display. */
+function copyText(value: unknown, kind: CellKind): string {
+  if (value === null || value === undefined) return "";
+  if (kind === "json") {
+    try { return JSON.stringify(value); } catch { return String(value); }
+  }
+  return String(value);
+}
+
+/** Hover-to-copy button shown on the right of every data cell. */
+function CopyCellButton({ value, kind }: { value: unknown; kind: CellKind }) {
+  const [copied, setCopied] = React.useState(false);
+  const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  const onCopy = async (e: React.MouseEvent) => {
+    // Don't let the click select/edit the cell underneath.
+    e.stopPropagation();
+    const text = copyText(value, kind);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      toast.success("Copied to clipboard");
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1200);
+    } catch {
+      toast.error("Couldn't copy");
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={onCopy}
+      title="Copy value"
+      aria-label="Copy cell value"
+      className={cn(
+        "absolute right-1 top-1/2 -translate-y-1/2 grid h-5 w-5 place-items-center rounded",
+        "bg-card/90 border border-border text-muted-foreground shadow-sm backdrop-blur",
+        "opacity-0 group-hover/cell:opacity-100 hover:text-foreground hover:border-primary/50 transition-opacity",
+      )}
+    >
+      {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+    </button>
   );
 }
 

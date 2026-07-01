@@ -275,7 +275,7 @@ export function DataGrid({
                 <th
                   key={col.name}
                   style={{ width: w, minWidth: w, maxWidth: w }}
-                  className="relative bg-card/95 backdrop-blur border-b border-r border-border px-3 py-2 text-left font-medium whitespace-nowrap"
+                  className="group/th relative bg-card/95 backdrop-blur border-b border-r border-border px-3 py-2 text-left font-medium whitespace-nowrap"
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     {col.pk ? (
@@ -293,6 +293,19 @@ export function DataGrid({
                       >
                         {col.type}
                       </span>
+                    )}
+                  </div>
+                  {/* Full-name popover on hover — shows the complete column name +
+                      type when the header is too narrow to display it all. */}
+                  <div
+                    className="pointer-events-none absolute left-2 top-full z-40 mt-1 hidden whitespace-nowrap rounded-lg border border-border bg-popover px-3 py-2 text-popover-foreground shadow-lg group-hover/th:block"
+                  >
+                    <div className="flex items-center gap-2">
+                      {col.pk && <Key className="h-3 w-3 text-amber-400 shrink-0" />}
+                      <span className="font-mono text-sm text-foreground">{col.name}</span>
+                    </div>
+                    {col.type && (
+                      <div className={cn("mt-0.5 text-[11px]", typeIconColor(col.type))}>{col.type}</div>
                     )}
                   </div>
                   {/* Resize handle */}

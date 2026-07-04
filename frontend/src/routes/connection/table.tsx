@@ -166,10 +166,16 @@ export default function TableRoute() {
   const ready = !!id && !!schema && !!table;
 
   // Live-update: when the backend sees a change for this (schema.table), refetch.
+  // Also clear the selection: it's keyed by ROW INDEX, and a refetch can reorder
+  // or shrink `rows` so those indices point at different rows (or none). Keeping a
+  // stale selection is what produced malformed delete/edit payloads
+  // ("pks must be a non-empty array of objects"). Dropping it is safe — the user
+  // re-selects against the fresh rows.
   useTableSubscription(
     { connectionId: id, schema, table, enabled: ready },
     () => {
       qc.invalidateQueries({ queryKey: ["data", id, schema, table] });
+      setSelected((s) => (s.size ? new Set() : s));
     },
   );
 
@@ -291,18 +297,43 @@ export default function TableRoute() {
     updateRow.mutate({ pk, set: { [column]: value } });
   };
 
+  // Turn a set of selected row indices into PK objects, dropping any that no
+  // longer resolve to a real row with all PK columns present (e.g. after a
+  // Realtime refresh replaced `rows` under a stale selection). Guarantees every
+  // returned object is a complete, non-empty PK — never `{}` or `{ id: undefined }`.
+  const buildPks = (sel: Set<number>): Record<string, unknown>[] => {
+    const out: Record<string, unknown>[] = [];
+    sel.forEach((i) => {
+      const r = rows[i];
+      if (!r) return;
+      const pk: Record<string, unknown> = {};
+      let complete = true;
+      for (const c of pkCols) {
+        const v = r[c];
+        if (v === undefined || v === null) { complete = false; break; }
+        pk[c] = v;
+      }
+      if (complete && Object.keys(pk).length > 0) out.push(pk);
+    });
+    return out;
+  };
+
   const deleteSelected = async () => {
     if (pkCols.length === 0) {
       toast.error("Cannot delete: no primary key");
       return;
     }
-    const pks: Record<string, unknown>[] = [];
-    selected.forEach((i) => {
-      const r = rows[i];
-      const pk: Record<string, unknown> = {};
-      for (const c of pkCols) pk[c] = r[c];
-      pks.push(pk);
-    });
+    // Build one PK object per selected row. `selected` holds row INDICES, and a
+    // Realtime refresh can replace/shrink `rows` between selecting and deleting —
+    // leaving stale indices whose row is gone (rows[i] === undefined) or whose PK
+    // column is null. Skip any such entry so we never send an empty/partial PK
+    // (which the API rejects with "pks must be a non-empty array of objects").
+    const pks = buildPks(selected);
+    if (pks.length === 0) {
+      toast.error("Nothing to delete — the selection is out of date. Refresh and select the rows again.");
+      setSelected(new Set());
+      return;
+    }
     const ok = await modal.confirm({
       title: `Delete ${pks.length} row(s)?`,
       description: "This permanently removes the selected rows.",
@@ -643,12 +674,7 @@ export default function TableRoute() {
           schema={schema!}
           table={table!}
           columns={colsQ.data ?? []}
-          pks={Array.from(selected).map((i) => {
-            const row = rows[i];
-            const pk: Record<string, unknown> = {};
-            for (const c of pkCols) pk[c] = row[c];
-            return pk;
-          })}
+          pks={buildPks(selected)}
           onApplied={() => {
             setSelected(new Set());
             qc.invalidateQueries({ queryKey: ["data", id, schema, table] });

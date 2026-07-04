@@ -2,7 +2,7 @@ import {
   ArrayNotEmpty, IsArray, IsBoolean, IsEnum, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Length, Max, Min,
   ValidateIf, ValidateNested, registerDecorator, type ValidationOptions,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { Dialect } from '@prisma/client';
 
 /**
@@ -107,12 +107,21 @@ export class DeleteRowDto {
 }
 
 export class BulkDeleteRowsDto {
+  // `@Transform(({ obj }) => obj.pks)` returns the ORIGINAL array untouched. The
+  // global ValidationPipe runs with `enableImplicitConversion: true`, which — for
+  // a field typed `Record<string, unknown>[]` (no `@Type()` class to anchor the
+  // element type) — coerces every `{ id: "..." }` element into an empty array
+  // `[]`, turning a valid `[{id}]` payload into `[[], []]` and failing validation
+  // with "pks must be a non-empty array of objects". Reading straight from the
+  // source object bypasses that per-element coercion.
   @IsArray() @ArrayNotEmpty() @IsPlainObjectArray()
+  @Transform(({ obj }) => obj.pks)
   pks!: Record<string, unknown>[];
 }
 
 export class BulkUpdateRowsDto {
   @IsArray() @ArrayNotEmpty() @IsPlainObjectArray()
+  @Transform(({ obj }) => obj.pks)
   pks!: Record<string, unknown>[];
   @IsObject() values!: Record<string, unknown>;
 }

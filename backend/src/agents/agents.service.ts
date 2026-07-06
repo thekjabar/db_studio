@@ -70,12 +70,36 @@ export class AgentsService {
   async createPairingToken(id: string, userId: string) {
     const a = await this.prisma.agent.findUnique({ where: { id } });
     if (!a || a.ownerId !== userId) throw new NotFoundException();
-    const token = await this.jwt.signAsync(
-      { sub: userId, agentId: id, kind: 'agent-pairing' },
-      { secret: this.cfg.jwtAccessSecret, expiresIn: PAIRING_TTL },
-    );
+    const token = await this.signPairingToken(id, userId);
     // expiresAt for the UI (15 min from now).
     const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
     return { token, expiresAt };
+  }
+
+  private signPairingToken(agentId: string, userId: string) {
+    return this.jwt.signAsync(
+      { sub: userId, agentId, kind: 'agent-pairing' },
+      { secret: this.cfg.jwtAccessSecret, expiresIn: PAIRING_TTL },
+    );
+  }
+
+  /**
+   * Browser auto-pair (see AGENT_AUTOPAIR_PROTOCOL.md). Called by the
+   * /agent/authorize page when the user clicks "Allow". Reuses an existing agent
+   * with the same name for this user (so re-running the agent on the same machine
+   * doesn't spawn duplicates), otherwise creates one — then mints a pairing token.
+   * `state` is echoed back so the agent can match its CSRF nonce.
+   */
+  async authorize(userId: string, name: string, state: string) {
+    const trimmed = (name ?? '').trim().slice(0, 80) || 'Local agent';
+    let agent = await this.prisma.agent.findFirst({
+      where: { ownerId: userId, name: trimmed },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!agent) {
+      agent = await this.prisma.agent.create({ data: { name: trimmed, ownerId: userId } });
+    }
+    const token = await this.signPairingToken(agent.id, userId);
+    return { token, agentId: agent.id, state };
   }
 }

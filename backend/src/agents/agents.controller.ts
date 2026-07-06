@@ -7,6 +7,12 @@ class CreateAgentDto {
   @IsString() @Length(1, 80) name!: string;
 }
 
+class AuthorizeAgentDto {
+  @IsString() @Length(1, 120) name!: string;
+  // CSRF nonce the agent generated; echoed back unchanged so the agent can match it.
+  @IsString() @Length(1, 200) state!: string;
+}
+
 @Controller('agents')
 export class AgentsController {
   constructor(private readonly svc: AgentsService) {}
@@ -19,6 +25,12 @@ export class AgentsController {
   @Post()
   create(@CurrentUser() u: AuthUser, @Body() dto: CreateAgentDto) {
     return this.svc.create(u.id, dto.name);
+  }
+
+  /** Browser auto-pair: the /agent/authorize page calls this on "Allow". */
+  @Post('authorize')
+  authorize(@CurrentUser() u: AuthUser, @Body() dto: AuthorizeAgentDto) {
+    return this.svc.authorize(u.id, dto.name, dto.state);
   }
 
   @Get(':id')

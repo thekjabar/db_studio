@@ -11,15 +11,21 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"dbstudio-agent/internal/config"
+	"dbstudio-agent/internal/pair"
 	"dbstudio-agent/internal/tunnel"
 )
 
 // defaultServer is used when neither --server nor a saved config provides one.
-const defaultServer = "wss://database-api.mrwari.com"
+const defaultServer = "wss://api.queryschema.com"
+
+// defaultAppBase is the DB Studio frontend base URL used for browser auto-pair
+// when neither --app nor a saved config provides one.
+const defaultAppBase = "https://queryschema.com"
 
 const (
 	backoffMin = 1 * time.Second
@@ -31,14 +37,18 @@ func main() {
 	log.SetPrefix("[dbstudio-agent] ")
 
 	var (
-		tokenFlag   string
-		serverFlag  string
-		configFlag  string
-		versionFlag bool
+		tokenFlag     string
+		serverFlag    string
+		appFlag       string
+		configFlag    string
+		noBrowserFlag bool
+		versionFlag   bool
 	)
-	flag.StringVar(&tokenFlag, "token", "", "pairing token from the DB Studio UI (only needed on first run / re-pair)")
-	flag.StringVar(&serverFlag, "server", "", "server base URL, e.g. wss://database-api.mrwari.com (overrides config)")
+	flag.StringVar(&tokenFlag, "token", "", "pairing token from the DB Studio UI (skips browser auto-pair)")
+	flag.StringVar(&serverFlag, "server", "", "server base URL, e.g. wss://api.queryschema.com (overrides config)")
+	flag.StringVar(&appFlag, "app", "", "DB Studio app base URL for browser pairing, e.g. https://queryschema.com (overrides default)")
 	flag.StringVar(&configFlag, "config", "", "path to config dir or config.json (default: OS user config dir)")
+	flag.BoolVar(&noBrowserFlag, "no-browser", false, "do not launch a browser for pairing; print the URL and wait instead")
 	flag.BoolVar(&versionFlag, "version", false, "print version and exit")
 	flag.Parse()
 
@@ -56,14 +66,27 @@ func main() {
 	server := firstNonEmpty(serverFlag, cfg.ServerURL, defaultServer)
 	cfg.ServerURL = server
 
+	// Resolve the app (browser) base URL: flag > default.
+	appBase := firstNonEmpty(appFlag, defaultAppBase)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// Determine the token to authenticate with:
 	//   - a fresh pairing token from --token always wins (re-pair / first run);
 	//   - otherwise fall back to the saved refresh secret.
-	// One of the two MUST be present or we cannot connect.
-	if tokenFlag == "" && cfg.RefreshSecret == "" {
-		log.Printf("no pairing token and no saved credentials.")
-		log.Printf("run once with:  agent --token <PAIRING_TOKEN>  [--server %s]", server)
-		os.Exit(2)
+	// If neither is present, run the browser auto-pair flow to obtain a pairing
+	// token instead of exiting. Only if that fails do we print the manual hint.
+	pairingToken := tokenFlag
+	if pairingToken == "" && cfg.RefreshSecret == "" {
+		log.Printf("no pairing token and no saved credentials; starting browser pairing...")
+		token, perr := pair.BrowserPair(ctx, appBase, agentName(), !noBrowserFlag)
+		if perr != nil {
+			log.Printf("browser pairing failed: %v", perr)
+			log.Printf("run once with:  agent --token <PAIRING_TOKEN>  [--server %s]", server)
+			os.Exit(2)
+		}
+		pairingToken = token
 	}
 
 	// Persist the server URL immediately (harmless, keeps config coherent).
@@ -71,11 +94,8 @@ func main() {
 		log.Printf("warning: could not save config: %v", err)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	log.Printf("starting; server=%s", server)
-	run(ctx, configFlag, cfg, tokenFlag)
+	run(ctx, configFlag, cfg, pairingToken)
 	log.Printf("stopped.")
 }
 
@@ -187,4 +207,18 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// agentName returns the machine hostname to propose as this agent's name during
+// browser pairing, falling back to "agent" if the hostname is unavailable.
+func agentName() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return "agent"
+	}
+	h = strings.TrimSpace(h)
+	if h == "" {
+		return "agent"
+	}
+	return h
 }

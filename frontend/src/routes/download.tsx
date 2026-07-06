@@ -21,6 +21,9 @@ interface Platform {
   icon: LucideIcon;
   /** Family used for OS detection + grouping the "needs chmod / gatekeeper" hint. */
   family: "windows" | "mac" | "linux";
+  /** macOS builds aren't shipped yet (the tray backend needs a Mac to compile),
+   *  so they render as a disabled "coming soon" row rather than a dead link. */
+  available: boolean;
 }
 
 const PLATFORMS: Record<PlatformKey, Platform> = {
@@ -30,6 +33,7 @@ const PLATFORMS: Record<PlatformKey, Platform> = {
     href: AGENT_DOWNLOADS.windows,
     icon: MonitorDown,
     family: "windows",
+    available: true,
   },
   macArm: {
     key: "macArm",
@@ -37,6 +41,7 @@ const PLATFORMS: Record<PlatformKey, Platform> = {
     href: AGENT_DOWNLOADS.macArm,
     icon: Apple,
     family: "mac",
+    available: false,
   },
   macIntel: {
     key: "macIntel",
@@ -44,6 +49,7 @@ const PLATFORMS: Record<PlatformKey, Platform> = {
     href: AGENT_DOWNLOADS.macIntel,
     icon: Apple,
     family: "mac",
+    available: false,
   },
   linux: {
     key: "linux",
@@ -51,6 +57,7 @@ const PLATFORMS: Record<PlatformKey, Platform> = {
     href: AGENT_DOWNLOADS.linux,
     icon: Terminal,
     family: "linux",
+    available: true,
   },
 };
 
@@ -61,13 +68,29 @@ function detectPrimary(): PlatformKey {
   if (typeof navigator === "undefined") return "windows";
   const ua = `${navigator.userAgent} ${navigator.platform}`.toLowerCase();
   if (ua.includes("win")) return "windows";
-  if (ua.includes("mac") || ua.includes("iphone") || ua.includes("ipad")) return "macArm";
+  // macOS builds aren't available yet — Mac visitors get Linux? No: default the
+  // big button to Windows and surface the "macOS coming soon" note. (A Mac user
+  // still sees the disabled mac rows below.)
   if (ua.includes("linux") || ua.includes("android") || ua.includes("x11")) return "linux";
   return "windows";
 }
 
 function PlatformRow({ platform }: { platform: Platform }) {
   const Icon = platform.icon;
+  if (!platform.available) {
+    return (
+      <div
+        className="flex items-center justify-between gap-3 rounded-md border border-dashed border-border bg-background/30 px-3 py-2.5 opacity-60"
+        title="Coming soon"
+      >
+        <span className="flex items-center gap-2.5 text-sm font-medium">
+          <Icon className="h-4 w-4 text-muted-foreground" />
+          {platform.label}
+        </span>
+        <span className="text-xs text-muted-foreground shrink-0">Coming soon</span>
+      </div>
+    );
+  }
   return (
     <a
       href={platform.href}

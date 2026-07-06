@@ -45,3 +45,8 @@ backend/node_modules/.prisma/
 
 # Claude Code local settings (machine-specific)
 .claude/
+
+# Go agent build artifacts
+agent/agent.exe
+agent/agent
+agent/*.exe

@@ -23,6 +23,11 @@ model Connection {
   owner            User               @relation("OwnedConnections", fields: [ownerId], references: [id], onDelete: Cascade)
   workspaceId      String?
   workspace        Workspace?         @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  /// When true, this connection is reached through the owner's local tunnel
+  /// agent instead of a direct/SSH connection from the server.
+  viaAgent         Boolean            @default(false)
+  agentId          String?
+  agent            Agent?             @relation(fields: [agentId], references: [id])
   members          ConnectionMember[]
   tableGrants      TableGrant[]
   scheduledQueries ScheduledQuery[]

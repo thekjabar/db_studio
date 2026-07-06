@@ -1,0 +1,17 @@
+/// A user's local tunnel agent (agent.exe running on their laptop). Connects
+/// outbound over secure WebSocket and acts as a raw TCP byte-pipe so the server
+/// can reach databases that are only reachable from the user's own network.
+model Agent {
+  id          String       @id @default(cuid())
+  name        String
+  ownerId     String
+  owner       User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  /// Hash of the agent's long-lived refresh secret (issued in `ready`).
+  refreshHash String?
+  lastSeenAt  DateTime?
+  createdAt   DateTime     @default(now())
+  connections Connection[]
+
+  @@index([ownerId])
+}

@@ -72,6 +72,7 @@ model User {
   ownedOrganizations Organization[]       @relation("OwnedOrganizations")
   organizationMembers OrganizationMember[]
   aiChats          AiChat[]
+  agents           Agent[]
 
   @@unique([oauthProvider, oauthId])
   @@index([email])

@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { api, extractErrorMessage, type Connection, type SshTunnelInput } from "@/lib/api";
 import { SshTunnelFields, defaultSshTunnel } from "@/components/ssh-tunnel-fields";
+import { AgentTunnelFields } from "@/components/agent-tunnel-fields";
 
 interface Props {
   connection: Connection | null;
@@ -45,6 +46,8 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
   //                   {cleared: true} = "remove the tunnel".
   const [sshMode, setSshMode] = useState<"unchanged" | "set" | "clear">("unchanged");
   const [ssh, setSsh] = useState<SshTunnelInput>(defaultSshTunnel);
+  const [viaAgent, setViaAgent] = useState(false);
+  const [agentId, setAgentId] = useState<string | null>(null);
 
   const [alertMs, setAlertMs] = useState("");
   const [alertEmail, setAlertEmail] = useState("");
@@ -67,6 +70,8 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
     setSslMode("");
     setSshMode("unchanged");
     setSsh(defaultSshTunnel());
+    setViaAgent(!!connection.viaAgent);
+    setAgentId(connection.agentId ?? null);
   }, [connection]);
 
   const update = useMutation({
@@ -83,6 +88,10 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!connection) return;
+    if (viaAgent && !agentId) {
+      toast.error("Select or create an agent, or turn off 'Connect via local agent'.");
+      return;
+    }
     const patch: Parameters<typeof api.updateConnection>[1] = {};
     if (name !== connection.name) patch.name = name;
     if (readOnly !== !!connection.readOnly) patch.readOnly = readOnly;
@@ -103,6 +112,11 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
     if (sslMode) patch.sslMode = sslMode;
     if (sshMode === "set") patch.ssh = ssh;
     else if (sshMode === "clear") patch.ssh = null;
+    // Local agent routing. Only send when something actually changed.
+    if (viaAgent !== !!connection.viaAgent) patch.viaAgent = viaAgent;
+    const curAgentId = connection.agentId ?? null;
+    const nextAgentId = viaAgent ? agentId : null;
+    if (nextAgentId !== curAgentId) patch.agentId = nextAgentId;
     // Slow-query alert: empty = clear (null), value = set.
     const msNum = alertMs.trim() === "" ? null : parseInt(alertMs, 10) || null;
     if (msNum !== (connection.slowQueryAlertMs ?? null)) patch.slowQueryAlertMs = msNum;
@@ -262,6 +276,13 @@ export function EditConnectionDialog({ connection, onOpenChange }: Props) {
               </button>
             </div>
           )}
+
+          <AgentTunnelFields
+            enabled={viaAgent}
+            onEnabledChange={setViaAgent}
+            agentId={agentId}
+            onAgentIdChange={setAgentId}
+          />
 
           <DialogFooter className="gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

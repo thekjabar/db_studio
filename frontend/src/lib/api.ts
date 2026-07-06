@@ -5,6 +5,25 @@ import { applyServerTheme } from "./theme-store";
 
 export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/api";
 
+/** API origin without the trailing `/api` prefix — for endpoints that live at
+ *  the root (downloads, health, the agent WS server). */
+export const API_ORIGIN = API_URL.replace(/\/api\/?$/, "");
+
+/** Direct link to the Windows agent binary. The binary is produced elsewhere;
+ *  we only wire the download href. */
+export const AGENT_DOWNLOAD_URL = `${API_ORIGIN}/downloads/agent.exe`;
+
+/** Hostname the agent connects back to, shown in the pairing command. Derived
+ *  from the API origin so dev/prod both work; falls back to the production host
+ *  from AGENT_TUNNEL_PROTOCOL.md. */
+export const AGENT_SERVER_HOST = (() => {
+  try {
+    return new URL(API_ORIGIN).host || "database-api.mrwari.com";
+  } catch {
+    return "database-api.mrwari.com";
+  }
+})();
+
 export const http = axios.create({
   baseURL: API_URL,
   withCredentials: true,
@@ -98,6 +117,8 @@ export interface Connection {
   slowQueryAlertEmail?: string | null;
   requireReview?: boolean;
   workspaceId?: string | null;
+  viaAgent?: boolean;
+  agentId?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -126,6 +147,24 @@ export interface CreateConnectionInput {
   slowQueryAlertMs?: number | null;
   slowQueryAlertEmail?: string | null;
   ssh?: SshTunnelInput | null;
+  /** Route queries through a local agent running inside the user's network. */
+  viaAgent?: boolean;
+  agentId?: string | null;
+}
+
+/** A local agent (`agent.exe`) that byte-pipes DB traffic from inside the
+ *  user's own network, so the database only has to allow the user's network
+ *  instead of our server's IP. */
+export interface Agent {
+  id: string;
+  name: string;
+  online: boolean;
+  lastSeenAt: string | null;
+}
+
+export interface AgentPairingToken {
+  token: string;
+  expiresAt: string;
 }
 
 export interface TableInfo {
@@ -704,7 +743,7 @@ export interface SchemaChangeResponse {
 
 // ---- API functions ----
 function toCreatePayload(input: CreateConnectionInput) {
-  const { name, dialect, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh } = input;
+  const { name, dialect, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh, viaAgent, agentId } = input;
   const credentials: Record<string, unknown> = { host, port, database, user, password, sslMode };
   if (ssh) credentials.ssh = ssh;
   return {
@@ -713,13 +752,15 @@ function toCreatePayload(input: CreateConnectionInput) {
     readOnly,
     statementTimeoutMs,
     credentials,
+    ...(viaAgent !== undefined && { viaAgent }),
+    ...(viaAgent && agentId ? { agentId } : {}),
   };
 }
 
 function toUpdatePayload(input: Partial<CreateConnectionInput>) {
   const {
     name, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh,
-    slowQueryAlertMs, slowQueryAlertEmail,
+    slowQueryAlertMs, slowQueryAlertEmail, viaAgent, agentId,
   } = input;
   const credentials: Record<string, unknown> = {};
   if (host !== undefined) credentials.host = host;
@@ -737,6 +778,9 @@ function toUpdatePayload(input: Partial<CreateConnectionInput>) {
     // only `undefined` means "field not being changed".
     ...(slowQueryAlertMs !== undefined && { slowQueryAlertMs }),
     ...(slowQueryAlertEmail !== undefined && { slowQueryAlertEmail }),
+    ...(viaAgent !== undefined && { viaAgent }),
+    // agentId: null clears the agent link; a string sets it. undefined = unchanged.
+    ...(agentId !== undefined && { agentId }),
     ...(Object.keys(credentials).length > 0 && { credentials }),
   };
 }
@@ -861,6 +905,16 @@ export const api = {
   updateConnection: (id: string, input: Partial<CreateConnectionInput>) =>
     http.patch<Connection>(`/connections/${id}`, toUpdatePayload(input)).then((r) => r.data),
   deleteConnection: (id: string) => http.delete(`/connections/${id}`).then((r) => r.data),
+
+  // ---- Local agents (byte-pipe tunnel from inside the user's network) ----
+  listAgents: () => http.get<Agent[]>("/agents").then((r) => r.data),
+  createAgent: (name: string) =>
+    http.post<Agent>("/agents", { name }).then((r) => r.data),
+  getAgent: (id: string) => http.get<Agent>(`/agents/${id}`).then((r) => r.data),
+  createAgentPairingToken: (id: string) =>
+    http.post<AgentPairingToken>(`/agents/${id}/pairing-token`).then((r) => r.data),
+  deleteAgent: (id: string) => http.delete(`/agents/${id}`).then((r) => r.data),
+
   testConnection: (id: string) =>
     http
       .post<{ ok: boolean; serverVersion?: string; message?: string; latencyMs?: number }>(

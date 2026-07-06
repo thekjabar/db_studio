@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ArrowRight, Code2, Database, Loader2, Network, Pencil, Plus, Shield, ShieldCheck, Table2, Trash2, Zap } from "lucide-react";
 import { api, extractErrorMessage, type Connection, type CreateConnectionInput, type Dialect, type SshTunnelInput } from "@/lib/api";
 import { SshTunnelFields, defaultSshTunnel } from "@/components/ssh-tunnel-fields";
+import { AgentTunnelFields } from "@/components/agent-tunnel-fields";
 import { EditConnectionDialog } from "@/components/edit-connection-dialog";
 import { useModal } from "@/components/modal-provider";
 import { Button } from "@/components/ui/button";
@@ -393,6 +394,8 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [sslMode, setSslMode] = useState("");
   const [sshEnabled, setSshEnabled] = useState(false);
   const [ssh, setSsh] = useState<SshTunnelInput>(defaultSshTunnel);
+  const [viaAgent, setViaAgent] = useState(false);
+  const [agentId, setAgentId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [testFailed, setTestFailed] = useState(false);
 
@@ -416,12 +419,18 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     setSslMode("");
     setSshEnabled(false);
     setSsh(defaultSshTunnel());
+    setViaAgent(false);
+    setAgentId(null);
     setDialect("POSTGRES");
     setTestFailed(false);
   };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (viaAgent && !agentId) {
+      toast.error("Select or create an agent, or turn off 'Connect via local agent'.");
+      return;
+    }
     setSubmitting(true);
     try {
       const input: CreateConnectionInput = {
@@ -435,6 +444,8 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         readOnly,
         sslMode: sslMode || undefined,
         ssh: sshEnabled ? ssh : undefined,
+        viaAgent,
+        agentId: viaAgent ? agentId : null,
       };
       const created = await api.createConnection(input);
       toast.success("Connection created");
@@ -564,6 +575,13 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
             onEnabledChange={setSshEnabled}
             value={ssh}
             onChange={setSsh}
+          />
+
+          <AgentTunnelFields
+            enabled={viaAgent}
+            onEnabledChange={setViaAgent}
+            agentId={agentId}
+            onAgentIdChange={setAgentId}
           />
 
           {/* Allowlist hint. Prominent red callout after a failed Test; a quiet

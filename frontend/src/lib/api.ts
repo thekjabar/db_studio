@@ -914,6 +914,12 @@ export const api = {
   createAgentPairingToken: (id: string) =>
     http.post<AgentPairingToken>(`/agents/${id}/pairing-token`).then((r) => r.data),
   deleteAgent: (id: string) => http.delete(`/agents/${id}`).then((r) => r.data),
+  /** Browser auto-pair: creates/reuses a user-owned agent by name and mints a
+   *  short-lived pairing token for the loopback callback flow. */
+  authorizeAgent: (body: { name: string; state: string }) =>
+    http
+      .post<{ token: string; agentId: string; state: string }>("/agents/authorize", body)
+      .then((r) => r.data),
 
   testConnection: (id: string) =>
     http

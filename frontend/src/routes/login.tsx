@@ -64,6 +64,16 @@ export default function LoginPage() {
       .catch(() => setSsoAvailable(false));
   }, [wsSlug]);
 
+  // Where to send the user after a successful sign-in. Defaults to
+  // /connections; honors a ?redirect= that points back into the app (e.g. the
+  // agent-authorize page bounces here and wants to return). Only same-origin
+  // relative paths are allowed — never an absolute/cross-origin URL.
+  const safeRedirect = (() => {
+    const raw = sp.get("redirect");
+    if (raw && raw.startsWith("/") && !raw.startsWith("//")) return raw;
+    return "/connections";
+  })();
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -71,7 +81,7 @@ export default function LoginPage() {
       const r = await api.login({ email, password, totpCode: needsTotp ? totpCode : undefined });
       setAuth(r.accessToken, r.user);
       toast.success(`Welcome ${r.user.displayName || r.user.email}`);
-      nav("/connections");
+      nav(safeRedirect);
     } catch (err: any) {
       const data = err?.response?.data;
       // Server returns either a flat { code, message } or { message: { code, message } }

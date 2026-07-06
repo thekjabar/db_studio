@@ -1,7 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { HttpAdapterHost } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
-import { randomBytes } from 'crypto';
 import type { IncomingMessage } from 'http';
 import { WebSocketServer, WebSocket, RawData } from 'ws';
 import { AppConfigService } from '../config/config.service';
@@ -10,7 +9,13 @@ import { AgentConnection, AgentRegistry } from './agent-registry.service';
 interface PairingPayload {
   sub: string; // userId
   agentId: string;
+  kind?: string; // 'agent-pairing' (first pair) | 'agent-refresh' (reconnect)
 }
+
+// The refresh JWT is long-lived so an agent can reconnect for a long time
+// without re-pairing through the browser. Revocation is handled by deleting the
+// Agent row (the reconnect still needs a valid agentId to be useful downstream).
+const REFRESH_TTL = '365d';
 
 /** Extra state we hang off each raw socket. */
 interface AgentSocket extends WebSocket {
@@ -163,15 +168,33 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
     };
     ws.conn = this.registry.register(ws.agentId!, ws, meta);
 
-    // The refresh secret lets the agent reconnect without re-pairing. Agent C's
-    // service persists a hash of it; here we just mint and return the raw value.
-    const refreshSecret = randomBytes(32).toString('base64url');
+    // The refresh secret lets the agent reconnect without re-pairing. It's a
+    // long-lived JWT signed with the SAME secret the handshake verifies (carrying
+    // { sub, agentId, kind:'agent-refresh' }), so a reconnect authenticates
+    // through the exact same code path as the initial pairing token. (Previously
+    // this was a random string the handshake couldn't verify, so every reconnect
+    // failed with 4401.) Re-mint on every ready so the clock keeps sliding forward.
+    void this.mintRefreshAndSend(ws);
+    this.log.log(
+      `Agent ${ws.agentId} ready (host=${meta.hostname ?? '?'} os=${meta.os ?? '?'})`,
+    );
+  }
+
+  /** Sign a long-lived refresh JWT for this agent and send it in `ready`. */
+  private async mintRefreshAndSend(ws: AgentSocket): Promise<void> {
+    let refreshSecret: string;
+    try {
+      refreshSecret = await this.jwt.signAsync(
+        { sub: ws.userId, agentId: ws.agentId, kind: 'agent-refresh' },
+        { secret: this.cfg.jwtAccessSecret, expiresIn: REFRESH_TTL },
+      );
+    } catch (e) {
+      this.log.error(`Failed to mint agent refresh token: ${(e as Error).message}`);
+      return;
+    }
     this.safeSend(
       ws,
       JSON.stringify({ t: 'ready', agentId: ws.agentId, refreshSecret }),
-    );
-    this.log.log(
-      `Agent ${ws.agentId} ready (host=${meta.hostname ?? '?'} os=${meta.os ?? '?'})`,
     );
   }
 

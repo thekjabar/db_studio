@@ -95,7 +95,7 @@ func main() {
 	}
 
 	log.Printf("starting; server=%s", server)
-	run(ctx, configFlag, cfg, pairingToken)
+	run(ctx, configFlag, cfg, pairingToken, appBase, !noBrowserFlag)
 	log.Printf("stopped.")
 }
 
@@ -103,7 +103,7 @@ func main() {
 // exponential backoff. The pairing token (if any) is used only for the first
 // attempt; after a successful ready with a refresh secret, subsequent attempts
 // use the saved secret.
-func run(ctx context.Context, configPath string, cfg *config.Config, pairingToken string) {
+func run(ctx context.Context, configPath string, cfg *config.Config, pairingToken, appBase string, openBrowser bool) {
 	backoff := backoffMin
 	// token used for the NEXT dial; starts as the pairing token if provided.
 	token := pairingToken
@@ -146,6 +146,26 @@ func run(ctx context.Context, configPath string, cfg *config.Config, pairingToke
 			log.Printf("session ended: %v", runErr)
 		} else {
 			log.Printf("session ended: connection closed")
+		}
+
+		// Self-heal: the server rejected our credentials (4401). This happens if
+		// the saved refresh secret is stale/revoked (e.g. after a server upgrade,
+		// or the agent was deleted). Looping forever on a dead secret is useless —
+		// clear it and re-pair through the browser so the user gets back online
+		// with one click instead of having to hunt down the config file.
+		if tunnel.IsUnauthorized(runErr) {
+			log.Printf("server rejected our credentials — re-pairing through the browser...")
+			cfg.RefreshSecret = ""
+			cfg.AgentID = ""
+			_ = config.Save(configPath, cfg)
+			newToken, perr := pair.BrowserPair(ctx, appBase, agentName(), openBrowser)
+			if perr != nil {
+				log.Printf("re-pairing failed: %v", perr)
+				return
+			}
+			token = newToken
+			backoff = backoffMin
+			continue
 		}
 
 		// If we still have no way to authenticate (never got a refresh secret

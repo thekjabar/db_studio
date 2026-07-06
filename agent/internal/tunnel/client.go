@@ -82,6 +82,25 @@ type Result struct {
 	RefreshSecret string
 }
 
+// closeUnauthorized is the WS close code the server sends when the token/refresh
+// secret is rejected (see AGENT_TUNNEL_PROTOCOL.md handshake).
+const closeUnauthorized = 4401
+
+// IsUnauthorized reports whether err is the server rejecting our credentials
+// (close code 4401). main uses this to trigger a fresh browser re-pair instead
+// of looping forever on a dead refresh secret.
+func IsUnauthorized(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ce *websocket.CloseError
+	if errors.As(err, &ce) && ce.Code == closeUnauthorized {
+		return true
+	}
+	// Some paths wrap the close in a generic read error whose text carries the code.
+	return strings.Contains(err.Error(), "4401")
+}
+
 // Client is a single WebSocket session to the server. A fresh Client is created
 // for each (re)connection attempt; long-lived reconnect/backoff logic lives in
 // main.

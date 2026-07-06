@@ -12,8 +12,8 @@ export const API_ORIGIN = API_URL.replace(/\/api\/?$/, "");
 /** Per-platform links to the local agent binaries. Built elsewhere and served
  *  by nginx from the API origin; we only wire the download hrefs. */
 export const AGENT_DOWNLOADS = {
-  // `-v2` suffix busts stale browser/CDN caches of the pre-tray console build.
-  windows: `${API_ORIGIN}/downloads/agent-windows-amd64-v2.exe`,
+  // `-v3` = the real windowed app (Fyne GUI). Versioned URL busts stale caches.
+  windows: `${API_ORIGIN}/downloads/agent-windows-amd64-v3.exe`,
   macIntel: `${API_ORIGIN}/downloads/agent-macos-amd64`,
   macArm: `${API_ORIGIN}/downloads/agent-macos-arm64`,
   linux: `${API_ORIGIN}/downloads/agent-linux-amd64-v2`,

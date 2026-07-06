@@ -3,11 +3,13 @@
 // byte-pipe so the server can reach databases that are only reachable from the
 // user's own network. See AGENT_TUNNEL_PROTOCOL.md for the wire contract.
 //
-// The agent runs as a background system-tray application: there is no console
-// window on Windows (the binary is built with -H=windowsgui). The tray icon
-// reflects the live connection state and its menu lets the user open DB Studio
-// or quit. If the tray cannot be created (e.g. a headless machine, or --console
-// was passed) the agent falls back to the plain console reconnect loop.
+// The agent runs as a real desktop window application (Fyne): double-clicking it
+// opens a visible window that shows in the OS taskbar with its own icon, like a
+// normal app. The window's status line reflects the live connection state and
+// its buttons let the user open DB Studio or quit. Because the binary is built
+// with -H=windowsgui there is no separate console window — just the app window.
+// If the GUI cannot be created (e.g. a headless machine, or --console was
+// passed) the agent falls back to the plain console reconnect loop.
 package main
 
 import (
@@ -23,9 +25,29 @@ import (
 
 	"dbstudio-agent/internal/config"
 	"dbstudio-agent/internal/pair"
+	"dbstudio-agent/internal/singleton"
 	"dbstudio-agent/internal/tray"
 	"dbstudio-agent/internal/tunnel"
+	"dbstudio-agent/internal/ui"
 )
+
+// trayToUI maps a tray.Status (used by the reconnect loop's setStatus callback)
+// to the equivalent ui.Status. Both enums are kept in the same order so this is
+// a straight passthrough, but the switch keeps them decoupled.
+func trayToUI(s tray.Status) ui.Status {
+	switch s {
+	case tray.Online:
+		return ui.Online
+	case tray.Connecting:
+		return ui.Connecting
+	case tray.Pairing:
+		return ui.Pairing
+	case tray.Offline:
+		return ui.Offline
+	default:
+		return ui.Connecting
+	}
+}
 
 // defaultServer is used when neither --server nor a saved config provides one.
 const defaultServer = "wss://api.queryschema.com"
@@ -71,12 +93,21 @@ func main() {
 	flag.StringVar(&configFlag, "config", "", "path to config dir or config.json (default: OS user config dir)")
 	flag.BoolVar(&noBrowserFlag, "no-browser", false, "do not launch a browser for pairing; print the URL and wait instead")
 	flag.BoolVar(&versionFlag, "version", false, "print version and exit")
-	flag.BoolVar(&consoleFlag, "console", false, "run in the console (no system tray)")
+	flag.BoolVar(&consoleFlag, "console", false, "run headless in the console (no GUI window)")
 	flag.Parse()
 
-	// --version must print and exit BEFORE any tray/config work.
+	// --version must print and exit BEFORE any GUI/config work.
 	if versionFlag {
 		fmt.Printf("dbstudio-agent %s\n", tunnel.Version)
+		return
+	}
+
+	// Single-instance guard: if another copy of the agent is already running,
+	// exit quietly rather than spawning a duplicate window/tunnel. Only enforced
+	// for the GUI (default) path — --console is for scripting/debugging where
+	// multiple instances may be intentional.
+	if !consoleFlag && !singleton.Acquire() {
+		log.Printf("another instance is already running; exiting.")
 		return
 	}
 
@@ -110,38 +141,54 @@ func main() {
 		server:       server,
 	}
 
-	// Console mode: skip the tray entirely and run the old loop on this
+	// Console mode: skip the GUI entirely and run the old loop on this
 	// goroutine. Useful when invoked from a terminal or on headless machines.
 	if consoleFlag {
 		runConsole(params)
 		return
 	}
 
-	// Tray mode: systray owns the main goroutine (systray.Run blocks), so the
-	// reconnect loop runs in a goroutine launched from onReady. onExit fires
-	// during tray teardown; cancelling the context there stops the loop.
+	// Window mode: the Fyne app owns the main goroutine (app.Run blocks), so the
+	// reconnect loop runs in a goroutine launched from onReady. onQuit fires when
+	// the window is closed / Quit is clicked; cancelling the context there stops
+	// the loop.
+	ui.SetIdentity(agentName(), serverHost(server))
+
 	onReady := func() {
-		go pairAndRun(params)
+		pairAndRun(params)
 	}
-	onExit := func() {
+	onQuit := func() {
 		stop() // cancel the context so the reconnect loop unwinds
 	}
 
-	// If the user hits Ctrl+C / SIGTERM (e.g. launched from a console), tear the
-	// tray down too so the process exits cleanly.
+	// If the user hits Ctrl+C / SIGTERM (e.g. launched from a console), close the
+	// window too so the process exits cleanly.
 	go func() {
 		<-ctx.Done()
-		tray.Quit()
+		ui.Quit()
 	}()
 
-	if err := tray.Run(onReady, onExit); err != nil {
-		// The tray could not be created (headless / no display). Fall back to
-		// the console loop so the agent still works.
-		log.Printf("system tray unavailable (%v); falling back to console mode", err)
+	if err := ui.Run(onReady, onQuit); err != nil {
+		// The GUI could not be created (headless / no display). Fall back to the
+		// console loop so the agent still works.
+		log.Printf("GUI window unavailable (%v); falling back to console mode", err)
 		runConsole(params)
 		return
 	}
 	log.Printf("stopped.")
+}
+
+// serverHost extracts a compact host label from a ws/wss/http(s) server URL for
+// display in the window (e.g. "wss://api.queryschema.com" -> "api.queryschema.com").
+func serverHost(server string) string {
+	s := server
+	for _, p := range []string{"wss://", "ws://", "https://", "http://"} {
+		s = strings.TrimPrefix(s, p)
+	}
+	if i := strings.IndexByte(s, '/'); i >= 0 {
+		s = s[:i]
+	}
+	return s
 }
 
 // runConsole runs the pairing + reconnect loop on the calling goroutine with no
@@ -153,15 +200,17 @@ func runConsole(p *runParams) {
 	log.Printf("stopped.")
 }
 
-// pairAndRun is the tray-mode entrypoint: it drives tray.SetStatus as the
-// connection state changes.
+// pairAndRun is the window-mode entrypoint: it drives ui.SetStatus (bridged from
+// the loop's tray.Status callback) as the connection state changes.
 func pairAndRun(p *runParams) {
 	log.Printf("starting; server=%s", p.server)
-	pairAndRunWith(p, tray.SetStatus)
+	pairAndRunWith(p, func(s tray.Status, detail string) {
+		ui.SetStatus(trayToUI(s), detail)
+	})
 	log.Printf("stopped.")
-	// The loop returned (ctx cancelled or unrecoverable). Ensure the tray tears
-	// down so the process exits rather than lingering as a stray icon.
-	tray.Quit()
+	// The loop returned (ctx cancelled or unrecoverable). Ensure the window
+	// closes so the process exits rather than lingering.
+	ui.Quit()
 }
 
 // pairAndRunWith performs the first-run pairing (if needed) then enters the

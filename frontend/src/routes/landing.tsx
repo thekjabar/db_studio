@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, Database } from "lucide-react";
+import { ArrowRight, Database, Download } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/lib/auth-store";
 import { LandingHeroMock } from "@/components/landing-hero-mock";
@@ -37,6 +37,13 @@ export default function LandingPage() {
           >
             Pricing
           </a>
+          <Link
+            to="/download"
+            className="hidden sm:inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground px-3 py-1.5"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download agent
+          </Link>
           <ThemeToggle />
           {isAuthed ? (
             <Link

@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Link } from "react-router-dom";
 import { CheckCircle2, Copy, Download, Loader2, Plus } from "lucide-react";
 import {
-  AGENT_DOWNLOAD_URL,
   AGENT_SERVER_HOST,
   api,
   extractErrorMessage,
@@ -225,10 +225,10 @@ export function AgentTunnelFields({ enabled, onEnabledChange, agentId, onAgentId
 
               <div className="flex items-center gap-2">
                 <Button type="button" size="sm" variant="secondary" asChild>
-                  <a href={AGENT_DOWNLOAD_URL} download>
+                  <Link to="/download" target="_blank" rel="noopener noreferrer">
                     <Download className="h-3.5 w-3.5" />
-                    Download agent for Windows
-                  </a>
+                    Download the agent
+                  </Link>
                 </Button>
                 {online && (
                   <span className="inline-flex items-center gap-1 text-xs text-emerald-500">

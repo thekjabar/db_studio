@@ -9,9 +9,18 @@ export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/ap
  *  the root (downloads, health, the agent WS server). */
 export const API_ORIGIN = API_URL.replace(/\/api\/?$/, "");
 
-/** Direct link to the Windows agent binary. The binary is produced elsewhere;
- *  we only wire the download href. */
-export const AGENT_DOWNLOAD_URL = `${API_ORIGIN}/downloads/agent.exe`;
+/** Per-platform links to the local agent binaries. Built elsewhere and served
+ *  by nginx from the API origin; we only wire the download hrefs. */
+export const AGENT_DOWNLOADS = {
+  windows: `${API_ORIGIN}/downloads/agent-windows-amd64.exe`,
+  macIntel: `${API_ORIGIN}/downloads/agent-macos-amd64`,
+  macArm: `${API_ORIGIN}/downloads/agent-macos-arm64`,
+  linux: `${API_ORIGIN}/downloads/agent-linux-amd64`,
+} as const;
+
+/** Back-compat alias — the original single Windows download link. Points at the
+ *  new Windows binary URL so existing callers keep working. */
+export const AGENT_DOWNLOAD_URL = AGENT_DOWNLOADS.windows;
 
 /** Hostname the agent connects back to, shown in the pairing command. Derived
  *  from the API origin so dev/prod both work; falls back to the production host

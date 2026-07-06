@@ -8,6 +8,7 @@ import LoginPage from "@/routes/login";
 import SignupPage from "@/routes/signup";
 import OAuthCallbackPage from "@/routes/oauth-callback";
 import AgentAuthorizePage from "@/routes/agent-authorize";
+import DownloadPage from "@/routes/download";
 import VerifyEmailPage from "@/routes/verify-email";
 import ForgotPasswordPage from "@/routes/forgot-password";
 import ResetPasswordPage from "@/routes/reset-password";
@@ -136,6 +137,8 @@ export default function App() {
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/auth/callback" element={<OAuthCallbackPage />} />
       <Route path="/agent/authorize" element={<AgentAuthorizePage />} />
+      {/* Public agent download page — no auth required */}
+      <Route path="/download" element={<DownloadPage />} />
       <Route path="/auth/verify" element={<VerifyEmailPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/auth/reset" element={<ResetPasswordPage />} />

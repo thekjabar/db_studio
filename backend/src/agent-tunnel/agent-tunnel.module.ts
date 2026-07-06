@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
 import { AppConfigModule } from '../config/config.module';
-import { AuthModule } from '../auth/auth.module';
+import { AppConfigService } from '../config/config.service';
 import { AgentRegistry } from './agent-registry.service';
 import { AgentGateway } from './agent.gateway';
 import { AgentTunnelService } from './agent-tunnel.service';
@@ -11,11 +12,20 @@ import { AgentTunnelService } from './agent-tunnel.service';
  *  - AgentRegistry: tracks online agents + multiplexes TCP streams over each WS
  *  - AgentTunnelService: `open()` mirroring SshTunnelService for ConnectionsService
  *
- * AuthModule re-exports JwtModule (configured with jwtAccessSecret), matching
- * the RealtimeModule wiring so the gateway can verify pairing tokens.
+ * Imports JwtModule DIRECTLY (configured with jwtAccessSecret) rather than
+ * AuthModule. ConnectionsModule imports this module so the driver can open agent
+ * tunnels; pulling in the whole AuthModule here would close an import cycle
+ * (ConnectionsModule -> AgentTunnelModule -> AuthModule -> ... -> ConnectionsModule)
+ * that crashes at load with "Cannot access 'AuthModule' before initialization".
  */
 @Module({
-  imports: [AppConfigModule, AuthModule],
+  imports: [
+    AppConfigModule,
+    JwtModule.registerAsync({
+      inject: [AppConfigService],
+      useFactory: (cfg: AppConfigService) => ({ secret: cfg.jwtAccessSecret }),
+    }),
+  ],
   providers: [AgentRegistry, AgentGateway, AgentTunnelService],
   exports: [AgentTunnelService, AgentRegistry],
 })

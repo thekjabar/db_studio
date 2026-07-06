@@ -16,6 +16,8 @@ import { SharedQueryModule } from './shared-query/shared-query.module';
 import { SchemaModule } from './schema/schema.module';
 import { AuditModule } from './audit/audit.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { AgentTunnelModule } from './agent-tunnel/agent-tunnel.module';
+import { AgentsModule } from './agents/agents.module';
 import { RbacModule } from './rbac/rbac.module';
 import { AiModule } from './ai/ai.module';
 import { CommentsModule } from './comments/comments.module';
@@ -80,6 +82,8 @@ import { DbUsersModule } from './db-users/db-users.module';
     SchemaModule,
     AuditModule,
     RealtimeModule,
+    AgentTunnelModule,
+    AgentsModule,
     RbacModule,
     AiModule,
     CommentsModule,

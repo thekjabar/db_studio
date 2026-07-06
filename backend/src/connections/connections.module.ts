@@ -1,5 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { DriversModule } from '../drivers/drivers.module';
+import { AgentTunnelModule } from '../agent-tunnel/agent-tunnel.module';
 import { RbacModule } from '../rbac/rbac.module';
 import { AuditModule } from '../audit/audit.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
@@ -15,7 +16,7 @@ import { RowFiltersService } from './row-filters.service';
 import { SensitiveScanController } from './sensitive-scan.controller';
 
 @Module({
-  imports: [DriversModule, RbacModule, forwardRef(() => AuditModule), forwardRef(() => WebhooksModule)],
+  imports: [DriversModule, AgentTunnelModule, RbacModule, forwardRef(() => AuditModule), forwardRef(() => WebhooksModule)],
   controllers: [
     ConnectionsController,
     IntrospectionController,

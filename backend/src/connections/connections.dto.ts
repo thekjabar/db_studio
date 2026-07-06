@@ -69,6 +69,9 @@ export class CreateConnectionDto {
   @IsOptional() @IsInt() @Min(1000) @Max(600_000) statementTimeoutMs?: number;
   /** Workspace to create this connection under. Defaults to caller's personal workspace. */
   @IsOptional() @IsString() workspaceId?: string;
+  /** Route this connection's DB traffic through a paired local agent. */
+  @IsOptional() @IsBoolean() viaAgent?: boolean;
+  @IsOptional() @IsString() agentId?: string | null;
 }
 
 export class UpdateConnectionDto {
@@ -80,6 +83,9 @@ export class UpdateConnectionDto {
   @IsOptional() @IsInt() @Min(100) @Max(600_000) slowQueryAlertMs?: number | null;
   @IsOptional() @IsString() slowQueryAlertEmail?: string | null;
   @IsOptional() @IsBoolean() requireReview?: boolean;
+  /** Route this connection's DB traffic through a paired local agent. */
+  @IsOptional() @IsBoolean() viaAgent?: boolean;
+  @IsOptional() @IsString() agentId?: string | null;
 }
 
 export class TableDataFilterDto {

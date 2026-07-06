@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { DriverFactory } from '../drivers/driver.factory';
 import { SshTunnelService, OpenTunnel } from '../drivers/ssh-tunnel.service';
+import { AgentTunnelService } from '../agent-tunnel/agent-tunnel.service';
 import { AuditService } from '../audit/audit.service';
 import { ConnectionCredentials, IDatabaseDriver } from '../drivers/driver.interface';
 import { CreateConnectionDto, UpdateConnectionDto } from './connections.dto';
@@ -55,6 +56,7 @@ export class ConnectionsService implements OnModuleDestroy {
     private readonly crypto: CryptoService,
     private readonly factory: DriverFactory,
     private readonly ssh: SshTunnelService,
+    private readonly agentTunnel: AgentTunnelService,
     private readonly audit: AuditService,
     private readonly quota: QuotaService,
   ) {
@@ -141,6 +143,10 @@ export class ConnectionsService implements OnModuleDestroy {
     // Enforce per-workspace connection cap before creating.
     await this.quota.assertCanCreateConnection(workspaceId);
 
+    // If routing via a local agent, verify the agent exists and belongs to the user.
+    const viaAgent = dto.viaAgent ?? false;
+    const agentId = viaAgent ? await this.assertOwnedAgent(dto.agentId, userId) : null;
+
     const credCt = await this.crypto.encryptJson(dto.credentials, 'conn:new');
     const created = await this.prisma.connection.create({
       data: {
@@ -149,6 +155,8 @@ export class ConnectionsService implements OnModuleDestroy {
         statementTimeoutMs: dto.statementTimeoutMs ?? 30_000,
         ownerId: userId,
         workspaceId,
+        viaAgent,
+        agentId,
       },
     });
     // Re-encrypt with purpose bound to id.
@@ -186,6 +194,19 @@ export class ConnectionsService implements OnModuleDestroy {
     return c;
   }
 
+  /** Resolve+authorize an agentId for a connection: it must exist and be owned
+   *  by the requesting user. Returns the validated id. */
+  private async assertOwnedAgent(agentId: string | null | undefined, userId: string): Promise<string> {
+    if (!agentId) {
+      throw new BadRequestException('Select a local agent to route this connection through.');
+    }
+    const agent = await this.prisma.agent.findUnique({ where: { id: agentId } });
+    if (!agent || agent.ownerId !== userId) {
+      throw new BadRequestException('Unknown or inaccessible local agent.');
+    }
+    return agentId;
+  }
+
   async getSanitized(id: string) {
     return this.sanitize(await this.get(id));
   }
@@ -208,6 +229,20 @@ export class ConnectionsService implements OnModuleDestroy {
       });
       if (!m) throw new Error('You are not a member of the destination workspace');
       data.workspaceId = dto.workspaceId;
+    }
+    // Local-agent routing: undefined = keep as-is; false = disable + unlink;
+    // true = enable with a validated, user-owned agent.
+    if (dto.viaAgent !== undefined) {
+      if (dto.viaAgent) {
+        data.agentId = await this.assertOwnedAgent(dto.agentId ?? existing.agentId, userId);
+        data.viaAgent = true;
+      } else {
+        data.viaAgent = false;
+        data.agentId = null;
+      }
+    } else if (dto.agentId !== undefined && existing.viaAgent) {
+      // Switching which agent an already-agent-routed connection uses.
+      data.agentId = await this.assertOwnedAgent(dto.agentId, userId);
     }
     if (dto.credentials) {
       const current = await this.crypto.decryptJson<ConnectionCredentials>(existing.credentialsCt, PURPOSE(id));
@@ -295,13 +330,43 @@ export class ConnectionsService implements OnModuleDestroy {
   }
 
   /**
-   * If `creds.ssh` is set, open an SSH tunnel and rewrite host/port to the local
-   * forwarded endpoint so the DB driver connects through it. Returns the effective
-   * credentials + the tunnel handle (caller must close it when the driver is evicted).
+   * Open a tunnel (if configured) and rewrite host/port to the local forwarded
+   * endpoint so the DB driver connects through it. Two mutually-exclusive kinds:
+   *
+   *  - Local agent (`agent.viaAgent`): the DB is only reachable from the user's
+   *    own network. A paired agent.exe on that network dials the DB and pipes
+   *    bytes back over its WebSocket. host/port are the DB address as seen FROM
+   *    the agent's machine. Takes precedence over ssh if both are somehow set.
+   *  - SSH tunnel (`creds.ssh`): forward through an SSH bastion.
+   *
+   * Returns the effective credentials + the tunnel handle (caller closes it when
+   * the driver is evicted).
    */
   private async maybeOpenTunnel(
     creds: ConnectionCredentials,
+    agent?: { viaAgent: boolean; agentId: string | null },
   ): Promise<{ creds: ConnectionCredentials; tunnel?: OpenTunnel }> {
+    if (agent?.viaAgent) {
+      if (!agent.agentId) {
+        throw new BadRequestException(
+          'This connection is set to use a local agent but no agent is selected.',
+        );
+      }
+      if (!creds.host || !creds.port) {
+        throw new BadRequestException(
+          'Set the database host and port — the DB address as reachable from the ' +
+            'machine running the agent (e.g. 127.0.0.1:5432 or the LAN address).',
+        );
+      }
+      const tunnel = await this.agentTunnel.open(agent.agentId, creds.host, creds.port);
+      const tunneled: ConnectionCredentials = {
+        ...creds,
+        host: tunnel.localHost,
+        port: tunnel.localPort,
+        ssh: undefined,
+      };
+      return { creds: tunneled, tunnel };
+    }
     if (!creds.ssh) return { creds };
     if (!creds.host || !creds.port) {
       throw new BadRequestException(
@@ -344,7 +409,10 @@ export class ConnectionsService implements OnModuleDestroy {
       } else {
         raw = await this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
       }
-      const { creds, tunnel } = await this.maybeOpenTunnel(raw);
+      const { creds, tunnel } = await this.maybeOpenTunnel(raw, {
+        viaAgent: c.viaAgent,
+        agentId: c.agentId,
+      });
       try {
         const driver = this.factory.create(c.dialect as Dialect, creds, {
           readOnly,
@@ -409,7 +477,10 @@ export class ConnectionsService implements OnModuleDestroy {
     // error bubbles up (cached driver's close() is a no-op).
     const c = await this.get(id);
     const raw = await this.crypto.decryptJson<ConnectionCredentials>(c.credentialsCt, PURPOSE(id));
-    const { creds, tunnel } = await this.maybeOpenTunnel(raw);
+    const { creds, tunnel } = await this.maybeOpenTunnel(raw, {
+      viaAgent: c.viaAgent,
+      agentId: c.agentId,
+    });
     const drv = this.factory.create(c.dialect as Dialect, creds, {
       readOnly: c.readOnly,
       statementTimeoutMs: c.statementTimeoutMs,

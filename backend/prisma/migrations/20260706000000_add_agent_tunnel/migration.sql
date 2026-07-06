@@ -35,14 +35,11 @@ BEGIN
 END $$;
 
 -- AddForeignKey (Connection.agentId -> Agent). The leftover network_agents
--- migration created `agentId` WITHOUT this FK (it pointed at a different table),
--- so only add ours if no FK on agentId exists yet.
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'Connection_agentId_fkey'
-  ) THEN
-    ALTER TABLE "Connection" ADD CONSTRAINT "Connection_agentId_fkey"
-      FOREIGN KEY ("agentId") REFERENCES "Agent"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-  END IF;
-END $$;
+-- migration created `agentId` WITH a FK of THE SAME NAME pointing at its
+-- (now-orphaned) WorkspaceAgent table. If we merely "add if absent" we'd keep
+-- that wrong FK and every attempt to set agentId to one of OUR Agent rows fails
+-- with a foreign-key violation. So force it: drop whatever's there and (re)create
+-- the FK pointing at OUR Agent table.
+ALTER TABLE "Connection" DROP CONSTRAINT IF EXISTS "Connection_agentId_fkey";
+ALTER TABLE "Connection" ADD CONSTRAINT "Connection_agentId_fkey"
+  FOREIGN KEY ("agentId") REFERENCES "Agent"("id") ON DELETE SET NULL ON UPDATE CASCADE;

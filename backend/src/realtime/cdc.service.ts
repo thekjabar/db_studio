@@ -5,6 +5,7 @@ import { Dialect } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { ConnectionCredentials } from '../drivers/driver.interface';
+import { AgentTunnelService } from '../agent-tunnel/agent-tunnel.service';
 
 /**
  * Change Data Capture via Postgres logical replication.
@@ -64,6 +65,8 @@ interface CdcStream {
   createdAt: number;
   startedAt: number;
   stopping: boolean;
+  /** Close the agent tunnel (if this connection is via-agent). No-op otherwise. */
+  tunnelClose: () => Promise<void>;
 }
 
 const MAX_STREAMS = 25;
@@ -78,9 +81,37 @@ export class CdcService implements OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
+    private readonly agentTunnel: AgentTunnelService,
   ) {
     this.reaper = setInterval(() => this.reap(), 30_000);
     this.reaper.unref?.();
+  }
+
+  /**
+   * Resolve the DB endpoint CDC should connect to. For a connection routed
+   * through a local agent, replication (like every other connection) must go
+   * over the agent tunnel — otherwise it dials the real host directly, which the
+   * server can't reach, and realtime shows "offline". Opens a tunnel and returns
+   * creds rewritten to the local forwarded 127.0.0.1:port, plus a close() the
+   * caller MUST invoke when the stream is torn down. When not via-agent, returns
+   * the creds unchanged and a no-op close.
+   */
+  private async resolveEndpoint(
+    connectionId: string,
+    creds: ConnectionCredentials,
+  ): Promise<{ creds: ConnectionCredentials; close: () => Promise<void> }> {
+    const conn = await this.prisma.connection.findUnique({ where: { id: connectionId } });
+    if (!conn?.viaAgent || !conn.agentId) {
+      return { creds, close: async () => {} };
+    }
+    if (!creds.host || !creds.port) {
+      throw new Error('Set the database host and port for the agent to reach.');
+    }
+    const tunnel = await this.agentTunnel.open(conn.agentId, creds.host, creds.port);
+    return {
+      creds: { ...creds, host: tunnel.localHost, port: tunnel.localPort },
+      close: () => tunnel.close(),
+    };
   }
 
   async onModuleDestroy() {
@@ -104,12 +135,22 @@ export class CdcService implements OnModuleDestroy {
     );
     if (creds.ssh) return { ok: false, reason: 'CDC is not available over SSH tunnels' };
 
+    // Route through the agent tunnel when the connection is via-agent, so the
+    // wal_level check dials the DB the same way the real stream will.
+    const ep = await this.resolveEndpoint(connectionId, creds).catch((e) => {
+      return { creds: null as unknown as ConnectionCredentials, close: async () => {}, err: e as Error };
+    });
+    if ((ep as { err?: Error }).err) {
+      return { ok: false, reason: (ep as { err: Error }).err.message };
+    }
+    const eff = ep.creds;
+
     // Check wal_level on a normal connection.
     const client = new PgClient({
-      host: creds.host, port: creds.port ?? 5432,
-      user: creds.user, password: creds.password, database: creds.database,
-      ssl: creds.sslMode && creds.sslMode !== 'disable'
-        ? { rejectUnauthorized: creds.sslMode === 'verify-full' } : undefined,
+      host: eff.host, port: eff.port ?? 5432,
+      user: eff.user, password: eff.password, database: eff.database,
+      ssl: eff.sslMode && eff.sslMode !== 'disable'
+        ? { rejectUnauthorized: eff.sslMode === 'verify-full' } : undefined,
     });
     try {
       await client.connect();
@@ -123,6 +164,7 @@ export class CdcService implements OnModuleDestroy {
       return { ok: false, reason: (e as Error).message };
     } finally {
       await client.end().catch(() => {});
+      await ep.close();
     }
   }
 
@@ -167,11 +209,17 @@ export class CdcService implements OnModuleDestroy {
     if (!conn) throw new Error('Connection not found');
     if (conn.dialect !== Dialect.POSTGRES) throw new Error('CDC requires PostgreSQL');
 
-    const creds = await this.crypto.decryptJson<ConnectionCredentials>(
+    const rawCreds = await this.crypto.decryptJson<ConnectionCredentials>(
       conn.credentialsCt,
       `conn:${connectionId}`,
     );
-    if (creds.ssh) throw new Error('CDC is not available over SSH tunnels');
+    if (rawCreds.ssh) throw new Error('CDC is not available over SSH tunnels');
+
+    // Route BOTH the setup connection and the long-lived replication stream
+    // through the agent tunnel when via-agent. The tunnel stays open for the
+    // stream's lifetime and is closed in teardown.
+    const ep = await this.resolveEndpoint(connectionId, rawCreds);
+    const creds = ep.creds;
 
     const suffix = `${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`;
     const slotName = `dbdash_cdc_${suffix}`.toLowerCase().replace(/[^a-z0-9_]/g, '_');
@@ -194,6 +242,7 @@ export class CdcService implements OnModuleDestroy {
       await setupClient.query(`CREATE PUBLICATION ${publicationName} FOR TABLE ${qualified}`);
     } catch (e) {
       await setupClient.end().catch(() => {});
+      await ep.close(); // release the agent tunnel we opened above
       const msg = (e as Error).message;
       if (/permission denied|must be superuser|owner/i.test(msg)) {
         throw new Error(`CDC needs CREATE privilege to publish ${schema}.${table}: ${msg}`);
@@ -223,6 +272,7 @@ export class CdcService implements OnModuleDestroy {
       createdAt: Date.now(),
       startedAt: Date.now(),
       stopping: false,
+      tunnelClose: ep.close,
     };
 
     // Relation messages carry column metadata; pgoutput insert/update/delete
@@ -276,15 +326,19 @@ export class CdcService implements OnModuleDestroy {
       await stream.service.stop().catch(() => {});
     } catch { /* ignore */ }
 
-    // Best-effort cleanup of the slot + publication on a fresh connection.
-    // (The slot may already be gone if it was temporary / the conn dropped.)
+    // Best-effort cleanup of the slot + publication on a fresh connection —
+    // routed through the agent tunnel too when via-agent.
+    let cleanupClose: () => Promise<void> = async () => {};
     try {
       const conn = await this.prisma.connection.findUnique({ where: { id: stream.connectionId } });
       if (!conn) return;
-      const creds = await this.crypto.decryptJson<ConnectionCredentials>(
+      const raw = await this.crypto.decryptJson<ConnectionCredentials>(
         conn.credentialsCt,
         `conn:${stream.connectionId}`,
       );
+      const ep = await this.resolveEndpoint(stream.connectionId, raw);
+      cleanupClose = ep.close;
+      const creds = ep.creds;
       const client = new PgClient({
         host: creds.host, port: creds.port ?? 5432,
         user: creds.user, password: creds.password, database: creds.database,
@@ -306,6 +360,10 @@ export class CdcService implements OnModuleDestroy {
       }
     } catch (e) {
       this.log.debug(`cdc teardown cleanup err: ${(e as Error).message}`);
+    } finally {
+      // Close both tunnels: the stream's long-lived one and the cleanup one.
+      await stream.tunnelClose().catch(() => {});
+      await cleanupClose().catch(() => {});
     }
   }
 

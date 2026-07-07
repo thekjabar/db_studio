@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 // Package ui's non-Windows stub. The Fyne GUI window is only built on Windows
 // in this repo (Fyne needs a per-platform C toolchain). On other platforms this

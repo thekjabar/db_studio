@@ -1,4 +1,4 @@
-//go:build windows
+//go:build windows || darwin
 
 // Package ui runs the DB Studio agent as a real desktop window using WebView2
 // (the Edge engine built into every Windows 10/11). Unlike the Fyne/OpenGL
@@ -15,6 +15,7 @@ package ui
 import (
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -213,8 +214,11 @@ func jsStr(s string) string {
 	return strconv.Quote(s)
 }
 
-// openURL opens target in the default browser (Windows).
+// openURL opens target in the default browser (per-OS launcher).
 func openURL(target string) error {
+	if runtime.GOOS == "darwin" {
+		return exec.Command("open", target).Start()
+	}
 	return exec.Command("rundll32", "url.dll,FileProtocolHandler", target).Start()
 }
 

@@ -26,28 +26,9 @@ import (
 	"dbstudio-agent/internal/config"
 	"dbstudio-agent/internal/pair"
 	"dbstudio-agent/internal/singleton"
-	"dbstudio-agent/internal/tray"
 	"dbstudio-agent/internal/tunnel"
 	"dbstudio-agent/internal/ui"
 )
-
-// trayToUI maps a tray.Status (used by the reconnect loop's setStatus callback)
-// to the equivalent ui.Status. Both enums are kept in the same order so this is
-// a straight passthrough, but the switch keeps them decoupled.
-func trayToUI(s tray.Status) ui.Status {
-	switch s {
-	case tray.Online:
-		return ui.Online
-	case tray.Connecting:
-		return ui.Connecting
-	case tray.Pairing:
-		return ui.Pairing
-	case tray.Offline:
-		return ui.Offline
-	default:
-		return ui.Connecting
-	}
-}
 
 // defaultServer is used when neither --server nor a saved config provides one.
 const defaultServer = "wss://api.queryschema.com"
@@ -196,7 +177,7 @@ func serverHost(server string) string {
 // behavior, preserved for --console and the headless fallback.
 func runConsole(p *runParams) {
 	log.Printf("starting; server=%s", p.server)
-	pairAndRunWith(p, func(tray.Status, string) {})
+	pairAndRunWith(p, func(ui.Status, string) {})
 	log.Printf("stopped.")
 }
 
@@ -204,8 +185,8 @@ func runConsole(p *runParams) {
 // the loop's tray.Status callback) as the connection state changes.
 func pairAndRun(p *runParams) {
 	log.Printf("starting; server=%s", p.server)
-	pairAndRunWith(p, func(s tray.Status, detail string) {
-		ui.SetStatus(trayToUI(s), detail)
+	pairAndRunWith(p, func(s ui.Status, detail string) {
+		ui.SetStatus(s, detail)
 	})
 	log.Printf("stopped.")
 	// The loop returned (ctx cancelled or unrecoverable). Ensure the window
@@ -215,7 +196,7 @@ func pairAndRun(p *runParams) {
 
 // pairAndRunWith performs the first-run pairing (if needed) then enters the
 // reconnect loop, reporting state through setStatus.
-func pairAndRunWith(p *runParams, setStatus func(tray.Status, string)) {
+func pairAndRunWith(p *runParams, setStatus func(ui.Status, string)) {
 	// Determine the token to authenticate with:
 	//   - a fresh pairing token from --token always wins (re-pair / first run);
 	//   - otherwise fall back to the saved refresh secret.
@@ -224,12 +205,12 @@ func pairAndRunWith(p *runParams, setStatus func(tray.Status, string)) {
 	pairingToken := p.pairingToken
 	if pairingToken == "" && p.cfg.RefreshSecret == "" {
 		log.Printf("no pairing token and no saved credentials; starting browser pairing...")
-		setStatus(tray.Pairing, "")
+		setStatus(ui.Pairing, "")
 		token, perr := pair.BrowserPair(p.ctx, p.appBase, agentName(), p.openBrowser)
 		if perr != nil {
 			log.Printf("browser pairing failed: %v", perr)
 			log.Printf("run once with:  agent --token <PAIRING_TOKEN>  [--server %s]", p.server)
-			setStatus(tray.Offline, "pairing failed")
+			setStatus(ui.Offline, "pairing failed")
 			return
 		}
 		pairingToken = token
@@ -242,7 +223,7 @@ func pairAndRunWith(p *runParams, setStatus func(tray.Status, string)) {
 // exponential backoff. The pairing token (if any) is used only for the first
 // attempt; after a successful ready with a refresh secret, subsequent attempts
 // use the saved secret. setStatus is called as the connection state changes.
-func run(ctx context.Context, configPath string, cfg *config.Config, pairingToken, appBase string, openBrowser bool, setStatus func(tray.Status, string)) {
+func run(ctx context.Context, configPath string, cfg *config.Config, pairingToken, appBase string, openBrowser bool, setStatus func(ui.Status, string)) {
 	backoff := backoffMin
 	// token used for the NEXT dial; starts as the pairing token if provided.
 	token := pairingToken
@@ -255,7 +236,7 @@ func run(ctx context.Context, configPath string, cfg *config.Config, pairingToke
 			return
 		}
 
-		setStatus(tray.Connecting, "")
+		setStatus(ui.Connecting, "")
 
 		client, err := tunnel.New(cfg.ServerURL, token)
 		if err != nil {
@@ -269,7 +250,7 @@ func run(ctx context.Context, configPath string, cfg *config.Config, pairingToke
 		onlineCtx, onlineCancel := context.WithCancel(ctx)
 		go func() {
 			if err := client.WaitReady(onlineCtx); err == nil {
-				setStatus(tray.Online, "")
+				setStatus(ui.Online, "")
 			}
 		}()
 
@@ -300,7 +281,7 @@ func run(ctx context.Context, configPath string, cfg *config.Config, pairingToke
 		} else {
 			log.Printf("session ended: connection closed")
 		}
-		setStatus(tray.Offline, "")
+		setStatus(ui.Offline, "")
 
 		// Self-heal: the server rejected our credentials (4401). This happens if
 		// the saved refresh secret is stale/revoked (e.g. after a server upgrade,
@@ -309,14 +290,14 @@ func run(ctx context.Context, configPath string, cfg *config.Config, pairingToke
 		// with one click instead of having to hunt down the config file.
 		if tunnel.IsUnauthorized(runErr) {
 			log.Printf("server rejected our credentials — re-pairing through the browser...")
-			setStatus(tray.Pairing, "")
+			setStatus(ui.Pairing, "")
 			cfg.RefreshSecret = ""
 			cfg.AgentID = ""
 			_ = config.Save(configPath, cfg)
 			newToken, perr := pair.BrowserPair(ctx, appBase, agentName(), openBrowser)
 			if perr != nil {
 				log.Printf("re-pairing failed: %v", perr)
-				setStatus(tray.Offline, "pairing failed")
+				setStatus(ui.Offline, "pairing failed")
 				return
 			}
 			token = newToken

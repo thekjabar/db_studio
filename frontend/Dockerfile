@@ -25,7 +25,7 @@ ENV VITE_API_URL=${VITE_API_URL}
 # build. Types are enforced separately (pnpm typecheck / CI).
 RUN pnpm build:fast
 
-FROM nginx:1.27-alpine
+FROM nginx:1.31-alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

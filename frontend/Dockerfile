@@ -2,7 +2,7 @@
 # Single-purpose multi-stage: build with node, serve with nginx.
 # Modeled on the galina-admin-api caching pattern.
 
-FROM node:20-alpine AS builder
+FROM node:26-alpine AS builder
 
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 

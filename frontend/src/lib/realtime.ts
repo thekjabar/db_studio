@@ -23,7 +23,12 @@ function getSocket(token: string): Socket {
   socketToken = token;
   socket = io(`${WS_ORIGIN}/realtime`, {
     auth: { token },
-    transports: ["websocket"],
+    // Allow polling as a fallback: a pure-websocket transport silently fails
+    // behind some proxies/CDNs (Cloudflare returned "Invalid frame header" for
+    // the WS upgrade), leaving realtime permanently offline with no retry path.
+    // socket.io starts on polling then upgrades to websocket when it works, and
+    // stays on polling when it doesn't — so realtime connects either way.
+    transports: ["websocket", "polling"],
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 1_000,

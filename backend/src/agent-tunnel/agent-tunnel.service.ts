@@ -48,9 +48,19 @@ export class AgentTunnelService {
     remotePort: number,
     socket: Socket,
   ): Promise<void> {
+    // Attach the socket 'error' handler FIRST. Node destroys the process with an
+    // "Unhandled 'error' event" if a socket errors with no listener — and the DB
+    // dial below can fail (unreachable host / timeout) before we'd otherwise add
+    // one. This must be registered before any await that can reject.
+    socket.on('error', () => {
+      // Errors are expected (e.g. DB unreachable from the agent's network); just
+      // tear the socket down quietly. The driver sees a closed connection.
+      socket.destroy();
+    });
+
     const conn = this.registry.get(agentId);
     if (!conn) {
-      socket.destroy(new Error('local agent offline'));
+      socket.destroy();
       return;
     }
 
@@ -59,7 +69,8 @@ export class AgentTunnelService {
       stream = await conn.openStream(remoteHost, remotePort);
     } catch (err) {
       this.log.warn(`Agent openStream failed for ${remoteHost}:${remotePort}: ${(err as Error).message}`);
-      socket.destroy(err as Error);
+      // destroy() WITHOUT an error arg — passing the error re-emits 'error'.
+      socket.destroy();
       return;
     }
 

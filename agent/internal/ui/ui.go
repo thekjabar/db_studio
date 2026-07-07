@@ -1,366 +1,280 @@
 //go:build windows
 
-// Package ui runs the DB Studio agent as a real desktop window application
-// (Fyne). Unlike the system-tray build, this opens a visible window that shows
-// in the OS taskbar with its own icon, like WhatsApp/Chrome/VS Code.
+// Package ui runs the DB Studio agent as a real desktop window using WebView2
+// (the Edge engine built into every Windows 10/11). Unlike the Fyne/OpenGL
+// build — whose GLFW window never became visible on some machines — WebView2
+// renders a normal, reliable app window with a taskbar icon, and its UI is
+// styled HTML/CSS so it looks like a polished mini desktop app.
 //
-// This Fyne implementation is Windows-only in this repo because Fyne requires a
-// per-platform C toolchain (CGO); the Windows build uses the bundled MinGW-w64
-// compiler. On non-Windows hosts a stub (ui_other.go) makes Run return an error
-// so main falls back to the console reconnect loop, keeping the pure-Go Linux
-// build intact.
-//
-// The window shows a live connection status line (a coloured dot + label), the
-// agent name/host it is connecting as, the server host, and two buttons: "Open
-// DB Studio" and "Quit". A small scrolling log shows recent status transitions.
-//
-// Fyne requires the app to own the process's main goroutine (app.Run blocks),
-// so main() calls Run and moves the reconnect loop into the onReady callback's
-// goroutine — mirroring how the tray package worked. All UI mutations from
-// background goroutines are marshalled onto Fyne's main thread with fyne.Do so
-// they are race-free.
+// webview.Run() MUST own the process's main goroutine (it blocks), so main()
+// calls Run and the reconnect loop is started from a goroutine before Run
+// blocks. Cross-thread UI updates (from the reconnect loop) are marshalled onto
+// the WebView UI thread with w.Dispatch, which then calls w.Eval to run JS.
 package ui
 
 import (
 	"fmt"
-	"image/color"
 	"os/exec"
-	"runtime"
+	"strconv"
+	"strings"
 	"sync"
-	"time"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/theme"
-	"fyne.io/fyne/v2/widget"
+	webview "github.com/webview/webview_go"
 )
 
-// appURL is the DB Studio frontend opened by the "Open DB Studio" button.
+// appURL is opened by the "Open DB Studio" button.
 const appURL = "https://queryschema.com"
 
-// Status is the coarse connection state shown in the window. The values mirror
-// internal/tray.Status so main can drive either front-end interchangeably.
+// Status is the coarse connection state shown in the window. Values mirror
+// internal/tray.Status ordering so main's trayToUI mapping stays valid.
 type Status int
 
 const (
-	// Connecting: dialing the server (or between dial attempts within a session).
 	Connecting Status = iota
-	// Online: the session is established (server sent ready).
 	Online
-	// Offline: a session ended and we're about to retry / are backing off.
 	Offline
-	// Pairing: the browser auto-pair flow is in progress.
 	Pairing
 )
 
-// label returns the human-readable status text.
+// jsState is the string the HTML/JS uses for each status (drives the dot color).
+func (s Status) jsState() string {
+	switch s {
+	case Online:
+		return "online"
+	case Pairing:
+		return "pairing"
+	case Offline:
+		return "offline"
+	default:
+		return "connecting"
+	}
+}
+
+// label is the human-readable status text shown in the window.
 func (s Status) label() string {
 	switch s {
 	case Online:
 		return "Connected"
-	case Connecting:
-		return "Connecting…"
 	case Pairing:
 		return "Pairing…"
 	case Offline:
 		return "Offline — retrying"
 	default:
-		return "…"
+		return "Connecting…"
 	}
 }
 
-// dotColor returns the colour of the status dot for a state.
-func (s Status) dotColor() color.Color {
-	switch s {
-	case Online:
-		return color.NRGBA{R: 0x22, G: 0xc5, B: 0x5e, A: 0xff} // green
-	case Connecting:
-		return color.NRGBA{R: 0xf5, G: 0x9e, B: 0x0b, A: 0xff} // amber
-	case Pairing:
-		return color.NRGBA{R: 0x3b, G: 0x82, B: 0xf6, A: 0xff} // blue
-	case Offline:
-		return color.NRGBA{R: 0x9c, G: 0xa3, B: 0xaf, A: 0xff} // grey
-	default:
-		return color.NRGBA{R: 0x9c, G: 0xa3, B: 0xaf, A: 0xff}
-	}
-}
-
-// pkg-level window state. Built once in Run; SetStatus tolerates being called
-// before Run has finished wiring things up (it records the pending status and
-// applies it as soon as the widgets exist).
 var (
 	mu sync.Mutex
+	w  webview.WebView // the window; nil until Run creates it
 
-	fyneApp    fyne.App
-	win        fyne.Window
-	widgetsUp  bool
-	quitOnce   sync.Once
-	onQuitFunc func()
-
-	// widgets driven by SetStatus.
-	dot        *canvas.Circle
-	statusText *canvas.Text
-	logEntry   *widget.Label
-	logScroll  *container.Scroll
-
-	// last recorded status (applied once widgets exist).
+	// Buffered latest state, so SetStatus/SetIdentity called before the page has
+	// loaded are applied once it's ready (via the bound uiReady callback).
 	curStatus Status = Connecting
 	curDetail string
+	idName    string
+	idHost    string
+	pageReady bool
 
-	// recent log lines (most recent last), capped.
-	logLines []string
+	onQuitFn func()
+	quitOnce sync.Once
 )
 
-const maxLogLines = 200
-
-// Run creates the Fyne app + window, shows it, invokes onReady once (spawn your
-// background reconnect loop there), and blocks on app.Run until the window is
-// closed or Quit is pressed. It MUST be called on the process's main goroutine.
-//
-// onQuit fires exactly once when the app is shutting down (window closed or Quit
-// clicked) so callers can cancel their context and unwind the reconnect loop.
-func Run(onReady func(), onQuit func()) error {
+// SetIdentity records the agent name + server host shown in the window.
+func SetIdentity(name, host string) {
 	mu.Lock()
-	onQuitFunc = onQuit
+	idName = name
+	idHost = host
+	up := w != nil && pageReady
 	mu.Unlock()
-
-	a := app.NewWithID("com.queryschema.dbstudio.agent")
-	a.SetIcon(fyne.NewStaticResource("appicon.png", appIconPNG))
-
-	w := a.NewWindow("DB Studio Agent")
-	w.SetIcon(fyne.NewStaticResource("appicon.png", appIconPNG))
-
-	// --- status line: coloured dot + big label ---
-	d := canvas.NewCircle(curStatus.dotColor())
-	// GridWrap forces the circle to a fixed 16x16 cell so it renders as a dot
-	// rather than stretching to fill the row.
-	dotBox := container.NewGridWrap(fyne.NewSize(16, 16), d)
-
-	st := canvas.NewText(curStatus.label(), theme.Color(theme.ColorNameForeground))
-	st.TextSize = 20
-	st.TextStyle = fyne.TextStyle{Bold: true}
-
-	statusRow := container.NewHBox(
-		container.NewCenter(dotBox),
-		container.NewCenter(st),
-	)
-
-	// --- secondary line: agent identity + server host ---
-	subtitle := widget.NewLabel(subtitleText())
-	subtitle.Wrapping = fyne.TextWrapWord
-
-	// --- recent log area (small, scrolling) ---
-	lg := widget.NewLabel("")
-	lg.Wrapping = fyne.TextWrapWord
-	scroll := container.NewVScroll(lg)
-	scroll.SetMinSize(fyne.NewSize(340, 88))
-
-	// --- buttons ---
-	openBtn := widget.NewButtonWithIcon("Open DB Studio", theme.ComputerIcon(), func() {
-		_ = openURL(appURL)
-	})
-	openBtn.Importance = widget.HighImportance
-	quitBtn := widget.NewButtonWithIcon("Quit", theme.CancelIcon(), func() {
-		Quit()
-	})
-	buttons := container.NewGridWithColumns(2, openBtn, quitBtn)
-
-	content := container.NewVBox(
-		widget.NewLabel(""), // small top spacer
-		statusRow,
-		subtitle,
-		widget.NewSeparator(),
-		widget.NewLabelWithStyle("Recent activity", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		scroll,
-		widget.NewSeparator(),
-		buttons,
-	)
-	w.SetContent(container.NewPadded(content))
-	w.Resize(fyne.NewSize(380, 300))
-	w.SetFixedSize(false)
-
-	// Closing the window (X) quits the whole app and unwinds the loop.
-	w.SetCloseIntercept(func() {
-		Quit()
-	})
-
-	// Publish the widgets so SetStatus can drive them, then apply whatever
-	// status was recorded before the window existed.
-	mu.Lock()
-	fyneApp = a
-	win = w
-	dot = d
-	statusText = st
-	logEntry = lg
-	logScroll = scroll
-	widgetsUp = true
-	applyLocked()
-	appendLogLocked(fmt.Sprintf("Agent started — %s", subtitleText()))
-	mu.Unlock()
-
-	w.Show()
-
-	if onReady != nil {
-		// onReady spawns background work; run it after Show so the window is
-		// already visible when the reconnect loop starts reporting status.
-		go onReady()
-	}
-
-	a.Run() // blocks until the app quits
-
-	// app.Run returned: ensure onQuit fired (covers OS-level close paths).
-	fireQuit()
-	return nil
-}
-
-// Quit shuts the app down: fires onQuit once, then stops the Fyne event loop so
-// app.Run returns and the process exits. Safe to call from any goroutine —
-// fyne.App.Quit signals the driver to stop and does not require being on the UI
-// thread.
-func Quit() {
-	fireQuit()
-	mu.Lock()
-	a := fyneApp
-	mu.Unlock()
-	if a != nil {
-		a.Quit()
+	if up {
+		dispatchEval(fmt.Sprintf("setIdentity(%s,%s)", jsStr(name), jsStr(host)))
 	}
 }
 
-// fireQuit invokes the caller's onQuit callback exactly once.
-func fireQuit() {
-	mu.Lock()
-	cb := onQuitFunc
-	mu.Unlock()
-	quitOnce.Do(func() {
-		if cb != nil {
-			cb()
-		}
-	})
-}
-
-// SetStatus updates the status dot, label, and appends a log line. It is safe
-// to call from any goroutine and before/after the window is built; the actual
-// widget mutation is marshalled onto Fyne's UI thread with fyne.Do.
+// SetStatus updates the status dot + label. Safe from any goroutine.
 func SetStatus(s Status, detail string) {
 	mu.Lock()
 	curStatus = s
 	curDetail = detail
-	line := s.label()
-	if detail != "" {
-		line += " (" + detail + ")"
+	up := w != nil && pageReady
+	mu.Unlock()
+	if up {
+		dispatchEval(fmt.Sprintf("setStatus(%s,%s)", jsStr(s.jsState()), jsStr(labelWithDetail(s, detail))))
 	}
-	up := widgetsUp
+}
+
+func labelWithDetail(s Status, detail string) string {
+	if detail != "" {
+		return s.label() + " (" + detail + ")"
+	}
+	return s.label()
+}
+
+// Run creates the WebView2 window, wires the buttons, starts onReady in a
+// goroutine, and blocks on w.Run() until the window is closed / Quit clicked.
+// It MUST be called on the process's main goroutine.
+func Run(onReady func(), onQuit func()) (err error) {
+	// webview.New panics if the WebView2 runtime is missing; recover so main can
+	// fall back to the console loop instead of crashing.
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("webview window unavailable: %v", r)
+		}
+	}()
+
+	mu.Lock()
+	onQuitFn = onQuit
 	mu.Unlock()
 
-	if !up {
-		// Window not built yet: record the log line so it shows once it is.
+	wv := webview.New(false)
+	if wv == nil {
+		return fmt.Errorf("could not create webview window")
+	}
+	mu.Lock()
+	w = wv
+	mu.Unlock()
+
+	wv.SetTitle("DB Studio Agent")
+	wv.SetSize(420, 360, webview.HintFixed)
+
+	// Bindings the HTML page calls.
+	wv.Bind("openDBStudio", func() { _ = openURL(appURL) })
+	wv.Bind("quitApp", func() {
+		go func() {
+			fireQuit()
+			wv.Dispatch(func() { wv.Terminate() })
+		}()
+	})
+	// uiReady is called by the page once its DOM + JS are loaded. We push the
+	// current buffered status/identity so nothing set before load is lost.
+	wv.Bind("uiReady", func() {
 		mu.Lock()
-		appendLogLocked(stamp(line))
+		pageReady = true
+		s, d, n, h := curStatus, curDetail, idName, idHost
 		mu.Unlock()
-		return
+		wv.Dispatch(func() {
+			wv.Eval(fmt.Sprintf("setIdentity(%s,%s)", jsStr(n), jsStr(h)))
+			wv.Eval(fmt.Sprintf("setStatus(%s,%s)", jsStr(s.jsState()), jsStr(labelWithDetail(s, d))))
+		})
+	})
+
+	wv.SetHtml(pageHTML)
+
+	if onReady != nil {
+		go onReady()
 	}
 
-	// Marshal all widget writes onto the UI thread.
-	fyne.Do(func() {
+	wv.Run() // blocks until the window closes
+
+	fireQuit()
+	mu.Lock()
+	w = nil
+	pageReady = false
+	mu.Unlock()
+	return nil
+}
+
+// Quit closes the window from another goroutine.
+func Quit() {
+	mu.Lock()
+	wv := w
+	mu.Unlock()
+	if wv != nil {
+		wv.Dispatch(func() { wv.Terminate() })
+	}
+}
+
+func fireQuit() {
+	quitOnce.Do(func() {
 		mu.Lock()
-		defer mu.Unlock()
-		applyLocked()
-		appendLogLocked(stamp(line))
+		f := onQuitFn
+		mu.Unlock()
+		if f != nil {
+			f()
+		}
 	})
 }
 
-// applyLocked pushes curStatus/curDetail to the dot + status label. Caller must
-// hold mu and be on the UI thread (or before the loop starts).
-func applyLocked() {
-	if dot != nil {
-		dot.FillColor = curStatus.dotColor()
-		dot.Refresh()
-	}
-	if statusText != nil {
-		txt := curStatus.label()
-		if curDetail != "" {
-			txt += " (" + curDetail + ")"
-		}
-		statusText.Text = txt
-		statusText.Color = theme.Color(theme.ColorNameForeground)
-		statusText.Refresh()
-	}
-}
-
-// appendLogLocked adds a line to the rolling activity log and refreshes the
-// on-screen label. Caller must hold mu.
-func appendLogLocked(line string) {
-	logLines = append(logLines, line)
-	if len(logLines) > maxLogLines {
-		logLines = logLines[len(logLines)-maxLogLines:]
-	}
-	if logEntry != nil {
-		text := ""
-		for i, l := range logLines {
-			if i > 0 {
-				text += "\n"
-			}
-			text += l
-		}
-		logEntry.SetText(text)
-		if logScroll != nil {
-			logScroll.ScrollToBottom()
-		}
-	}
-}
-
-// stamp prefixes a log line with a short HH:MM:SS timestamp.
-func stamp(line string) string {
-	return time.Now().Format("15:04:05") + "  " + line
-}
-
-// --- identity shown in the window ---
-
-var (
-	agentIdentity string
-	serverHost    string
-)
-
-// SetIdentity sets the agent name and server host shown on the secondary line.
-// Call it before Run (or it can be called after; the label refreshes on the
-// next SetStatus). Kept simple: main passes the hostname + server here.
-func SetIdentity(name, server string) {
+// dispatchEval runs a JS snippet on the WebView UI thread (required — Eval is
+// not safe from arbitrary goroutines).
+func dispatchEval(js string) {
 	mu.Lock()
-	agentIdentity = name
-	serverHost = server
+	wv := w
 	mu.Unlock()
-}
-
-// subtitleText builds the "as <name> · <server>" secondary line.
-func subtitleText() string {
-	mu.Lock()
-	name := agentIdentity
-	srv := serverHost
-	mu.Unlock()
-	switch {
-	case name != "" && srv != "":
-		return fmt.Sprintf("as %s  ·  %s", name, srv)
-	case name != "":
-		return "as " + name
-	case srv != "":
-		return srv
-	default:
-		return "DB Studio local tunnel agent"
+	if wv != nil {
+		wv.Dispatch(func() { wv.Eval(js) })
 	}
 }
 
-// openURL opens target in the user's default browser using the
-// platform-appropriate launcher (mirrors the tray/pair helpers).
+// jsStr safely encodes a Go string as a JS string literal.
+func jsStr(s string) string {
+	// strconv.Quote gives a valid double-quoted, escaped literal that JS accepts.
+	return strconv.Quote(s)
+}
+
+// openURL opens target in the default browser (Windows).
 func openURL(target string) error {
-	switch runtime.GOOS {
-	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", target).Start()
-	case "darwin":
-		return exec.Command("open", target).Start()
-	default:
-		return exec.Command("xdg-open", target).Start()
-	}
+	return exec.Command("rundll32", "url.dll,FileProtocolHandler", target).Start()
 }
+
+// pageHTML is the embedded UI. Dark, modern, brand-teal accent. Defines the
+// setStatus/setIdentity JS the Go side calls, and calls uiReady() on load.
+var pageHTML = strings.TrimSpace(`
+<!doctype html><html><head><meta charset="utf-8">
+<style>
+  :root{--bg:#0b0f14;--card:#111820;--fg:#e6edf3;--muted:#8b98a5;--accent:#10b981;--border:#1e2a35;}
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-user-select:none;user-select:none}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--fg);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+       display:flex;align-items:center;justify-content:center;padding:18px}
+  .card{width:100%;max-width:380px;background:var(--card);border:1px solid var(--border);
+        border-radius:16px;padding:22px 22px 18px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
+  .brand{display:flex;align-items:center;gap:9px;margin-bottom:16px}
+  .brand .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#10b981,#059669);
+        display:flex;align-items:center;justify-content:center;font-weight:700;color:#04120c;font-size:14px}
+  .brand h1{font-size:15px;font-weight:600;letter-spacing:.2px}
+  .status{display:flex;align-items:center;gap:12px;padding:16px 0 6px}
+  .dot{width:14px;height:14px;border-radius:50%;background:var(--muted);flex:none;
+       box-shadow:0 0 0 0 rgba(16,185,129,.5);transition:background .3s}
+  .dot.online{background:#10b981;animation:pulse 2s infinite}
+  .dot.connecting{background:#f59e0b}
+  .dot.pairing{background:#3b82f6}
+  .dot.offline{background:#6b7280}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(16,185,129,.5)}70%{box-shadow:0 0 0 8px rgba(16,185,129,0)}100%{box-shadow:0 0 0 0 rgba(16,185,129,0)}}
+  #stat{font-size:19px;font-weight:600}
+  .sub{color:var(--muted);font-size:12.5px;line-height:1.5;margin:2px 0 18px;min-height:34px}
+  .sub b{color:var(--fg);font-weight:600}
+  .btns{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  button{font:inherit;font-size:13px;font-weight:600;padding:11px;border-radius:10px;border:1px solid var(--border);
+         cursor:pointer;transition:.15s}
+  .primary{background:var(--accent);color:#04120c;border-color:transparent}
+  .primary:hover{background:#0ea371}
+  .ghost{background:transparent;color:var(--muted)}
+  .ghost:hover{background:#182029;color:var(--fg)}
+  .foot{text-align:center;color:#586675;font-size:11px;margin-top:14px}
+</style></head>
+<body>
+  <div class="card">
+    <div class="brand"><div class="logo">DB</div><h1>DB Studio Agent</h1></div>
+    <div class="status"><div id="dot" class="dot connecting"></div><div id="stat">Connecting…</div></div>
+    <div class="sub" id="sub">Linking your database to DB Studio…</div>
+    <div class="btns">
+      <button class="primary" onclick="openDBStudio()">Open DB Studio</button>
+      <button class="ghost" onclick="quitApp()">Quit</button>
+    </div>
+    <div class="foot">Keep this app running while you use your database in DB Studio.</div>
+  </div>
+<script>
+  function setStatus(state, text){
+    var d=document.getElementById('dot'); d.className='dot '+state;
+    document.getElementById('stat').textContent=text;
+  }
+  function setIdentity(name, host){
+    var s=document.getElementById('sub');
+    if(name||host){ s.innerHTML='Connected as <b>'+(name||'this machine')+'</b>'+(host?(' · '+host):''); }
+  }
+  window.addEventListener('load', function(){ try{ uiReady(); }catch(e){} });
+</script>
+</body></html>
+`)

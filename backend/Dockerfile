@@ -6,7 +6,7 @@
 #   - debian-slim (glibc) — DuckDB ships only glibc prebuilds, no musl
 #     so alpine isn't an option here.
 
-FROM node:20-bookworm-slim
+FROM node:26-bookworm-slim
 
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 

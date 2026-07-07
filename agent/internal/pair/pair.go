@@ -29,7 +29,7 @@ const pairTimeout = 5 * time.Minute
 // successHTML is shown in the browser after a valid callback is received.
 const successHTML = `<!doctype html>
 <html>
-<head><meta charset="utf-8"><title>DB Studio Agent — Paired</title></head>
+<head><meta charset="utf-8"><title>Query Schema Agent — Paired</title></head>
 <body style="font-family: system-ui, sans-serif; max-width: 32rem; margin: 4rem auto; text-align: center; color: #1a1a1a;">
   <h1 style="font-size: 1.5rem;">Paired!</h1>
   <p style="font-size: 1rem; color: #444;">You can close this tab and return to the agent.</p>

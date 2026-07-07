@@ -136,7 +136,7 @@ func Run(onReady func(), onQuit func()) (err error) {
 	w = wv
 	mu.Unlock()
 
-	wv.SetTitle("DB Studio Agent")
+	wv.SetTitle("Query Schema Agent")
 	wv.SetSize(420, 360, webview.HintFixed)
 
 	// Bindings the HTML page calls.
@@ -235,8 +235,9 @@ var pageHTML = strings.TrimSpace(`
   .card{width:100%;max-width:380px;background:var(--card);border:1px solid var(--border);
         border-radius:16px;padding:22px 22px 18px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
   .brand{display:flex;align-items:center;gap:9px;margin-bottom:16px}
-  .brand .logo{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#10b981,#059669);
-        display:flex;align-items:center;justify-content:center;font-weight:700;color:#04120c;font-size:14px}
+  .brand .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,#34d399,#059669);
+        display:flex;align-items:center;justify-content:center;font-weight:800;color:#04120c;font-size:13px;
+        letter-spacing:.5px;box-shadow:0 2px 8px rgba(16,185,129,.35),inset 0 1px 0 rgba(255,255,255,.25)}
   .brand h1{font-size:15px;font-weight:600;letter-spacing:.2px}
   .status{display:flex;align-items:center;gap:12px;padding:16px 0 6px}
   .dot{width:14px;height:14px;border-radius:50%;background:var(--muted);flex:none;
@@ -260,14 +261,14 @@ var pageHTML = strings.TrimSpace(`
 </style></head>
 <body>
   <div class="card">
-    <div class="brand"><div class="logo">DB</div><h1>DB Studio Agent</h1></div>
+    <div class="brand"><div class="logo">QS</div><h1>Query Schema Agent</h1></div>
     <div class="status"><div id="dot" class="dot connecting"></div><div id="stat">Connecting…</div></div>
-    <div class="sub" id="sub">Linking your database to DB Studio…</div>
+    <div class="sub" id="sub">Linking your database to Query Schema…</div>
     <div class="btns">
-      <button class="primary" onclick="openDBStudio()">Open DB Studio</button>
+      <button class="primary" onclick="openDBStudio()">Open Query Schema</button>
       <button class="ghost" onclick="quitApp()">Quit</button>
     </div>
-    <div class="foot">Keep this app running while you use your database in DB Studio.</div>
+    <div class="foot">Keep this app running while you use your database in Query Schema.</div>
   </div>
 <script>
   function setStatus(state, text){

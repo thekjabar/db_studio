@@ -118,3 +118,4 @@ agent/
   build.ps1 / build.sh        cross-compile helpers
   go.mod                      module dbstudio-agent
 ```
+

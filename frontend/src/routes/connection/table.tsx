@@ -311,10 +311,15 @@ export default function TableRoute() {
 
   // Export helpers reuse the shared result-export lib (same as the SQL editor),
   // so the table Data view offers CSV / JSON / Excel downloads and SQL-INSERT /
-  // Markdown / JSON copy — not just CSV. These export the CURRENTLY-LOADED rows
-  // (the page you're viewing), matching the previous CSV button's behaviour.
+  // Markdown / JSON copy — not just CSV.
   const exportCols = () => columns.map((c) => c.name);
   const exportBase = () => table ?? "table";
+  // Export the SELECTED rows when any are selected; otherwise all loaded rows.
+  // `selected` holds row indices into the current page's `rows`.
+  const exportRows = () =>
+    selected.size > 0
+      ? [...selected].sort((a, b) => a - b).map((i) => rows[i]).filter(Boolean)
+      : rows;
   const copyExport = async (text: string, label: string) => {
     const ok = await copyToClipboard(text);
     toast[ok ? "success" : "error"](ok ? `Copied ${label} to clipboard` : `Could not copy ${label}`);
@@ -430,28 +435,34 @@ export default function TableRoute() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button size="sm" variant="ghost" disabled={!rows.length}>
-                  <Download className="h-3.5 w-3.5" /> Export
+                  <Download className="h-3.5 w-3.5" />
+                  {selected.size > 0 ? `Export ${selected.size}` : "Export"}
                   <ChevronDown className="h-3 w-3 opacity-60" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => dlCsv(exportCols(), rows, exportBase())}>
+                {selected.size > 0 && (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                    Exporting {selected.size} selected row{selected.size === 1 ? "" : "s"}
+                  </div>
+                )}
+                <DropdownMenuItem onClick={() => dlCsv(exportCols(), exportRows(), exportBase())}>
                   <Download className="h-3.5 w-3.5" /> Download CSV
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => dlJson(exportCols(), rows, exportBase())}>
+                <DropdownMenuItem onClick={() => dlJson(exportCols(), exportRows(), exportBase())}>
                   <FileJson className="h-3.5 w-3.5" /> Download JSON
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => dlExcel(exportCols(), rows, exportBase())}>
+                <DropdownMenuItem onClick={() => dlExcel(exportCols(), exportRows(), exportBase())}>
                   <FileSpreadsheet className="h-3.5 w-3.5" /> Download Excel
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => copyExport(toInsertStatements(exportCols(), rows, exportBase()), "INSERT statements")}>
+                <DropdownMenuItem onClick={() => copyExport(toInsertStatements(exportCols(), exportRows(), exportBase()), "INSERT statements")}>
                   <Table2 className="h-3.5 w-3.5" /> Copy as SQL INSERTs
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => copyExport(toJson(exportCols(), rows), "JSON")}>
+                <DropdownMenuItem onClick={() => copyExport(toJson(exportCols(), exportRows()), "JSON")}>
                   <FileJson className="h-3.5 w-3.5" /> Copy as JSON
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => copyExport(toMarkdownTable(exportCols(), rows), "Markdown")}>
+                <DropdownMenuItem onClick={() => copyExport(toMarkdownTable(exportCols(), exportRows()), "Markdown")}>
                   <FileText className="h-3.5 w-3.5" /> Copy as Markdown
                 </DropdownMenuItem>
               </DropdownMenuContent>

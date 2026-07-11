@@ -26,6 +26,6 @@ import { SensitiveScanController } from './sensitive-scan.controller';
     SensitiveScanController,
   ],
   providers: [ConnectionsService, PermissionsService, ColumnMasksService, RowFiltersService],
-  exports: [ConnectionsService],
+  exports: [ConnectionsService, ColumnMasksService],
 })
 export class ConnectionsModule {}

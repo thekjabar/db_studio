@@ -6,6 +6,7 @@ import type { Request } from 'express';
 import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Length, Max, Min } from 'class-validator';
 import { Dialect, Role } from '@prisma/client';
 import { ConnectionsService } from '../connections/connections.service';
+import { ColumnMasksService } from '../connections/column-masks.service';
 import { AuditService } from '../audit/audit.service';
 import { RbacGuard } from '../rbac/rbac.guard';
 import { RequireRole } from '../rbac/rbac.decorator';
@@ -131,6 +132,7 @@ function meta(req: Request) { return { ip: req.ip, userAgent: req.get('user-agen
 export class QueryController {
   constructor(
     private readonly svc: ConnectionsService,
+    private readonly masks: ColumnMasksService,
     private readonly audit: AuditService,
     private readonly classifier: SqlClassifierService,
     private readonly explain: ExplainService,
@@ -249,6 +251,18 @@ export class QueryController {
           sqlText: dto.sql, ...meta(req),
           metadata: { classification: { ...cls }, cached: true },
         });
+        // Mask the cached rows per-user: the cache key is (connection, role, sql)
+        // — NOT per-user — so it may hold unmasked rows, and different users on
+        // the same role can have different masks. Apply this user's masks here so
+        // a cache hit never leaks a masked column.
+        const cachedMasked = await this.masks.maskedColumnNames(user.id, id);
+        const hitObj = hit as { rows?: Record<string, unknown>[] };
+        if (cachedMasked.size > 0 && Array.isArray(hitObj.rows)) {
+          // Copy rows so we mask a per-user view, not the shared cache object.
+          const maskedRows = hitObj.rows.map((r) => ({ ...r }));
+          this.masks.applyMasks(maskedRows, cachedMasked);
+          return { ...(hit as object), rows: maskedRows, cached: true };
+        }
         return { ...(hit as object), cached: true };
       }
     }
@@ -269,6 +283,18 @@ export class QueryController {
       if (shouldWrap && rows.length > cap) {
         rows = rows.slice(0, cap);
         truncated = true;
+      }
+
+      // SECURITY: column masks must apply to the raw-SQL path too, not just the
+      // table grid. Without this a viewer who's masked from a column could
+      // `SELECT` it here (and export it), bypassing the mask. Raw SQL isn't
+      // table-scoped, so we conservatively null any RESULT column whose name
+      // matches a masked column for this user on this connection (owners have no
+      // masks). This can over-mask a same-named column from an unmasked table —
+      // the safe direction; it never leaks a denied value.
+      const maskedNames = await this.masks.maskedColumnNames(user.id, id);
+      if (maskedNames.size > 0) {
+        this.masks.applyMasks(rows as Record<string, unknown>[], maskedNames);
       }
 
       await this.audit.log({

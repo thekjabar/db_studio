@@ -21,6 +21,24 @@ export class ColumnMasksService {
     return new Set(rows.map((r) => r.columnName));
   }
 
+  /**
+   * ALL column names masked for `userId` anywhere on this connection (across
+   * every table). Used to protect the raw-SQL query path, which isn't
+   * table-scoped: we can't know from arbitrary SQL exactly which table a result
+   * column came from, so we conservatively null any RESULT column whose name
+   * matches a masked column name for this user. This can over-mask a
+   * same-named column from an unmasked table, but that's the safe direction —
+   * it never leaks a value the user was denied in the grid. Owners have no
+   * masks (masks are refused on the owner), so this returns empty for them.
+   */
+  async maskedColumnNames(userId: string, connectionId: string): Promise<Set<string>> {
+    const rows = await this.prisma.columnMask.findMany({
+      where: { connectionId, userId },
+      select: { columnName: true },
+    });
+    return new Set(rows.map((r) => r.columnName));
+  }
+
   /** Null out masked column values on a row array. Mutates the input. */
   applyMasks<T extends Record<string, unknown>>(rows: T[], masked: Set<string>): T[] {
     if (masked.size === 0) return rows;

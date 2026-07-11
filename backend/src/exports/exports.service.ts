@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { ConnectionsService } from '../connections/connections.service';
+import { ColumnMasksService } from '../connections/column-masks.service';
 import { AuditService } from '../audit/audit.service';
 import { EmailService } from '../scheduler/email.service';
 
@@ -61,6 +62,7 @@ export class ExportsService {
     private readonly connections: ConnectionsService,
     private readonly audit: AuditService,
     private readonly email: EmailService,
+    private readonly masks: ColumnMasksService,
   ) {}
 
   async run(
@@ -88,6 +90,11 @@ export class ExportsService {
     try {
       const res = await drv.runRawQuery(req.sql);
       rows = ((res.rows ?? []) as Record<string, unknown>[]).slice(0, MAX_EXPORT_ROWS);
+      // SECURITY: apply this user's column masks to the export too, so a masked
+      // column can't be exfiltrated via email/slack/webhook export. Same
+      // conservative name-match approach as the query path.
+      const maskedNames = await this.masks.maskedColumnNames(userId, req.connectionId);
+      if (maskedNames.size > 0) this.masks.applyMasks(rows, maskedNames);
     } finally {
       await drv.close().catch(() => {});
     }

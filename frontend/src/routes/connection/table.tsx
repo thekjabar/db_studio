@@ -11,11 +11,15 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  FileJson,
+  FileSpreadsheet,
+  FileText,
   Filter,
   Loader2,
   Plus,
   RefreshCw,
   Share2,
+  Table2,
   Trash2,
   Upload,
   X,
@@ -26,6 +30,22 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { DataGrid, type FkMap } from "@/components/data-grid";
 import { Popover } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  exportCsv as dlCsv,
+  exportJson as dlJson,
+  exportExcel as dlExcel,
+  toMarkdownTable,
+  toInsertStatements,
+  toJson,
+  copyToClipboard,
+} from "@/lib/result-export";
 import {
   Select,
   SelectContent,
@@ -289,25 +309,15 @@ export default function TableRoute() {
     setSortOpen(false);
   };
 
-  const exportCsv = () => {
-    if (!rows.length) return;
-    const cols = columns.map((c) => c.name);
-    const csv = [
-      cols.join(","),
-      ...rows.map((r) => cols.map((c) => {
-        const v = r[c];
-        if (v === null || v === undefined) return "";
-        const s = typeof v === "object" ? JSON.stringify(v) : String(v);
-        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-      }).join(",")),
-    ].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${table}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  // Export helpers reuse the shared result-export lib (same as the SQL editor),
+  // so the table Data view offers CSV / JSON / Excel downloads and SQL-INSERT /
+  // Markdown / JSON copy — not just CSV. These export the CURRENTLY-LOADED rows
+  // (the page you're viewing), matching the previous CSV button's behaviour.
+  const exportCols = () => columns.map((c) => c.name);
+  const exportBase = () => table ?? "table";
+  const copyExport = async (text: string, label: string) => {
+    const ok = await copyToClipboard(text);
+    toast[ok ? "success" : "error"](ok ? `Copied ${label} to clipboard` : `Could not copy ${label}`);
   };
 
   const onEditCell = (rowIdx: number, column: string, value: unknown) => {
@@ -417,9 +427,35 @@ export default function TableRoute() {
             >
               <Share2 className="h-3.5 w-3.5" /> Share
             </Button>
-            <Button size="sm" variant="ghost" onClick={exportCsv}>
-              <Download className="h-3.5 w-3.5" /> CSV
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="ghost" disabled={!rows.length}>
+                  <Download className="h-3.5 w-3.5" /> Export
+                  <ChevronDown className="h-3 w-3 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => dlCsv(exportCols(), rows, exportBase())}>
+                  <Download className="h-3.5 w-3.5" /> Download CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => dlJson(exportCols(), rows, exportBase())}>
+                  <FileJson className="h-3.5 w-3.5" /> Download JSON
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => dlExcel(exportCols(), rows, exportBase())}>
+                  <FileSpreadsheet className="h-3.5 w-3.5" /> Download Excel
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => copyExport(toInsertStatements(exportCols(), rows, exportBase()), "INSERT statements")}>
+                  <Table2 className="h-3.5 w-3.5" /> Copy as SQL INSERTs
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => copyExport(toJson(exportCols(), rows), "JSON")}>
+                  <FileJson className="h-3.5 w-3.5" /> Copy as JSON
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => copyExport(toMarkdownTable(exportCols(), rows), "Markdown")}>
+                  <FileText className="h-3.5 w-3.5" /> Copy as Markdown
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button size="sm" variant="ghost" onClick={() => setCsvImportOpen(true)}>
               <Upload className="h-3.5 w-3.5" /> Import
             </Button>

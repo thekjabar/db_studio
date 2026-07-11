@@ -700,6 +700,17 @@ export interface ErGraph {
   edges: ErEdge[];
 }
 
+/** A resolved foreign-key relationship for a single source column, used to
+ *  drive the data-grid hover lookup. */
+export interface Fk {
+  sourceSchema: string;
+  sourceTable: string;
+  sourceColumn: string;
+  refSchema: string;
+  refTable: string;
+  refColumn: string;
+}
+
 // ---- Schema changes ----
 export interface ColumnSpec {
   name: string;
@@ -1471,6 +1482,42 @@ export const api = {
 
   getEr: (id: string, schema: string) =>
     http.get<ErGraph>(`/connections/${id}/er`, { params: { schema } }).then((r) => r.data),
+
+  /** Fetch a single linked row from a referenced table by column=value. Used to
+   *  resolve a foreign-key reference for the data-grid hover popover. */
+  lookupRow: (id: string, table: string, schema: string, column: string, value: string) =>
+    http
+      .get<{ row: Record<string, unknown> | null }>(
+        `/connections/${id}/tables/${encodeURIComponent(table)}/lookup`,
+        { params: { schema, column, value } },
+      )
+      .then((r) => r.data),
+
+  /** Foreign keys for a schema, flattened to one entry per (source column →
+   *  referenced column). Reuses the ER graph, which already carries every FK. */
+  getForeignKeys: (id: string, schema: string): Promise<Fk[]> =>
+    http
+      .get<ErGraph>(`/connections/${id}/er`, { params: { schema } })
+      .then((r) => {
+        const out: Fk[] = [];
+        for (const e of r.data.edges) {
+          const [srcSchema, srcTable] = e.source.split(".");
+          const [refSchema, refTable] = e.target.split(".");
+          const cols = e.columns ?? [];
+          const refCols = e.refColumns ?? [];
+          for (let i = 0; i < cols.length; i++) {
+            out.push({
+              sourceSchema: srcSchema ?? "",
+              sourceTable: srcTable ?? "",
+              sourceColumn: cols[i],
+              refSchema: refSchema ?? "",
+              refTable: refTable ?? "",
+              refColumn: refCols[i] ?? refCols[0] ?? "",
+            });
+          }
+        }
+        return out;
+      }),
 
   createTable: (id: string, body: CreateTableRequest) =>
     http.post<SchemaChangeResponse>(`/connections/${id}/schema/tables`, body).then((r) => r.data),

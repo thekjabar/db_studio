@@ -1,5 +1,6 @@
 import * as React from "react";
-import { Check, Copy, Key, Maximize2 } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Check, Copy, Key, Link2, Loader2, Maximize2 } from "lucide-react";
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -10,6 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { DatePicker, DateTimePicker } from "@/components/ui/date-picker";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export interface DataGridColumn {
@@ -17,6 +19,15 @@ export interface DataGridColumn {
   type?: string;
   pk?: boolean;
 }
+
+/** Referenced (schema, table, column) a foreign-key column points at. */
+export interface FkTarget {
+  refSchema: string;
+  refTable: string;
+  refColumn: string;
+}
+/** Map of source column name → its FK target, for the current table. */
+export type FkMap = Record<string, FkTarget>;
 
 interface DataGridProps {
   columns: DataGridColumn[];
@@ -32,6 +43,14 @@ interface DataGridProps {
   /** Key to persist column widths under in localStorage. Unique per-table. */
   widthStorageKey?: string;
   emptyMessage?: string;
+  /** Connection/schema/table — needed to fetch a linked row on FK-cell hover. */
+  connectionId?: string;
+  schema?: string;
+  table?: string;
+  /** Foreign keys for the current table, keyed by source column name. When a
+   *  cell's column is here and its value is non-null, hovering shows the
+   *  referenced row in a popover. */
+  fkMap?: FkMap;
 }
 
 type CellKind = "null" | "bool" | "number" | "json" | "date" | "datetime" | "text";
@@ -119,6 +138,10 @@ export function DataGrid({
   onExpandRow,
   widthStorageKey,
   emptyMessage = "No rows",
+  connectionId,
+  schema,
+  table,
+  fkMap,
 }: DataGridProps) {
   const [editing, setEditing] = React.useState<{ r: number; c: string } | null>(null);
   const [widths, setWidths] = React.useState<Record<string, number>>(() => {
@@ -242,6 +265,40 @@ export function DataGrid({
   const someSelected = !!selected && selected.size > 0 && !allSelected;
 
   const colSpan = columns.length + (selectable ? 1 : 0);
+
+  // ---- Foreign-key hover lookup ----------------------------------------
+  // Cache resolved rows so re-hovering a value is instant (and we never
+  // refetch). Keyed by `${refTable}:${refColumn}:${value}`. Held in a ref so
+  // it survives re-renders without being state.
+  const fkCache = React.useRef<Map<string, Record<string, unknown> | null>>(new Map());
+  // The currently-open FK popover: which cell, its target, and the cursor
+  // position to anchor at. `null` when nothing is hovered.
+  const [fkHover, setFkHover] = React.useState<{
+    key: string;
+    target: FkTarget;
+    value: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const hoverTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => () => { if (hoverTimer.current) clearTimeout(hoverTimer.current); }, []);
+
+  const fkEnabled = !!fkMap && !!connectionId && !!schema && !!table;
+
+  const openFkHover = (target: FkTarget, value: unknown, x: number, y: number) => {
+    if (!fkEnabled || value === null || value === undefined) return;
+    const strVal = String(value);
+    const key = `${target.refTable}:${target.refColumn}:${strVal}`;
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    // ~350ms delay so a quick mouse pass doesn't fire a fetch.
+    hoverTimer.current = setTimeout(() => {
+      setFkHover({ key, target, value: strVal, x, y });
+    }, 350);
+  };
+  const closeFkHover = () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setFkHover(null);
+  };
 
   return (
     <div
@@ -405,6 +462,8 @@ export function DataGrid({
                     const value = row[col.name];
                     const kind = detectKind(col.type, value);
                     const w = widths[col.name] ?? DEFAULT_WIDTH;
+                    const fkTarget = fkMap?.[col.name];
+                    const isFk = !!fkTarget && value !== null && value !== undefined && !isEditing;
                     return (
                       <td
                         key={col.name}
@@ -416,6 +475,12 @@ export function DataGrid({
                             setEditing({ r: i, c: col.name });
                           }
                         }}
+                        onMouseEnter={
+                          isFk
+                            ? (e) => openFkHover(fkTarget, value, e.clientX, e.clientY)
+                            : undefined
+                        }
+                        onMouseLeave={isFk ? closeFkHover : undefined}
                         style={{ width: w, minWidth: w, maxWidth: w }}
                         className={cn(
                           "group/cell relative border-b border-r border-border px-3 py-1.5 whitespace-nowrap overflow-hidden",
@@ -436,6 +501,12 @@ export function DataGrid({
                         ) : (
                           <>
                             <Cell kind={kind} value={value} />
+                            {isFk && (
+                              <Link2
+                                className="pointer-events-none absolute left-0.5 top-1/2 -translate-y-1/2 h-3 w-3 text-primary/50 opacity-0 group-hover/cell:opacity-100 transition-opacity"
+                                aria-hidden
+                              />
+                            )}
                             {kind !== "null" && <CopyCellButton value={value} kind={kind} />}
                           </>
                         )}
@@ -447,8 +518,158 @@ export function DataGrid({
             })}
         </tbody>
       </table>
+
+      {fkHover && connectionId && schema && (
+        <FkPopover
+          connectionId={connectionId}
+          target={fkHover.target}
+          value={fkHover.value}
+          x={fkHover.x}
+          y={fkHover.y}
+          cache={fkCache.current}
+          cacheKey={fkHover.key}
+        />
+      )}
     </div>
   );
+}
+
+/**
+ * Popover card showing the linked (referenced) row for a hovered FK cell.
+ * Rendered in a portal to <body> so the grid's `overflow-auto` never clips it,
+ * and positioned near the cursor. Results are memoized in the shared `cache`
+ * Map so re-hovering the same value never refetches.
+ */
+function FkPopover({
+  connectionId,
+  target,
+  value,
+  x,
+  y,
+  cache,
+  cacheKey,
+}: {
+  connectionId: string;
+  target: FkTarget;
+  value: string;
+  x: number;
+  y: number;
+  cache: Map<string, Record<string, unknown> | null>;
+  cacheKey: string;
+}) {
+  const cached = cache.has(cacheKey);
+  const [row, setRow] = React.useState<Record<string, unknown> | null>(
+    cached ? cache.get(cacheKey) ?? null : null,
+  );
+  const [loading, setLoading] = React.useState(!cached);
+
+  React.useEffect(() => {
+    let alive = true;
+    if (cache.has(cacheKey)) {
+      setRow(cache.get(cacheKey) ?? null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    api
+      .lookupRow(connectionId, target.refTable, target.refSchema, target.refColumn, value)
+      .then((r) => {
+        cache.set(cacheKey, r.row);
+        if (!alive) return;
+        setRow(r.row);
+        setLoading(false);
+      })
+      .catch(() => {
+        cache.set(cacheKey, null);
+        if (!alive) return;
+        setRow(null);
+        setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [connectionId, target, value, cache, cacheKey]);
+
+  // Position near the cursor, clamped so a ~320px card stays on-screen.
+  const CARD_W = 320;
+  const left = Math.max(8, Math.min(x + 12, window.innerWidth - CARD_W - 8));
+  const top = Math.min(y + 16, window.innerHeight - 40);
+
+  const fields = row ? pickFkFields(row) : [];
+
+  return createPortal(
+    <div
+      style={{ position: "fixed", left, top, width: CARD_W, zIndex: 70 }}
+      className="pointer-events-none rounded-lg border border-border bg-popover text-popover-foreground shadow-xl overflow-hidden"
+    >
+      <div className="flex items-center gap-1.5 border-b border-border bg-muted/60 px-3 py-1.5 text-[11px] font-medium">
+        <Link2 className="h-3 w-3 text-primary shrink-0" />
+        <span className="font-mono text-foreground truncate">
+          {target.refTable}
+        </span>
+        <span className="text-muted-foreground">·</span>
+        <span className="font-mono text-muted-foreground truncate">{target.refColumn} = {value}</span>
+      </div>
+      {loading ? (
+        <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+        </div>
+      ) : row === null ? (
+        <div className="px-3 py-3 text-xs text-muted-foreground italic">No matching record</div>
+      ) : (
+        <dl className="px-3 py-2 space-y-1">
+          {fields.map(([k, v]) => (
+            <div key={k} className="flex items-baseline gap-2 text-xs">
+              <dt className="font-mono text-[11px] text-muted-foreground shrink-0 max-w-[38%] truncate">
+                {k}
+              </dt>
+              <dd className="font-mono text-foreground truncate flex-1 text-right">
+                {formatFkValue(v)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>,
+    document.body,
+  );
+}
+
+/** Priority column names to surface first in an FK popover, in order. */
+const FK_PRIORITY = ["name", "title", "label", "status", "email", "slug", "code"];
+
+/** Pick up to 6 informative, non-null fields from a linked row. Prioritizes
+ *  human-friendly columns (name/title/…) then falls back to first columns. */
+function pickFkFields(row: Record<string, unknown>): [string, unknown][] {
+  const entries = Object.entries(row).filter(([, v]) => v !== null && v !== undefined);
+  const seen = new Set<string>();
+  const out: [string, unknown][] = [];
+  for (const p of FK_PRIORITY) {
+    const hit = entries.find(([k]) => k.toLowerCase() === p);
+    if (hit && !seen.has(hit[0])) {
+      out.push(hit);
+      seen.add(hit[0]);
+    }
+  }
+  for (const e of entries) {
+    if (out.length >= 6) break;
+    if (!seen.has(e[0])) {
+      out.push(e);
+      seen.add(e[0]);
+    }
+  }
+  return out.slice(0, 6);
+}
+
+/** Render an FK field value compactly (objects → JSON, long strings truncated). */
+function formatFkValue(v: unknown): string {
+  let s: string;
+  if (typeof v === "object") {
+    try { s = JSON.stringify(v); } catch { s = String(v); }
+  } else {
+    s = String(v);
+  }
+  return s.length > 60 ? s.slice(0, 60) + "…" : s;
 }
 
 function InlineEditor({

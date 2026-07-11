@@ -24,7 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { DataGrid } from "@/components/data-grid";
+import { DataGrid, type FkMap } from "@/components/data-grid";
 import { Popover } from "@/components/ui/popover";
 import {
   Select,
@@ -184,6 +184,30 @@ export default function TableRoute() {
     queryFn: () => api.getTableColumns(id!, table!, schema!),
     enabled: ready,
   });
+
+  // Foreign keys for the whole schema (cached), reduced to a map for the
+  // CURRENT table's columns so the grid can show a hover popover of the
+  // referenced row. Kept schema-scoped so navigating between tables reuses it.
+  const fksQ = useQuery({
+    queryKey: ["fks", id, schema],
+    queryFn: () => api.getForeignKeys(id!, schema!),
+    enabled: ready,
+    staleTime: 5 * 60_000,
+  });
+
+  const fkMap = useMemo<FkMap>(() => {
+    const m: FkMap = {};
+    for (const fk of fksQ.data ?? []) {
+      if (fk.sourceSchema === schema && fk.sourceTable === table) {
+        m[fk.sourceColumn] = {
+          refSchema: fk.refSchema,
+          refTable: fk.refTable,
+          refColumn: fk.refColumn,
+        };
+      }
+    }
+    return m;
+  }, [fksQ.data, schema, table]);
 
   const appliedFilters = useMemo(
     () =>
@@ -418,6 +442,10 @@ export default function TableRoute() {
               columns={columns}
               rows={rows}
               loading={dataQ.isLoading || colsQ.isLoading}
+              connectionId={id!}
+              schema={schema!}
+              table={table!}
+              fkMap={fkMap}
               selectable
               selected={selected}
               onToggleSelect={(i) => {

@@ -260,6 +260,27 @@ export class IntrospectionController {
     } finally { await drv.close().catch(() => {}); }
   }
 
+  @Get('tables/:name/lookup') @RequireRole('VIEWER')
+  async lookup(
+    @Param('id') id: string,
+    @Param('name') name: string,
+    @Query('schema') schema: string,
+    @Query('column') column: string,
+    @Query('value') value: string,
+    @Req() req: Request,
+  ) {
+    const drv = await this.svc.buildDriverForRole(id, this.roleFromReq(req));
+    try {
+      // fetchRowByPk whitelists `column` against the real column list and binds
+      // `value` as a parameter, so this is a safe single-row lookup for any
+      // column (used to resolve a foreign-key reference).
+      const row = drv.fetchRowByPk
+        ? await drv.fetchRowByPk(schema, name, { [column]: value }).catch(() => null)
+        : null;
+      return { row };
+    } finally { await drv.close().catch(() => {}); }
+  }
+
   @Get('er') @RequireRole('VIEWER')
   async er(@Param('id') id: string, @Query('schema') schema: string | undefined, @Req() req: Request) {
     const t0 = Date.now();

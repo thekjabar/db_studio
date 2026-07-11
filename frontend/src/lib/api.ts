@@ -1025,6 +1025,13 @@ export const api = {
         { params: { schema: body.schema } },
       )
       .then((r) => r.data),
+  generateSampleData: (id: string, table: string, schema: string, count: number) =>
+    http
+      .post<{ inserted: number; errors?: string[] }>(
+        `/connections/${id}/tables/${encodeURIComponent(table)}/generate`,
+        { schema, count },
+      )
+      .then((r) => r.data),
 
   runQuery: (
     id: string,

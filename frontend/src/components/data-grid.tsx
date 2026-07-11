@@ -1,6 +1,6 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { Check, Copy, Key, Link2, Loader2, Maximize2 } from "lucide-react";
+import { ArrowUpRight, Check, Copy, Key, Link2, Loader2, Maximize2 } from "lucide-react";
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -29,6 +29,14 @@ export interface FkTarget {
 /** Map of source column name → its FK target, for the current table. */
 export type FkMap = Record<string, FkTarget>;
 
+/** Payload for navigating to a referenced (FK) row. */
+export interface OpenFkArg {
+  refSchema: string;
+  refTable: string;
+  refColumn: string;
+  value: unknown;
+}
+
 interface DataGridProps {
   columns: DataGridColumn[];
   rows: Record<string, unknown>[];
@@ -51,6 +59,10 @@ interface DataGridProps {
    *  cell's column is here and its value is non-null, hovering shows the
    *  referenced row in a popover. */
   fkMap?: FkMap;
+  /** Called when an FK cell (or its popover "Open" affordance) is clicked, to
+   *  navigate to the referenced row. Routing-agnostic — the caller decides the
+   *  destination (see table.tsx). */
+  onOpenFk?: (ref: OpenFkArg) => void;
 }
 
 type CellKind = "null" | "bool" | "number" | "json" | "date" | "datetime" | "text";
@@ -142,6 +154,7 @@ export function DataGrid({
   schema,
   table,
   fkMap,
+  onOpenFk,
 }: DataGridProps) {
   const [editing, setEditing] = React.useState<{ r: number; c: string } | null>(null);
   const [widths, setWidths] = React.useState<Record<string, number>>(() => {
@@ -281,12 +294,19 @@ export function DataGrid({
     y: number;
   } | null>(null);
   const hoverTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  React.useEffect(() => () => { if (hoverTimer.current) clearTimeout(hoverTimer.current); }, []);
+  // Separate timer for CLOSING, so the pointer can travel from the FK cell into
+  // the popover card (to click "Open") without the card vanishing mid-move.
+  const closeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  React.useEffect(() => () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  }, []);
 
   const fkEnabled = !!fkMap && !!connectionId && !!schema && !!table;
 
   const openFkHover = (target: FkTarget, value: unknown, x: number, y: number) => {
     if (!fkEnabled || value === null || value === undefined) return;
+    if (closeTimer.current) clearTimeout(closeTimer.current); // re-entered — keep open
     const strVal = String(value);
     const key = `${target.refTable}:${target.refColumn}:${strVal}`;
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
@@ -295,9 +315,33 @@ export function DataGrid({
       setFkHover({ key, target, value: strVal, x, y });
     }, 350);
   };
-  const closeFkHover = () => {
+  // Close with a short grace period (unless `immediate`) so the cursor can cross
+  // the gap into the card. The card's own onMouseEnter cancels this via
+  // cancelFkClose; onMouseLeave from the card closes immediately.
+  const closeFkHover = (immediate = false) => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
-    setFkHover(null);
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+    if (immediate) {
+      setFkHover(null);
+      return;
+    }
+    closeTimer.current = setTimeout(() => setFkHover(null), 160);
+  };
+  const cancelFkClose = () => {
+    if (closeTimer.current) clearTimeout(closeTimer.current);
+  };
+
+  // Navigate to the referenced row. Cancels any pending hover so the peek
+  // popover doesn't linger after we jump away.
+  const navigateFk = (target: FkTarget, value: unknown) => {
+    if (!onOpenFk || value === null || value === undefined) return;
+    closeFkHover(true);
+    onOpenFk({
+      refSchema: target.refSchema,
+      refTable: target.refTable,
+      refColumn: target.refColumn,
+      value,
+    });
   };
 
   return (
@@ -464,27 +508,52 @@ export function DataGrid({
                     const w = widths[col.name] ?? DEFAULT_WIDTH;
                     const fkTarget = fkMap?.[col.name];
                     const isFk = !!fkTarget && value !== null && value !== undefined && !isEditing;
+                    // FK cells NAVIGATE on click instead of editing — only when a
+                    // handler is wired up. Without it they behave like normal cells.
+                    const fkClickable = isFk && !!onOpenFk;
                     return (
                       <td
                         key={col.name}
-                        onMouseDown={() => setActiveCell({ r: i, c: ci })}
-                        onDoubleClick={() => {
-                          if (kind === "json" && onEditJsonCell) {
-                            onEditJsonCell(i, col.name);
-                          } else if (onEditCell) {
-                            setEditing({ r: i, c: col.name });
-                          }
-                        }}
+                        onMouseDown={
+                          fkClickable
+                            // Don't let the FK cell steal edit-selection focus;
+                            // still mark it active for keyboard nav.
+                            ? (e) => { e.preventDefault(); setActiveCell({ r: i, c: ci }); }
+                            : () => setActiveCell({ r: i, c: ci })
+                        }
+                        onClick={
+                          fkClickable
+                            ? (e) => {
+                                // Ignore clicks originating on the copy button.
+                                if ((e.target as HTMLElement).closest("[data-copy-btn]")) return;
+                                e.stopPropagation();
+                                navigateFk(fkTarget, value);
+                              }
+                            : undefined
+                        }
+                        onDoubleClick={
+                          fkClickable
+                            ? undefined // FK cells navigate; they aren't edited inline.
+                            : () => {
+                                if (kind === "json" && onEditJsonCell) {
+                                  onEditJsonCell(i, col.name);
+                                } else if (onEditCell) {
+                                  setEditing({ r: i, c: col.name });
+                                }
+                              }
+                        }
                         onMouseEnter={
                           isFk
                             ? (e) => openFkHover(fkTarget, value, e.clientX, e.clientY)
                             : undefined
                         }
-                        onMouseLeave={isFk ? closeFkHover : undefined}
+                        onMouseLeave={isFk ? () => closeFkHover() : undefined}
+                        title={fkClickable ? `Open ${fkTarget.refTable} row (${fkTarget.refColumn} = ${String(value)})` : undefined}
                         style={{ width: w, minWidth: w, maxWidth: w }}
                         className={cn(
                           "group/cell relative border-b border-r border-border px-3 py-1.5 whitespace-nowrap overflow-hidden",
                           kind === "number" && "text-right tabular-nums",
+                          fkClickable && "cursor-pointer",
                           isActive && "ring-1 ring-inset ring-primary bg-primary/5",
                         )}
                       >
@@ -500,7 +569,9 @@ export function DataGrid({
                           />
                         ) : (
                           <>
-                            <Cell kind={kind} value={value} />
+                            <span className={cn(fkClickable && "underline decoration-dotted decoration-primary/40 underline-offset-2 group-hover/cell:decoration-primary")}>
+                              <Cell kind={kind} value={value} />
+                            </span>
                             {isFk && (
                               <Link2
                                 className="pointer-events-none absolute left-0.5 top-1/2 -translate-y-1/2 h-3 w-3 text-primary/50 opacity-0 group-hover/cell:opacity-100 transition-opacity"
@@ -528,6 +599,9 @@ export function DataGrid({
           y={fkHover.y}
           cache={fkCache.current}
           cacheKey={fkHover.key}
+          onOpen={onOpenFk ? () => navigateFk(fkHover.target, fkHover.value) : undefined}
+          onPointerEnter={cancelFkClose}
+          onPointerLeave={() => closeFkHover(true)}
         />
       )}
     </div>
@@ -548,6 +622,9 @@ function FkPopover({
   y,
   cache,
   cacheKey,
+  onOpen,
+  onPointerEnter,
+  onPointerLeave,
 }: {
   connectionId: string;
   target: FkTarget;
@@ -556,6 +633,12 @@ function FkPopover({
   y: number;
   cache: Map<string, Record<string, unknown> | null>;
   cacheKey: string;
+  /** When provided, renders an "Open" button that navigates to the linked row. */
+  onOpen?: () => void;
+  /** Pointer entered the card — cancel any pending close (hover bridge). */
+  onPointerEnter?: () => void;
+  /** Pointer left the card — dismiss the popover. */
+  onPointerLeave?: () => void;
 }) {
   const cached = cache.has(cacheKey);
   const [row, setRow] = React.useState<Record<string, unknown> | null>(
@@ -600,7 +683,14 @@ function FkPopover({
   return createPortal(
     <div
       style={{ position: "fixed", left, top, width: CARD_W, zIndex: 70 }}
-      className="pointer-events-none rounded-lg border border-border bg-popover text-popover-foreground shadow-xl overflow-hidden"
+      // Pointer events are enabled ONLY when there's an Open action to click;
+      // otherwise the card stays click-through (pure hover peek, unchanged).
+      onMouseEnter={onOpen ? onPointerEnter : undefined}
+      onMouseLeave={onOpen ? onPointerLeave : undefined}
+      className={cn(
+        "rounded-lg border border-border bg-popover text-popover-foreground shadow-xl overflow-hidden",
+        onOpen ? "pointer-events-auto" : "pointer-events-none",
+      )}
     >
       <div className="flex items-center gap-1.5 border-b border-border bg-muted/60 px-3 py-1.5 text-[11px] font-medium">
         <Link2 className="h-3 w-3 text-primary shrink-0" />
@@ -608,7 +698,17 @@ function FkPopover({
           {target.refTable}
         </span>
         <span className="text-muted-foreground">·</span>
-        <span className="font-mono text-muted-foreground truncate">{target.refColumn} = {value}</span>
+        <span className="font-mono text-muted-foreground truncate flex-1">{target.refColumn} = {value}</span>
+        {onOpen && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onOpen(); }}
+            className="ml-auto inline-flex shrink-0 items-center gap-0.5 rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:border-primary/60 hover:text-primary transition-colors"
+            title="Open this row"
+          >
+            Open <ArrowUpRight className="h-2.5 w-2.5" />
+          </button>
+        )}
       </div>
       {loading ? (
         <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
@@ -772,6 +872,7 @@ function CopyCellButton({ value, kind }: { value: unknown; kind: CellKind }) {
   return (
     <button
       type="button"
+      data-copy-btn
       onMouseDown={(e) => e.stopPropagation()}
       onClick={onCopy}
       title="Copy value"

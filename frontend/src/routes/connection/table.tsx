@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Editor from "@monaco-editor/react";
 import { toast } from "sonner";
@@ -19,6 +19,7 @@ import {
   Plus,
   RefreshCw,
   Share2,
+  Sparkles,
   Table2,
   Trash2,
   Upload,
@@ -37,6 +38,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   exportCsv as dlCsv,
   exportJson as dlJson,
@@ -104,6 +113,7 @@ export default function TableRoute() {
   const { id, schema, table } = useParams<{ id: string; schema: string; table: string }>();
   const qc = useQueryClient();
   const modal = useModal();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Initial state hydrated from URL so links are shareable.
@@ -148,22 +158,57 @@ export default function TableRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, pageSize, filters, sorts]);
 
-  // When the table (or schema/connection) changes, clear filters/sorts/page —
-  // a filter built for one table's columns is invalid on another and would
-  // otherwise carry over (showing a stale "Filter 1" with a blank column).
+  // Parse a `?f` / `?s`-style JSON-array param, tolerating garbage.
+  const parseJsonArrayParam = <T,>(raw: string | null): T[] => {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as T[]) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  // When the table (or schema/connection) changes, RE-HYDRATE filters/sorts from
+  // the destination URL rather than blindly clearing them. A filter built for one
+  // table's columns is invalid on another, so we don't carry the old state over —
+  // but an FK "open" navigation lands here with a fresh `?f` filter already in the
+  // URL (e.g. `id = 42`), and that must apply, not get wiped. Reading the URL does
+  // both: normal table switches have no `f` (→ empty), FK jumps have the filter.
   // Skip the first render so URL-shared filters still hydrate on load.
   const tableKey = `${id}/${schema}/${table}`;
   const prevTableKey = useRef(tableKey);
   useEffect(() => {
     if (prevTableKey.current === tableKey) return; // same table (incl. first mount)
     prevTableKey.current = tableKey;
-    setFilters([]);
-    setSorts([]);
+    setFilters(parseJsonArrayParam<FilterRow>(searchParams.get("f")));
+    setSorts(parseJsonArrayParam<SortRow>(searchParams.get("s")));
     setPage(0);
     setSelected(new Set());
     setFilterOpen(false);
     setSortOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tableKey]);
+
+  // Same-table FK jump: the route params don't change (so the table-change
+  // effect above is skipped), but the `?f` param does. This effect owns a ref of
+  // the last `?f` STRING it observed and only reacts when that string actually
+  // changes — so it fires exactly once per real URL transition. It then compares
+  // the new `?f` against the current filters; if they already agree (our own
+  // state→URL write is what moved the URL) it does nothing, avoiding a clobber.
+  // Only a genuine external change (an FK "open" pointing back into this table)
+  // both changes the string AND disagrees with `filters`, triggering re-hydrate.
+  const lastSeenF = useRef<string>(searchParams.get("f") ?? "");
+  useEffect(() => {
+    const raw = searchParams.get("f") ?? "";
+    if (raw === lastSeenF.current) return; // `?f` string unchanged since last run
+    lastSeenF.current = raw;
+    const current = filters.length ? JSON.stringify(filters) : "";
+    if (raw === current) return; // URL now matches our state — nothing to apply
+    setFilters(parseJsonArrayParam<FilterRow>(raw || null));
+    setPage(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const filterBtnRef = useRef<HTMLButtonElement | null>(null);
   const sortBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -182,6 +227,8 @@ export default function TableRoute() {
   const [jsonCell, setJsonCell] = useState<{ r: number; c: string } | null>(null);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [csvImportOpen, setCsvImportOpen] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [generateCount, setGenerateCount] = useState("25");
 
   const ready = !!id && !!schema && !!table;
 
@@ -204,6 +251,17 @@ export default function TableRoute() {
     queryFn: () => api.getTableColumns(id!, table!, schema!),
     enabled: ready,
   });
+
+  // Connection metadata — used to hide write actions (like "Generate data") on a
+  // read-only connection. The backend enforces this too; this just avoids
+  // showing a button that would 400.
+  const connQ = useQuery({
+    queryKey: ["connection", id],
+    queryFn: () => api.getConnection(id!),
+    enabled: !!id,
+    staleTime: 5 * 60_000,
+  });
+  const isReadOnly = !!connQ.data?.readOnly;
 
   // Foreign keys for the whole schema (cached), reduced to a map for the
   // CURRENT table's columns so the grid can show a hover popover of the
@@ -271,6 +329,35 @@ export default function TableRoute() {
     onError: (e) => toast.error(extractErrorMessage(e)),
   });
 
+  const generate = useMutation({
+    mutationFn: (count: number) => api.generateSampleData(id!, table!, schema!, count),
+    onSuccess: (r) => {
+      if (r.inserted > 0) {
+        toast.success(`Inserted ${r.inserted} row${r.inserted === 1 ? "" : "s"}`);
+      }
+      if (r.errors?.length) {
+        // Some rows failed (FK / unique / constraint). Surface the first reason.
+        toast.error(
+          r.inserted > 0
+            ? `${r.inserted} inserted; some rows failed: ${r.errors[0]}`
+            : `Generation failed: ${r.errors[0]}`,
+        );
+      }
+      setGenerateOpen(false);
+      qc.invalidateQueries({ queryKey: ["data", id, schema, table] });
+    },
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
+  const submitGenerate = () => {
+    const n = Math.max(1, Math.min(1000, Number(generateCount) || 0));
+    if (!n) {
+      toast.error("Enter a row count between 1 and 1000");
+      return;
+    }
+    generate.mutate(n);
+  };
+
   const columns = useMemo(() => {
     const cols = colsQ.data ?? [];
     return cols.map((c) => ({ name: c.name, type: c.dataType, pk: c.isPrimaryKey }));
@@ -323,6 +410,26 @@ export default function TableRoute() {
   const copyExport = async (text: string, label: string) => {
     const ok = await copyToClipboard(text);
     toast[ok ? "success" : "error"](ok ? `Copied ${label} to clipboard` : `Could not copy ${label}`);
+  };
+
+  // Clicking an FK cell (or its peek popover's "Open") jumps to the referenced
+  // row: navigate to that table's route filtered to `refColumn = value`. The
+  // filter is encoded exactly like this route hydrates it from `?f` (a JSON
+  // array of {column, op, value}). Navigating to the SAME table still updates —
+  // react-router pushes a new URL, and the `f`-driven state re-hydrates.
+  const onOpenFk = (ref: {
+    refSchema: string;
+    refTable: string;
+    refColumn: string;
+    value: unknown;
+  }) => {
+    // Encode the filter with a STRING value, matching FilterRow's shape so it
+    // hydrates and runs through coerceFilterValue exactly like a typed filter.
+    const filter: FilterRow[] = [
+      { column: ref.refColumn, op: "=", value: String(ref.value) },
+    ];
+    const path = `/c/${id}/t/${encodeURIComponent(ref.refSchema)}/${encodeURIComponent(ref.refTable)}`;
+    navigate(`${path}?f=${encodeURIComponent(JSON.stringify(filter))}`);
   };
 
   const onEditCell = (rowIdx: number, column: string, value: unknown) => {
@@ -408,6 +515,19 @@ export default function TableRoute() {
             <Button size="sm" onClick={() => setDrawerRow(null)}>
               <Plus className="h-3.5 w-3.5" /> Insert
             </Button>
+            {!isReadOnly && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setGenerateCount("25");
+                  setGenerateOpen(true);
+                }}
+                title="Insert realistic fake rows into this table"
+              >
+                <Sparkles className="h-3.5 w-3.5" /> Generate data
+              </Button>
+            )}
             <Button
               size="sm"
               variant="ghost"
@@ -493,6 +613,7 @@ export default function TableRoute() {
               schema={schema!}
               table={table!}
               fkMap={fkMap}
+              onOpenFk={onOpenFk}
               selectable
               selected={selected}
               onToggleSelect={(i) => {
@@ -768,6 +889,48 @@ export default function TableRoute() {
           onCommitted={() => qc.invalidateQueries({ queryKey: ["data", id, schema, table] })}
         />
       )}
+
+      <Dialog open={generateOpen} onOpenChange={(o) => !generate.isPending && setGenerateOpen(o)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Generate sample data</DialogTitle>
+            <DialogDescription>
+              Insert realistic fake rows into <span className="font-mono">{table}</span>. Auto-generated
+              columns (identity, serial, default primary keys) are filled by the database.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <label className="text-xs text-muted-foreground">Number of rows (1–1000)</label>
+            <Input
+              autoFocus
+              inputMode="numeric"
+              value={generateCount}
+              onChange={(e) => setGenerateCount(e.target.value.replace(/\D/g, "").slice(0, 4))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !generate.isPending) submitGenerate();
+              }}
+              className="h-9 font-mono"
+              placeholder="25"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setGenerateOpen(false)} disabled={generate.isPending}>
+              Cancel
+            </Button>
+            <Button onClick={submitGenerate} disabled={generate.isPending}>
+              {generate.isPending ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-3.5 w-3.5" /> Generate
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

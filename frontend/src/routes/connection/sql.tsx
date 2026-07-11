@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { toast } from "sonner";
@@ -24,7 +24,7 @@ import {
   toJson,
   copyToClipboard,
 } from "@/lib/result-export";
-import { DataGrid } from "@/components/data-grid";
+import { DataGrid, type FkMap } from "@/components/data-grid";
 import { ExplainPanel } from "@/components/explain-panel";
 import { api, extractErrorMessage, type ExplainResult, type QueryResult } from "@/lib/api";
 import { useModal } from "@/components/modal-provider";
@@ -102,6 +102,9 @@ export default function SqlRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sql, id]);
   const [result, setResult] = useState<QueryResult | null>(null);
+  // The SQL text that produced the current result — used to detect a simple
+  // single-table SELECT so we can enable FK peek/jump on those results.
+  const [ranSql, setRanSql] = useState<string>("");
   const [explainResult, setExplainResult] = useState<ExplainResult | null>(null);
   const [insights, setInsights] = useState<
     | {
@@ -238,8 +241,9 @@ export default function SqlRoute() {
   const run = useMutation({
     mutationFn: async (body: { sql: string; confirmDestructive?: boolean }) =>
       api.runQuery(id!, { ...body, maxRows }),
-    onSuccess: (r) => {
+    onSuccess: (r, body) => {
       setResult(r);
+      setRanSql(body.sql);
       setResultTab("data");
       pushHistory({ sql, when: Date.now() });
       if (r.truncated) {
@@ -519,6 +523,64 @@ export default function SqlRoute() {
 
   // Column names in the order shown. Shared by every export format.
   const exportCols = () => (result ? result.fields.map((c) => c.name) : []);
+
+  const navigate = useNavigate();
+
+  // FK peek/jump on results only when the query is an UNAMBIGUOUS single-table
+  // SELECT (no joins/subqueries), so a result column maps to exactly one table.
+  // Detect `SELECT ... FROM [schema.]table [alias]` with nothing that could
+  // introduce a second table (join/comma/subquery). Returns { schema, table }.
+  const singleTable = useMemo(() => {
+    const s = ranSql
+      .replace(/--[^\n]*/g, " ") // strip line comments
+      .replace(/\/\*[\s\S]*?\*\//g, " ") // strip block comments
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!/^select\b/i.test(s)) return null;
+    // Reject queries that can involve more than one table.
+    const fromIdx = s.toLowerCase().indexOf(" from ");
+    if (fromIdx === -1) return null;
+    const afterFrom = s.slice(fromIdx + 6);
+    // Anything joining or subquerying disqualifies it.
+    if (/\bjoin\b/i.test(afterFrom)) return null;
+    if (/^\s*\(/.test(afterFrom)) return null; // FROM (subquery)
+    // First token after FROM up to a space/WHERE/GROUP/ORDER/LIMIT/comma/;.
+    const m = afterFrom.match(/^\s*([a-zA-Z_][\w$]*(?:\.[a-zA-Z_][\w$]*)?|"[^"]+"(?:\."[^"]+")?)/);
+    if (!m) return null;
+    // A comma right after the table = old-style multi-table FROM -> ambiguous.
+    const rest = afterFrom.slice(m[0].length).trimStart();
+    if (rest.startsWith(",")) return null;
+    const raw = m[1].replace(/"/g, "");
+    const parts = raw.split(".");
+    const table = parts.length === 2 ? parts[1] : parts[0];
+    const schema = parts.length === 2 ? parts[0] : (ctx?.schema ?? "public");
+    return { schema, table };
+  }, [ranSql, ctx?.schema]);
+
+  // Foreign keys for the detected table's schema, reduced to that table's map.
+  const resultFksQ = useQuery({
+    queryKey: ["fks", id, singleTable?.schema],
+    queryFn: () => api.getForeignKeys(id!, singleTable!.schema),
+    enabled: !!id && !!singleTable,
+    staleTime: 5 * 60_000,
+  });
+
+  const resultFkMap = useMemo<FkMap>(() => {
+    const m: FkMap = {};
+    if (!singleTable) return m;
+    for (const fk of resultFksQ.data ?? []) {
+      if (fk.sourceSchema === singleTable.schema && fk.sourceTable === singleTable.table) {
+        m[fk.sourceColumn] = { refSchema: fk.refSchema, refTable: fk.refTable, refColumn: fk.refColumn };
+      }
+    }
+    return m;
+  }, [resultFksQ.data, singleTable]);
+
+  const onOpenFk = (ref: { refSchema: string; refTable: string; refColumn: string; value: unknown }) => {
+    const filter = [{ column: ref.refColumn, op: "=", value: String(ref.value) }];
+    const path = `/c/${id}/t/${encodeURIComponent(ref.refSchema)}/${encodeURIComponent(ref.refTable)}`;
+    navigate(`${path}?f=${encodeURIComponent(JSON.stringify(filter))}`);
+  };
 
   const copyMarkdown = async () => {
     if (!result) return;
@@ -1007,6 +1069,11 @@ export default function SqlRoute() {
                   columns={result.fields.map((c) => ({ name: c.name, type: c.dataType }))}
                   rows={result.rows}
                   emptyMessage="Query returned no rows"
+                  connectionId={id}
+                  schema={singleTable?.schema}
+                  table={singleTable?.table}
+                  fkMap={singleTable ? resultFkMap : undefined}
+                  onOpenFk={singleTable ? onOpenFk : undefined}
                 />
               ) : (
                 <div className="h-full flex items-center justify-center text-sm text-muted-foreground">

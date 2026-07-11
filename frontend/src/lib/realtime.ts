@@ -23,12 +23,14 @@ function getSocket(token: string): Socket {
   socketToken = token;
   socket = io(`${WS_ORIGIN}/realtime`, {
     auth: { token },
-    // Allow polling as a fallback: a pure-websocket transport silently fails
-    // behind some proxies/CDNs (Cloudflare returned "Invalid frame header" for
-    // the WS upgrade), leaving realtime permanently offline with no retry path.
-    // socket.io starts on polling then upgrades to websocket when it works, and
-    // stays on polling when it doesn't — so realtime connects either way.
-    transports: ["websocket", "polling"],
+    // POLLING FIRST, then websocket. Cloudflare completes the WS 101 handshake
+    // but then corrupts socket.io's frames ("websocket error"), and with
+    // websocket listed first socket.io errors out instead of falling back —
+    // realtime stayed permanently offline. Verified: with websocket-first it
+    // FAILS; with polling-first it CONNECTS. Starting on polling connects
+    // immediately (polling works fine through CF); socket.io still upgrades to
+    // websocket afterward if that path happens to work.
+    transports: ["polling", "websocket"],
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 1_000,

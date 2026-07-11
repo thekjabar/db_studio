@@ -9,6 +9,7 @@ import { AuditService } from '../audit/audit.service';
 import { ConnectionCredentials, IDatabaseDriver } from '../drivers/driver.interface';
 import { CreateConnectionDto, UpdateConnectionDto } from './connections.dto';
 import { QuotaService } from '../common/quota.service';
+import { buildRows } from './sample-data.util';
 
 const PURPOSE = (id: string) => `conn:${id}`;
 
@@ -469,6 +470,97 @@ export class ConnectionsService implements OnModuleDestroy {
       readOnly: role === Role.VIEWER ? true : undefined,
       preferReplica: role === Role.VIEWER,
     });
+  }
+
+  /**
+   * Insert `count` realistic fake rows into `schema.table`, one type-appropriate
+   * value per column. Columns the DB fills for us (identity / serial / a PK with
+   * a default) are skipped so we never fight sequences or default-generated keys.
+   *
+   * Values are bound through the driver's parameterized `insertRow` — never
+   * string-concatenated into SQL. Rows that violate a constraint (e.g. an FK on
+   * a generated uuid, or a unique clash) are counted and the first error is
+   * returned rather than aborting the whole batch.
+   */
+  async generateRows(
+    id: string,
+    schema: string,
+    table: string,
+    count: number,
+    role: Role,
+  ): Promise<{ inserted: number; errors?: string[] }> {
+    // Never write to a read-only connection, regardless of the caller's role.
+    const conn = await this.get(id);
+    if (conn.readOnly) {
+      throw new BadRequestException('This connection is read-only; sample data cannot be generated.');
+    }
+    const n = Math.max(1, Math.min(1000, Math.floor(count)));
+
+    const drv = await this.buildDriverForRole(id, role);
+    try {
+      const columns = await drv.getTableColumns(schema, table);
+      if (!columns.length) {
+        throw new BadRequestException(`No columns found for ${schema}.${table}`);
+      }
+
+      // Best-effort: resolve enum labels for USER-DEFINED columns so we can pick
+      // a valid value instead of skipping. Postgres only; failures are ignored.
+      const enumLabels = await this.resolveEnumLabels(drv, conn.dialect as Dialect, schema, table, columns);
+
+      const rows = buildRows(columns, n, { enumLabels });
+
+      let inserted = 0;
+      const errors: string[] = [];
+      for (const row of rows) {
+        try {
+          await drv.insertRow(schema, table, row);
+          inserted++;
+        } catch (err) {
+          if (errors.length < 3) errors.push((err as Error).message ?? String(err));
+        }
+      }
+
+      return errors.length ? { inserted, errors } : { inserted };
+    } finally {
+      await drv.close().catch(() => {});
+    }
+  }
+
+  /**
+   * For Postgres USER-DEFINED (enum) columns, query pg_enum for the allowed
+   * labels so generated data satisfies the type. Returns a map keyed by
+   * lowercased column name. Non-Postgres dialects and any error yield an empty
+   * map (the generator then skips nullable enums / best-effort fills others).
+   */
+  private async resolveEnumLabels(
+    drv: IDatabaseDriver,
+    dialect: Dialect,
+    schema: string,
+    table: string,
+    columns: { name: string; dataType: string }[],
+  ): Promise<Map<string, string[]>> {
+    const out = new Map<string, string[]>();
+    const enumCols = columns.filter((c) => (c.dataType || '').toLowerCase() === 'user-defined');
+    if (dialect !== Dialect.POSTGRES || !enumCols.length) return out;
+    try {
+      const sql = `
+        SELECT c.column_name AS column_name, e.enumlabel AS label
+          FROM information_schema.columns c
+          JOIN pg_type t ON t.typname = c.udt_name
+          JOIN pg_enum e ON e.enumtypid = t.oid
+         WHERE c.table_schema = $1 AND c.table_name = $2
+         ORDER BY e.enumsortorder`;
+      const r = await drv.runRawQuery(sql, [schema, table]);
+      for (const row of r.rows as { column_name: string; label: string }[]) {
+        const key = String(row.column_name).toLowerCase();
+        const arr = out.get(key) ?? [];
+        arr.push(String(row.label));
+        out.set(key, arr);
+      }
+    } catch {
+      // Non-fatal — generator falls back for unknown enum types.
+    }
+    return out;
   }
 
   async test(id: string, userId: string, meta: { ip?: string; userAgent?: string }) {

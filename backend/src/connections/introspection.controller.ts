@@ -7,7 +7,7 @@ import { ConnectionsService } from './connections.service';
 import { RbacGuard } from '../rbac/rbac.guard';
 import { RequireRole, RequireTableRole } from '../rbac/rbac.decorator';
 import { TableDataQuery } from '../drivers/driver.interface';
-import { InsertRowDto, UpdateRowDto, DeleteRowDto, BulkDeleteRowsDto, BulkUpdateRowsDto } from './connections.dto';
+import { InsertRowDto, UpdateRowDto, DeleteRowDto, BulkDeleteRowsDto, BulkUpdateRowsDto, GenerateRowsDto } from './connections.dto';
 import { AuditService } from '../audit/audit.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { ColumnMasksService } from './column-masks.service';
@@ -136,6 +136,29 @@ export class IntrospectionController {
       this.invalidateCache(id, schema, name);
       return r;
     } finally { await drv.close().catch(() => {}); }
+  }
+
+  @Throttle({ heavy: { limit: 10, ttl: 60_000 } })
+  @Post('tables/:name/generate') @RequireTableRole('EDITOR')
+  async generate(
+    @Param('id') id: string, @Param('name') name: string,
+    @Body() dto: GenerateRowsDto,
+    @CurrentUser() u: AuthUser, @Req() req: Request,
+  ) {
+    // Service enforces the read-only block and skips DB-generated columns.
+    const result = await this.svc.generateRows(id, dto.schema, name, dto.count, this.roleFromReq(req));
+    await this.audit.log({
+      userId: u.id, connectionId: id, action: 'ROW_INSERT', affectedRows: result.inserted, ...meta(req),
+      metadata: { table: `${dto.schema}.${name}`, schema: dto.schema, tableName: name, generated: true, requested: dto.count },
+    });
+    if (result.inserted > 0) {
+      this.webhooks.dispatch({
+        connectionId: id, schemaName: dto.schema, tableName: name,
+        event: WebhookEvent.ROW_INSERT, userId: u.id,
+      });
+      this.invalidateCache(id, dto.schema, name);
+    }
+    return result;
   }
 
   @Throttle({ heavy: { limit: 60, ttl: 60_000 } })

@@ -131,3 +131,8 @@ export class BulkUpdateRowsDto {
   pks!: Record<string, unknown>[];
   @IsObject() values!: Record<string, unknown>;
 }
+
+export class GenerateRowsDto {
+  @IsString() schema!: string;
+  @IsInt() @Min(1) @Max(1000) count!: number;
+}

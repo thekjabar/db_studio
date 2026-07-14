@@ -1,8 +1,8 @@
-# DB Studio Local Agent
+# Query Schema Local Agent
 
 `dbstudio-agent` (built as `agent.exe` on Windows) is a tiny outbound-only
-tunnel that lets **DB Studio** reach databases that are firewalled to your own
-network/WiFi. The agent runs on your laptop, connects **out** to the DB Studio
+tunnel that lets **Query Schema** reach databases that are firewalled to your own
+network/WiFi. The agent runs on your laptop, connects **out** to the Query Schema
 server over secure WebSocket, and acts as a raw TCP byte-pipe. It never parses
 SQL and never sees your database credentials — it only moves bytes between the
 server and the `host:port` the server asks it to reach.
@@ -11,7 +11,7 @@ See `../AGENT_TUNNEL_PROTOCOL.md` for the full wire contract.
 
 ## How it works
 
-1. In DB Studio, enable **Connect via local agent** on a connection and copy the
+1. In Query Schema, enable **Connect via local agent** on a connection and copy the
    short-lived **pairing token** it shows you.
 2. Run the agent once with that token. It connects to
    `wss://<server>/agent-ws?token=<token>`, sends a `hello`, and the server
@@ -50,7 +50,7 @@ The agent runs in the foreground and reconnects on its own (exponential backoff,
 
 | Flag        | Description                                                                 |
 |-------------|-----------------------------------------------------------------------------|
-| `--token`   | Pairing token from the DB Studio UI. Needed only on first run or to re-pair. |
+| `--token`   | Pairing token from the Query Schema UI. Needed only on first run or to re-pair. |
 | `--server`  | Server base URL. Accepts `ws://`, `wss://`, `http://`, `https://`, or a bare host. Default `wss://database-api.mrwari.com`. Overrides the saved value. |
 | `--config`  | Path to a config directory or a `config.json` file. Default is the OS user config dir (see below). |
 | `--version` | Print version and exit.                                                     |

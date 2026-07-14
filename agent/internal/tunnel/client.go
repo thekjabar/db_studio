@@ -1,4 +1,4 @@
-// Package tunnel implements the Go side of the DB Studio local-agent tunnel
+// Package tunnel implements the Go side of the Query Schema local-agent tunnel
 // protocol (see AGENT_TUNNEL_PROTOCOL.md). The agent connects outbound over a
 // WebSocket to the server and acts as a dumb raw-TCP byte-pipe: the server asks
 // it to open TCP connections to host:port reachable from the laptop's network

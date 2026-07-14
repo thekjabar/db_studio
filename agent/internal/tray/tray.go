@@ -1,8 +1,8 @@
-// Package tray runs the DB Studio agent as a background system-tray application.
+// Package tray runs the Query Schema agent as a background system-tray application.
 // It wraps fyne.io/systray so the reconnect loop in main can drive a small,
 // goroutine-safe API: Run installs the tray (blocking, on the main goroutine),
 // SetStatus updates the icon/tooltip/menu from any goroutine, and the menu
-// exposes "Open DB Studio" and "Quit".
+// exposes "Open Query Schema" and "Quit".
 //
 // systray.Run MUST be called on the process's main goroutine, so main calls
 // tray.Run and moves the reconnect loop into the onReady callback's goroutine.
@@ -17,7 +17,7 @@ import (
 	"fyne.io/systray"
 )
 
-// appURL is the DB Studio frontend opened by the "Open DB Studio" menu item.
+// appURL is the Query Schema frontend opened by the "Open Query Schema" menu item.
 const appURL = "https://queryschema.com"
 
 // Status is the coarse connection state shown in the tray.
@@ -36,7 +36,7 @@ const (
 
 // menuLabel returns the disabled status-line text for a state.
 func (s Status) menuLabel(detail string) string {
-	base := "DB Studio Agent — "
+	base := "Query Schema Agent — "
 	switch s {
 	case Online:
 		base += "Connected"
@@ -59,15 +59,15 @@ func (s Status) menuLabel(detail string) string {
 func (s Status) tooltip() string {
 	switch s {
 	case Online:
-		return "DB Studio Agent — Connected"
+		return "Query Schema Agent — Connected"
 	case Connecting:
-		return "DB Studio Agent — Connecting…"
+		return "Query Schema Agent — Connecting…"
 	case Pairing:
-		return "DB Studio Agent — Pairing…"
+		return "Query Schema Agent — Pairing…"
 	case Offline:
-		return "DB Studio Agent — Offline (retrying)"
+		return "Query Schema Agent — Offline (retrying)"
 	default:
-		return "DB Studio Agent"
+		return "Query Schema Agent"
 	}
 }
 
@@ -110,7 +110,7 @@ func Run(onReady func(), onExit func()) (err error) {
 		statusItem = systray.AddMenuItem(curStatus.menuLabel(curDetail), "")
 		statusItem.Disable()
 		systray.AddSeparator()
-		openItem := systray.AddMenuItem("Open DB Studio", "Open queryschema.com in your browser")
+		openItem := systray.AddMenuItem("Open Query Schema", "Open queryschema.com in your browser")
 		systray.AddSeparator()
 		quitItem := systray.AddMenuItem("Quit", "Stop the agent and exit")
 		// Apply the current icon/tooltip now that the tray exists.

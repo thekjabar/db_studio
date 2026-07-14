@@ -1,6 +1,6 @@
-// Package pair implements the browser-based auto-pairing flow for the DB Studio
+// Package pair implements the browser-based auto-pairing flow for the Query Schema
 // agent (see AGENT_AUTOPAIR_PROTOCOL.md). When the agent starts with no pairing
-// token and no saved credentials, it opens the user's browser to the DB Studio
+// token and no saved credentials, it opens the user's browser to the Query Schema
 // authorize page and runs a loopback "OAuth-like" round-trip: the SPA mints a
 // short-lived pairing token and redirects the browser to a local callback server
 // this package runs, which hands the token back to the caller.
@@ -38,7 +38,7 @@ const successHTML = `<!doctype html>
 
 // BrowserPair runs the loopback auto-pair flow and returns a pairing token.
 //
-// appBase is the DB Studio frontend base URL (e.g. https://queryschema.com).
+// appBase is the Query Schema frontend base URL (e.g. https://queryschema.com).
 // agentName is the human-readable name proposed for this agent (typically the
 // machine hostname). If openBrowser is false, BrowserPair only prints the
 // authorize URL and waits for the user to open it manually (--no-browser).
@@ -146,7 +146,7 @@ func randomState() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// buildAuthorizeURL constructs the DB Studio authorize URL the browser is sent
+// buildAuthorizeURL constructs the Query Schema authorize URL the browser is sent
 // to:
 //
 //	<appBase>/agent/authorize?callback=<enc>&state=<state>&name=<enc>

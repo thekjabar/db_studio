@@ -1,6 +1,6 @@
 //go:build windows || darwin
 
-// Package ui runs the DB Studio agent as a real desktop window using WebView2
+// Package ui runs the Query Schema agent as a real desktop window using WebView2
 // (the Edge engine built into every Windows 10/11). Unlike the Fyne/OpenGL
 // build — whose GLFW window never became visible on some machines — WebView2
 // renders a normal, reliable app window with a taskbar icon, and its UI is
@@ -23,7 +23,7 @@ import (
 	webview "github.com/webview/webview_go"
 )
 
-// appURL is opened by the "Open DB Studio" button.
+// appURL is opened by the "Open Query Schema" button.
 const appURL = "https://queryschema.com"
 
 // Status is the coarse connection state shown in the window. Values mirror
@@ -140,7 +140,7 @@ func Run(onReady func(), onQuit func()) (err error) {
 	wv.SetSize(420, 360, webview.HintFixed)
 
 	// Bindings the HTML page calls.
-	wv.Bind("openDBStudio", func() { _ = openURL(appURL) })
+	wv.Bind("openQuerySchema", func() { _ = openURL(appURL) })
 	wv.Bind("quitApp", func() {
 		go func() {
 			fireQuit()
@@ -265,7 +265,7 @@ var pageHTML = strings.TrimSpace(`
     <div class="status"><div id="dot" class="dot connecting"></div><div id="stat">Connecting…</div></div>
     <div class="sub" id="sub">Linking your database to Query Schema…</div>
     <div class="btns">
-      <button class="primary" onclick="openDBStudio()">Open Query Schema</button>
+      <button class="primary" onclick="openQuerySchema()">Open Query Schema</button>
       <button class="ghost" onclick="quitApp()">Quit</button>
     </div>
     <div class="foot">Keep this app running while you use your database in Query Schema.</div>

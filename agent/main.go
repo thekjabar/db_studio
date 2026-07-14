@@ -1,12 +1,12 @@
-// Command dbstudio-agent is the local agent for DB Studio's tunnel. It connects
-// outbound over WebSocket to the DB Studio server and acts as a raw TCP
+// Command dbstudio-agent is the local agent for Query Schema's tunnel. It connects
+// outbound over WebSocket to the Query Schema server and acts as a raw TCP
 // byte-pipe so the server can reach databases that are only reachable from the
 // user's own network. See AGENT_TUNNEL_PROTOCOL.md for the wire contract.
 //
-// The agent runs as a real desktop window application (Fyne): double-clicking it
+// The agent runs as a real desktop window application (WebView2): double-clicking it
 // opens a visible window that shows in the OS taskbar with its own icon, like a
 // normal app. The window's status line reflects the live connection state and
-// its buttons let the user open DB Studio or quit. Because the binary is built
+// its buttons let the user open Query Schema or quit. Because the binary is built
 // with -H=windowsgui there is no separate console window — just the app window.
 // If the GUI cannot be created (e.g. a headless machine, or --console was
 // passed) the agent falls back to the plain console reconnect loop.
@@ -33,7 +33,7 @@ import (
 // defaultServer is used when neither --server nor a saved config provides one.
 const defaultServer = "wss://api.queryschema.com"
 
-// defaultAppBase is the DB Studio frontend base URL used for browser auto-pair
+// defaultAppBase is the Query Schema frontend base URL used for browser auto-pair
 // when neither --app nor a saved config provides one.
 const defaultAppBase = "https://queryschema.com"
 
@@ -68,9 +68,9 @@ func main() {
 		versionFlag   bool
 		consoleFlag   bool
 	)
-	flag.StringVar(&tokenFlag, "token", "", "pairing token from the DB Studio UI (skips browser auto-pair)")
+	flag.StringVar(&tokenFlag, "token", "", "pairing token from the Query Schema UI (skips browser auto-pair)")
 	flag.StringVar(&serverFlag, "server", "", "server base URL, e.g. wss://api.queryschema.com (overrides config)")
-	flag.StringVar(&appFlag, "app", "", "DB Studio app base URL for browser pairing, e.g. https://queryschema.com (overrides default)")
+	flag.StringVar(&appFlag, "app", "", "Query Schema app base URL for browser pairing, e.g. https://queryschema.com (overrides default)")
 	flag.StringVar(&configFlag, "config", "", "path to config dir or config.json (default: OS user config dir)")
 	flag.BoolVar(&noBrowserFlag, "no-browser", false, "do not launch a browser for pairing; print the URL and wait instead")
 	flag.BoolVar(&versionFlag, "version", false, "print version and exit")
@@ -129,7 +129,7 @@ func main() {
 		return
 	}
 
-	// Window mode: the Fyne app owns the main goroutine (app.Run blocks), so the
+	// Window mode: the WebView2 window owns the main goroutine (webview.Run blocks), so the
 	// reconnect loop runs in a goroutine launched from onReady. onQuit fires when
 	// the window is closed / Quit is clicked; cancelling the context there stops
 	// the loop.

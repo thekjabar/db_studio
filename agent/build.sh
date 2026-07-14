@@ -10,15 +10,15 @@
 #   agent-macos-arm64         (macOS Apple Silicon)
 #   agent-linux-amd64         (Linux, console/headless)
 #
-# The Windows binary is a REAL desktop window app (Fyne): double-clicking it
+# The Windows binary is a REAL desktop window app (WebView2): double-clicking it
 # opens a visible window that shows in the taskbar with its own icon. It is
-# linked with -H=windowsgui so ONLY the Fyne window appears, never a separate
+# linked with -H=windowsgui so ONLY the app window appears, never a separate
 # black terminal.
 #
-# Fyne requires a per-platform C toolchain (CGO):
+# WebView2 requires a per-platform C toolchain (CGO):
 #   - Windows: MinGW-w64 (gcc). Auto-detected at $LOCALAPPDATA/mingw64/bin.
 #   - macOS:   Cocoa backend (cgo) — build on a Mac / osxcross host only.
-#   - Linux:   Fyne needs X11/GL dev libs + gcc (out of scope here), so the Linux
+#   - Linux:   the GUI package is windows/darwin-gated, so the Linux
 #              target is built pure-Go (CGO off) as a console/headless agent. The
 #              GUI ui package is Windows-gated; on Linux main falls back to the
 #              console reconnect loop automatically.
@@ -32,7 +32,7 @@ if ! command -v "$GO" >/dev/null 2>&1; then
   fi
 fi
 
-# Put the machine-local MinGW-w64 (gcc) on PATH for the Windows CGO/Fyne build.
+# Put the machine-local MinGW-w64 (gcc) on PATH for the Windows CGO/WebView2 build.
 if [ -x "${LOCALAPPDATA:-}/mingw64/bin/gcc.exe" ]; then
   PATH="${LOCALAPPDATA}/mingw64/bin:$PATH"
 fi
@@ -42,12 +42,12 @@ echo "Using go: $GO"
 if command -v gcc >/dev/null 2>&1; then
   echo "Using gcc: $(command -v gcc)"
 else
-  echo "WARNING: gcc not found on PATH; the Windows Fyne build will fail." >&2
+  echo "WARNING: gcc not found on PATH; the Windows WebView2 build will fail." >&2
 fi
 
 mkdir -p dist
 
-# Tidy against the Windows CGO config so the Fyne GUI package is included.
+# Tidy against the Windows CGO config so the WebView2 GUI package is included.
 GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=gcc "$GO" mod tidy
 
 have_cc() { command -v clang >/dev/null 2>&1 || command -v cc >/dev/null 2>&1; }
@@ -62,7 +62,7 @@ build_target() {
     return 0
   fi
   if [ "$needs_cgo" = "1" ] && [ "$goos" = "windows" ] && ! have_gcc; then
-    echo "WARNING: skipping ${goos}/${goarch}: no gcc (Fyne needs MinGW-w64)." >&2
+    echo "WARNING: skipping ${goos}/${goarch}: no gcc (WebView2 needs MinGW-w64)." >&2
     return 0
   fi
   if [ "$needs_cgo" = "1" ]; then
@@ -73,7 +73,7 @@ build_target() {
   ls -la "dist/${out}"
 }
 
-# Windows: Fyne GUI window app (cgo), GUI subsystem so no extra console window.
+# Windows: WebView2 GUI window app (cgo), GUI subsystem so no extra console window.
 build_target windows amd64 agent-windows-amd64.exe "-H=windowsgui -s -w" 1
 # macOS (cgo): only builds on a Mac / osxcross host.
 build_target darwin  amd64 agent-macos-amd64        "-s -w" 1

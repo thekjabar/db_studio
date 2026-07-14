@@ -126,9 +126,9 @@ export default function DownloadPage() {
           >
             <Database className="h-6 w-6 text-primary" />
           </Link>
-          <h1 className="text-xl font-semibold text-center">Download the DB Studio agent</h1>
+          <h1 className="text-xl font-semibold text-center">Download the Query Schema agent</h1>
           <p className="text-sm text-muted-foreground mt-1 text-center">
-            A small helper that lets DB Studio reach databases inside your own network.
+            A small helper that lets Query Schema reach databases inside your own network.
           </p>
         </div>
 
@@ -191,7 +191,7 @@ export default function DownloadPage() {
                   3
                 </span>
                 <span>
-                  Back in DB Studio, your connection now routes securely through the agent.
+                  Back in Query Schema, your connection now routes securely through the agent.
                 </span>
               </li>
             </ol>
@@ -206,7 +206,7 @@ export default function DownloadPage() {
             <p className="text-[11px] text-muted-foreground leading-relaxed">
               The agent isn't code-signed yet, so your OS may warn that it's from an unknown
               developer. This is expected for any brand-new app — the agent is safe: it only
-              connects out to DB Studio and never accepts inbound connections.
+              connects out to Query Schema and never accepts inbound connections.
             </p>
             <div className="space-y-3 text-[11px] text-muted-foreground leading-relaxed">
               <div className="flex gap-2.5">
@@ -258,7 +258,7 @@ export default function DownloadPage() {
 
         <p className="text-center text-sm text-muted-foreground mt-4">
           <Link to="/" className="text-primary hover:underline">
-            Back to DB Studio
+            Back to Query Schema
           </Link>
         </p>
       </div>

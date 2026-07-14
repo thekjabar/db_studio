@@ -12,11 +12,12 @@ export const API_ORIGIN = API_URL.replace(/\/api\/?$/, "");
 /** Per-platform links to the local agent binaries. Built elsewhere and served
  *  by nginx from the API origin; we only wire the download hrefs. */
 export const AGENT_DOWNLOADS = {
-  // `-v5` = WebView2 windowed app, rebranded "Query Schema". Versioned URL busts caches.
-  windows: `${API_ORIGIN}/downloads/agent-windows-amd64-v5.exe`,
+  // `-v6` = WebView2 windowed app, fully rebranded "Query Schema" + embedded
+  // taskbar icon and file-properties metadata. Versioned URL busts caches.
+  windows: `${API_ORIGIN}/downloads/agent-windows-amd64-v6.exe`,
   macIntel: `${API_ORIGIN}/downloads/agent-macos-amd64`,
   macArm: `${API_ORIGIN}/downloads/agent-macos-arm64`,
-  linux: `${API_ORIGIN}/downloads/agent-linux-amd64-v2`,
+  linux: `${API_ORIGIN}/downloads/agent-linux-amd64-v3`,
 } as const;
 
 /** Back-compat alias — the original single Windows download link. Points at the

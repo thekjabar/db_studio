@@ -93,7 +93,7 @@ export default function AgentAuthorizePage() {
           <p className="text-xs text-muted-foreground">{validationError}</p>
         </div>
         <Button variant="outline" className="w-full" onClick={() => nav("/")}>
-          Go to DB Studio
+          Go to Query Schema
         </Button>
       </Shell>
     );
@@ -117,7 +117,7 @@ export default function AgentAuthorizePage() {
           The agent was not authorized. You can close this tab.
         </p>
         <Button variant="outline" className="w-full" onClick={() => nav("/")}>
-          Go to DB Studio
+          Go to Query Schema
         </Button>
       </Shell>
     );
@@ -145,7 +145,7 @@ export default function AgentAuthorizePage() {
   const onCancel = () => setDone("cancelled");
 
   return (
-    <Shell title="Authorize local agent" subtitle="Connect an agent to DB Studio">
+    <Shell title="Authorize local agent" subtitle="Connect an agent to Query Schema">
       <div className="flex flex-col items-center text-center gap-2">
         <div className="h-10 w-10 rounded-full border bg-primary/15 border-primary/30 text-primary flex items-center justify-center">
           <ShieldCheck className="h-5 w-5" />
@@ -153,7 +153,7 @@ export default function AgentAuthorizePage() {
         <p className="text-sm text-muted-foreground">
           Allow the agent on{" "}
           <span className="font-mono font-medium text-foreground">{displayName}</span>{" "}
-          to connect to your databases through DB Studio? Only do this for an
+          to connect to your databases through Query Schema? Only do this for an
           agent you started yourself.
         </p>
       </div>

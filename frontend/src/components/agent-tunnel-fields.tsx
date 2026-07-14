@@ -101,7 +101,7 @@ export function AgentTunnelFields({ enabled, onEnabledChange, agentId, onAgentId
             Connect via local agent
           </label>
           <div className="text-xs text-muted-foreground">
-            The agent runs on a computer inside the network that can reach your database. DB Studio
+            The agent runs on a computer inside the network that can reach your database. Query Schema
             routes queries through it, so your database only needs to allow your own network — not
             our server's IP.
           </div>

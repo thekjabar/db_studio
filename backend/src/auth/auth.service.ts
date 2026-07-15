@@ -47,6 +47,31 @@ export class AuthService {
     return createHash('sha256').update(token).digest('hex');
   }
 
+  /** Length of the free trial granted to a new workspace, in days. */
+  private readonly TRIAL_DAYS = 7;
+
+  /**
+   * Give a workspace a trial subscription if it has none yet. Idempotent — an
+   * existing subscription (active OR lapsed) is never touched, so a trial can't
+   * be re-farmed by signing out and back in.
+   */
+  private async startTrial(workspaceId: string): Promise<void> {
+    const now = new Date();
+    await this.prisma.subscription
+      .upsert({
+        where: { workspaceId },
+        create: {
+          workspaceId,
+          plan: 'FREE',
+          status: 'TRIALING',
+          periodStart: now,
+          periodEnd: new Date(now.getTime() + this.TRIAL_DAYS * 24 * 60 * 60 * 1000),
+        },
+        update: {},
+      })
+      .catch(() => undefined);
+  }
+
   private parseTtlToMs(ttl: string): number {
     const m = ttl.match(/^(\d+)([smhd])$/);
     if (!m) return 7 * 24 * 60 * 60 * 1000;
@@ -143,7 +168,8 @@ export class AuthService {
       },
     });
 
-    await this.workspaces.ensurePersonalWorkspace(user.id).catch(() => null);
+    const ws = await this.workspaces.ensurePersonalWorkspace(user.id).catch(() => null);
+    if (ws) await this.startTrial(ws.id);
     await this.audit.log({ userId: user.id, action: 'SIGNUP', ...meta });
 
     if (needsVerify) {
@@ -239,7 +265,9 @@ export class AuthService {
     }
 
     // Back-compat: users that existed before workspaces shipped still need one.
-    await this.workspaces.ensurePersonalWorkspace(user.id).catch(() => null);
+    // Also starts a trial for anyone who never had a subscription (idempotent).
+    const loginWs = await this.workspaces.ensurePersonalWorkspace(user.id).catch(() => null);
+    if (loginWs) await this.startTrial(loginWs.id);
     await this.cooldown.recordSuccess(dto.email);
 
     await this.audit.log({ userId: user.id, action: 'LOGIN', ...meta });
@@ -467,7 +495,8 @@ export class AuthService {
       });
     }
 
-    await this.workspaces.ensurePersonalWorkspace(user.id).catch(() => null);
+    const oauthWs = await this.workspaces.ensurePersonalWorkspace(user.id).catch(() => null);
+    if (oauthWs) await this.startTrial(oauthWs.id);
     await this.audit.log({ userId: user.id, action: 'LOGIN', ...meta });
     const tokens = await this.issueTokens(user.id, user.email, meta);
     return { userId: user.id, ...tokens };

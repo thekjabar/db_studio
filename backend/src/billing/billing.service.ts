@@ -36,8 +36,15 @@ export class BillingService {
   async overview(userId: string, workspaceId?: string) {
     const ws = await this.resolveWorkspace(userId, workspaceId);
     const seats = await this.seatCount(ws.id);
-    const { tier, subscription } = await this.plans.forWorkspace(ws.id);
+    const { tier, subscription, locked } = await this.plans.forWorkspace(ws.id);
     const plans = await this.plans.all();
+
+    // Whole days left in an active trial (0 when not trialing / lapsed).
+    const now = Date.now();
+    const trialDaysLeft =
+      subscription?.status === 'TRIALING' && subscription.periodEnd.getTime() > now
+        ? Math.ceil((subscription.periodEnd.getTime() - now) / (24 * 60 * 60 * 1000))
+        : 0;
 
     return {
       waylEnabled: this.cfg.waylEnabled,
@@ -46,6 +53,10 @@ export class BillingService {
       isOwner: ws.ownerId === userId,
       seats,
       effectiveTier: tier,
+      /** True when there's no active entitlement — the user must subscribe. */
+      locked,
+      /** Days remaining in the trial (0 if not on an active trial). */
+      trialDaysLeft,
       subscription: subscription
         ? {
             plan: subscription.plan,

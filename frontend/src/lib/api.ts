@@ -808,6 +808,10 @@ export interface BillingOverview {
   isOwner: boolean;
   seats: number;
   effectiveTier: PlanTier;
+  /** True when there's no active entitlement — the user must subscribe. */
+  locked: boolean;
+  /** Whole days left in an active trial (0 if not trialing). */
+  trialDaysLeft: number;
   subscription: {
     plan: PlanTier;
     status: SubscriptionStatus;

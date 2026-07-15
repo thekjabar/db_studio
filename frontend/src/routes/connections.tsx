@@ -131,6 +131,7 @@ export default function ConnectionsPage() {
       </header>
 
       <div className="max-w-6xl mx-auto px-6 py-10">
+        <TrialBanner />
         <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
           <div>
             <h1 className="text-2xl font-semibold">Connections</h1>
@@ -384,8 +385,54 @@ function FirstRunGuide({ onCreate }: { onCreate: () => void }) {
   );
 }
 
+/** Trial countdown / paywall banner shown atop the connections page. Reads the
+ *  billing overview and nudges the user to subscribe as the trial runs down or
+ *  after it has lapsed. */
+function TrialBanner() {
+  const q = useQuery({ queryKey: ["billing"], queryFn: () => api.getBilling() });
+  const d = q.data;
+  if (!d) return null;
+
+  const sub = d.subscription;
+  const paidActive =
+    sub && sub.plan !== "FREE" && (sub.status === "ACTIVE" || sub.status === "PAST_DUE");
+  if (paidActive) return null; // On a paid plan — no banner.
+
+  const trialing = sub?.status === "TRIALING" && d.trialDaysLeft > 0;
+
+  if (trialing) {
+    return (
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3">
+        <div className="text-sm">
+          <span className="font-semibold text-primary">
+            {d.trialDaysLeft} day{d.trialDaysLeft === 1 ? "" : "s"} left
+          </span>{" "}
+          in your free trial — 1 database connection. Subscribe to unlock more.
+        </div>
+        <Button asChild size="sm">
+          <Link to="/billing">Subscribe</Link>
+        </Button>
+      </div>
+    );
+  }
+
+  // Locked: no active entitlement (trial ended or never started).
+  return (
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+      <div className="text-sm text-amber-700 dark:text-amber-400">
+        <span className="font-semibold">Your free trial has ended.</span> Subscribe to a plan to
+        add connections and keep using Query Schema.
+      </div>
+      <Button asChild size="sm">
+        <Link to="/billing">Choose a plan</Link>
+      </Button>
+    </div>
+  );
+}
+
 function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const qc = useQueryClient();
+  const nav = useNavigate();
   const [dialect, setDialect] = useState<Dialect>("POSTGRES");
   const [name, setName] = useState("");
   const [host, setHost] = useState("localhost");
@@ -472,7 +519,15 @@ function NewConnectionDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         setTestFailed(true);
       }
     } catch (err) {
-      toast.error(extractErrorMessage(err));
+      const msg = extractErrorMessage(err);
+      // A plan/subscription block — send them to Billing to subscribe.
+      if (/active subscription|subscribe|upgrade your plan/i.test(msg)) {
+        toast.error(msg);
+        onOpenChange(false);
+        nav("/billing");
+        return;
+      }
+      toast.error(msg);
     } finally {
       setSubmitting(false);
     }

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Check, ChevronRight, Eye, EyeOff, KeyRound, Loader2, LogOut, Menu, Radio, RefreshCw, Search, Sparkles, User } from "lucide-react";
+import { Check, ChevronRight, CreditCard, Eye, EyeOff, KeyRound, Loader2, LogOut, Menu, Radio, RefreshCw, Search, Sparkles, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -189,6 +189,11 @@ export function TopBar({ connection, onOpenPalette, crumbs, onMenuClick }: Props
             )}
             <DropdownMenuItem asChild>
               <Link to="/connections">All connections</Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link to="/billing">
+                <CreditCard className="h-3.5 w-3.5" /> Billing &amp; plan
+              </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuLabel className="text-[11px] text-muted-foreground font-normal">Density</DropdownMenuLabel>

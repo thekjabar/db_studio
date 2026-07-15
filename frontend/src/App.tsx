@@ -41,6 +41,7 @@ import WebhooksRoute from "@/routes/connection/webhooks";
 import SchedulesRoute from "@/routes/schedules";
 import FederatedRoute from "@/routes/federated";
 import ApiKeysRoute from "@/routes/api-keys";
+import BillingRoute from "@/routes/billing";
 import WorkspaceSsoRoute from "@/routes/workspace-sso";
 import DashboardsListRoute from "@/routes/dashboards";
 import DashboardDetailRoute from "@/routes/dashboard-detail";
@@ -171,6 +172,14 @@ export default function App() {
         element={
           <Protected>
             <ApiKeysRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/billing"
+        element={
+          <Protected>
+            <BillingRoute />
           </Protected>
         }
       />

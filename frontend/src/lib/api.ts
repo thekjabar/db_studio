@@ -763,6 +763,75 @@ export interface SchemaChangeResponse {
   executed: boolean;
 }
 
+// ---- Billing ----
+export type PlanTier = "FREE" | "PRO" | "TEAM";
+export type PaidTier = "PRO" | "TEAM";
+export type SubscriptionStatus =
+  | "TRIALING"
+  | "ACTIVE"
+  | "PAST_DUE"
+  | "SUSPENDED"
+  | "CANCELLED";
+
+export interface PlanOption {
+  tier: PlanTier;
+  name: string;
+  /** Monthly price per seat, whole IQD. */
+  seatPriceIqd: number;
+  /** seatPriceIqd × current seat count. */
+  monthlyTotalIqd: number;
+  maxConnections: number;
+  aiEnabled: boolean;
+  dailyAiCalls: number;
+  maxScheduledQueries: number;
+  maxWebhooksPerConnection: number;
+  /** null = unlimited seats. */
+  maxSeats: number | null;
+}
+
+export interface BillingPayment {
+  id: string;
+  plan: PlanTier;
+  seats: number;
+  amountIqd: number;
+  status: "PENDING" | "PAID" | "FAILED";
+  createdAt: string;
+  paidAt: string | null;
+}
+
+export interface BillingOverview {
+  /** False when no Wayl merchant credentials are configured — checkout is
+   *  disabled and the UI shows a "coming soon" note instead. */
+  waylEnabled: boolean;
+  currency: "IQD";
+  workspace: { id: string; name: string; isPersonal: boolean };
+  isOwner: boolean;
+  seats: number;
+  effectiveTier: PlanTier;
+  subscription: {
+    plan: PlanTier;
+    status: SubscriptionStatus;
+    periodStart: string;
+    periodEnd: string;
+  } | null;
+  plans: PlanOption[];
+  recentPayments: BillingPayment[];
+}
+
+export interface CheckoutResult {
+  url: string;
+  referenceId: string;
+  amountIqd: number;
+  seats: number;
+  plan: PaidTier;
+}
+
+export interface PaymentVerifyResult {
+  status: "PENDING" | "PAID" | "FAILED";
+  plan: PlanTier;
+  failureReason: string | null;
+}
+
 // ---- API functions ----
 function toCreatePayload(input: CreateConnectionInput) {
   const { name, dialect, readOnly, statementTimeoutMs, host, port, database, user, password, sslMode, ssh, viaAgent, agentId } = input;
@@ -2128,6 +2197,24 @@ export const api = {
   myAiUsage: () =>
     http
       .get<{ used: number; allowance: number; day: string }>('/ai/chats/quota')
+      .then((r) => r.data),
+
+  // ---- Billing / subscription (Wayl online payments) ----
+  getBilling: (workspaceId?: string) =>
+    http
+      .get<BillingOverview>('/billing', {
+        params: workspaceId ? { workspaceId } : undefined,
+      })
+      .then((r) => r.data),
+  createCheckout: (plan: PaidTier, workspaceId?: string) =>
+    http
+      .post<CheckoutResult>('/billing/checkout', { plan, workspaceId })
+      .then((r) => r.data),
+  verifyPayment: (referenceId: string) =>
+    http
+      .post<BillingOverview & { payment: PaymentVerifyResult | null }>(
+        `/billing/verify/${encodeURIComponent(referenceId)}`,
+      )
       .then((r) => r.data),
 
   // ---- Customer audit log CSV export (owner-only) ----

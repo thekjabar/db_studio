@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0b0f14"/>
+      <stop offset="1" stop-color="#111820"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#34d399"/>
+      <stop offset="1" stop-color="#059669"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop stop-color="#10b981" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#10b981" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="980" cy="150" r="360" fill="url(#glow)"/>
+
+  <!-- Brand tile with the database cylinder -->
+  <rect x="90" y="86" width="96" height="96" rx="24" fill="url(#brand)"/>
+  <g transform="translate(122,112)" stroke="#04120c" stroke-width="3.4" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="16" cy="7" rx="15" ry="5"/>
+    <path d="M1 7 v22 a15 5 0 0 0 30 0 V7"/>
+    <path d="M1 18 a15 5 0 0 0 30 0"/>
+  </g>
+  <text x="210" y="152" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif" font-size="46" font-weight="700" fill="#e6edf3">Query Schema</text>
+
+  <!-- Headline -->
+  <text x="90" y="330" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif" font-size="82" font-weight="700" fill="#e6edf3">One studio for your</text>
+  <text x="90" y="428" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif" font-size="82" font-weight="700" fill="#34d399">entire database.</text>
+
+  <!-- Subhead -->
+  <text x="92" y="500" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif" font-size="30" fill="#8b98a5">Browse, query, schedule &amp; share — with a schema-aware AI.</text>
+
+  <!-- Dialect chips -->
+  <text x="92" y="560" font-family="Segoe UI, system-ui, -apple-system, Arial, sans-serif" font-size="26" font-weight="600" fill="#586675">PostgreSQL &#160;&#183;&#160; MySQL &#160;&#183;&#160; SQL Server &#160;&#183;&#160; SQLite</text>
+</svg>

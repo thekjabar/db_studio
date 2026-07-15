@@ -7,14 +7,17 @@ import type { PlanConfig, PlanTier, Subscription } from '@prisma/client';
  */
 export const DEFAULT_PLANS: Array<Omit<PlanConfig, 'updatedByOperatorId' | 'updatedAt' | 'createdAt'>> = [
   {
+    // The 7-day trial allowance. Granted only while a TRIALING subscription is
+    // active; once it lapses the workspace is LOCKED (see LOCKED_LIMITS) and
+    // must subscribe. Editable in the admin panel.
     tier: 'FREE',
-    name: 'Free',
+    name: 'Trial',
     seatPriceIqd: 0,
-    maxConnections: 3,
+    maxConnections: 1,
     aiEnabled: false,
     dailyAiCalls: 0,
-    maxScheduledQueries: 2,
-    maxWebhooksPerConnection: 1,
+    maxScheduledQueries: 0,
+    maxWebhooksPerConnection: 0,
     maxSeats: 1,
   },
   {
@@ -42,19 +45,44 @@ export const DEFAULT_PLANS: Array<Omit<PlanConfig, 'updatedByOperatorId' | 'upda
 ];
 
 /**
- * The tier whose limits currently apply to a workspace, given its subscription
- * row (or null). Entitlement follows `periodEnd` directly — so paid access
- * expires exactly when the paid period ends, even if the lifecycle scheduler
- * never runs. Free is the floor: a missing sub, a FREE plan, a SUSPENDED sub,
- * or any sub whose period has elapsed all resolve to FREE. ACTIVE / TRIALING /
- * PAST_DUE / CANCELLED all keep their tier until periodEnd passes.
+ * Limits for a workspace with no active entitlement — nothing is free. A user
+ * lands here before starting a trial, after the trial/subscription lapses, or
+ * when SUSPENDED. They must subscribe to do anything.
+ */
+export const LOCKED_LIMITS = {
+  tier: 'FREE' as PlanTier,
+  name: 'No plan',
+  seatPriceIqd: 0,
+  maxConnections: 0,
+  aiEnabled: false,
+  dailyAiCalls: 0,
+  maxScheduledQueries: 0,
+  maxWebhooksPerConnection: 0,
+  maxSeats: 1,
+};
+
+/**
+ * Whether a subscription currently entitles its workspace to its plan's limits.
+ * True only while the period is open and the sub isn't suspended — so both a
+ * lapsed trial and a lapsed paid plan drop to LOCKED. This is the single gate
+ * that makes access expire exactly at `periodEnd`, no scheduler required.
+ */
+export function isEntitled(
+  sub: Pick<Subscription, 'status' | 'periodEnd'> | null,
+  now: Date = new Date(),
+): boolean {
+  return !!sub && sub.status !== 'SUSPENDED' && sub.periodEnd > now;
+}
+
+/**
+ * The tier whose limits currently apply. An entitled subscription yields its
+ * own plan (FREE=trial, PRO, TEAM); anything else yields FREE as a label but
+ * callers should use `isEntitled` + LOCKED_LIMITS for the actual caps.
  */
 export function effectiveTier(
   sub: Pick<Subscription, 'plan' | 'status' | 'periodEnd'> | null,
   now: Date = new Date(),
 ): PlanTier {
-  if (!sub || sub.plan === 'FREE') return 'FREE';
-  if (sub.status === 'SUSPENDED') return 'FREE';
-  if (sub.periodEnd <= now) return 'FREE';
+  if (!sub || !isEntitled(sub, now)) return 'FREE';
   return sub.plan;
 }

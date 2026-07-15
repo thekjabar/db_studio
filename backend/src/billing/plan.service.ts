@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { PlanConfig, PlanTier, Subscription } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { DEFAULT_PLANS, effectiveTier } from './plans';
+import { DEFAULT_PLANS, LOCKED_LIMITS, isEntitled } from './plans';
 
 const TIER_ORDER: PlanTier[] = ['FREE', 'PRO', 'TEAM'];
 
@@ -46,18 +46,27 @@ export class PlanService implements OnModuleInit {
     return row ?? (this.defaultRow(tier) as PlanConfig);
   }
 
-  /** Effective tier + its limits + the raw subscription for a workspace. */
+  /** Effective tier + its limits + the raw subscription for a workspace. When
+   *  there's no active entitlement the limits are LOCKED (all zero) — the
+   *  workspace must subscribe. */
   async forWorkspace(workspaceId: string): Promise<{
     tier: PlanTier;
     config: PlanConfig;
     subscription: Subscription | null;
+    locked: boolean;
   }> {
     const subscription = await this.prisma.subscription.findUnique({
       where: { workspaceId },
     });
-    const tier = effectiveTier(subscription);
-    const config = await this.config(tier);
-    return { tier, config, subscription };
+    if (!isEntitled(subscription)) {
+      return { tier: 'FREE', config: this.lockedConfig(), subscription, locked: true };
+    }
+    const config = await this.config(subscription!.plan);
+    return { tier: subscription!.plan, config, subscription, locked: false };
+  }
+
+  private lockedConfig(): PlanConfig {
+    return { ...LOCKED_LIMITS, updatedByOperatorId: null, updatedAt: new Date(), createdAt: new Date() } as PlanConfig;
   }
 
   /**
@@ -76,8 +85,11 @@ export class PlanService implements OnModuleInit {
       select: { plan: true, status: true, periodEnd: true },
     });
     const now = new Date();
-    const tiers = [...subs, ...owned].map((s) => effectiveTier(s, now));
-    tiers.push('FREE'); // floor
+    // Only ENTITLED subscriptions count — a lapsed trial/plan grants nothing.
+    const tiers = [...subs, ...owned]
+      .filter((s) => isEntitled(s, now))
+      .map((s) => s.plan);
+    if (tiers.length === 0) return this.lockedConfig();
     const configs = await Promise.all([...new Set(tiers)].map((t) => this.config(t)));
     return configs.reduce((best, c) => {
       const better =

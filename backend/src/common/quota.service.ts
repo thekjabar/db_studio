@@ -17,15 +17,26 @@ export class QuotaService {
     private readonly plans: PlanService,
   ) {}
 
+  /** Message shown when a limit is hit. A zero cap means "no plan / no
+   *  subscription" — steer to Billing to subscribe rather than "upgrade". */
+  private limitError(cap: number, planName: string, what: string, allowed: string): never {
+    if (cap === 0) {
+      throw new ForbiddenException(
+        `You need an active subscription to ${what}. Open Billing to choose a plan.`,
+      );
+    }
+    throw new ForbiddenException(
+      `Your ${planName} plan allows ${allowed}. Upgrade your plan to add more.`,
+    );
+  }
+
   async assertCanCreateConnection(workspaceId: string | null): Promise<void> {
     if (!workspaceId) return; // Personal-workspace-less users can still create
     const count = await this.prisma.connection.count({ where: { workspaceId } });
     const { config } = await this.plans.forWorkspace(workspaceId);
     const cap = Math.min(config.maxConnections, this.cfg.maxConnectionsPerWorkspace);
     if (count >= cap) {
-      throw new ForbiddenException(
-        `Your ${config.name} plan allows ${config.maxConnections} connection(s). Upgrade your plan or remove unused connections.`,
-      );
+      this.limitError(cap, config.name, 'add connections', `${config.maxConnections} connection(s)`);
     }
   }
 
@@ -34,9 +45,7 @@ export class QuotaService {
     const config = await this.plans.forUser(userId);
     const cap = Math.min(config.maxScheduledQueries, this.cfg.maxScheduledQueriesPerWorkspace);
     if (count >= cap) {
-      throw new ForbiddenException(
-        `Your ${config.name} plan allows ${config.maxScheduledQueries} scheduled queries. Upgrade to add more.`,
-      );
+      this.limitError(cap, config.name, 'schedule queries', `${config.maxScheduledQueries} scheduled queries`);
     }
   }
 
@@ -51,9 +60,7 @@ export class QuotaService {
       : await this.plans.config('FREE');
     const cap = Math.min(config.maxWebhooksPerConnection, this.cfg.maxWebhooksPerConnection);
     if (count >= cap) {
-      throw new ForbiddenException(
-        `Your ${config.name} plan allows ${config.maxWebhooksPerConnection} webhook(s) per connection. Upgrade to add more.`,
-      );
+      this.limitError(cap, config.name, 'add webhooks', `${config.maxWebhooksPerConnection} webhook(s) per connection`);
     }
   }
 }

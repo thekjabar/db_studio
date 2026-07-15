@@ -150,17 +150,18 @@ export default function BillingRoute() {
                   seats={data.seats}
                   current={data.effectiveTier === p.tier}
                   canBuy={data.waylEnabled && data.isOwner && p.tier !== "FREE"}
-                  busy={checkout.isPending}
+                  // Only the plan actually being checked out spins.
+                  busy={checkout.isPending && checkout.variables === p.tier}
                   onBuy={() => checkout.mutate(p.tier as PaidTier)}
                 />
               ))}
             </div>
 
-            {data.recentPayments.length > 0 && (
+            {data.recentPayments.filter((p) => p.status === "PAID").length > 0 && (
               <div className="rounded-lg border border-border bg-card p-5">
-                <div className="text-sm font-medium mb-3">Recent payments</div>
+                <div className="text-sm font-medium mb-3">Payment history</div>
                 <div className="divide-y divide-border">
-                  {data.recentPayments.map((pmt) => (
+                  {data.recentPayments.filter((p) => p.status === "PAID").map((pmt) => (
                     <div key={pmt.id} className="flex items-center justify-between py-2 text-sm">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{pmt.plan}</span>

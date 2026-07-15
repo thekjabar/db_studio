@@ -1,5 +1,24 @@
 import axios from 'axios';
 
+export type PlanTier = 'FREE' | 'PRO' | 'TEAM';
+
+export interface PlanConfig {
+  tier: PlanTier;
+  name: string;
+  /** Monthly price per seat, whole IQD. */
+  seatPriceIqd: number;
+  maxConnections: number;
+  aiEnabled: boolean;
+  dailyAiCalls: number;
+  maxScheduledQueries: number;
+  maxWebhooksPerConnection: number;
+  /** null = unlimited seats. */
+  maxSeats: number | null;
+  updatedByOperatorId: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+
 /**
  * Operator API client. Cookies carry the operator session (httpOnly,
  * never readable from JS), so we only need `withCredentials: true`.
@@ -195,6 +214,14 @@ export const api = {
   },
   async updateBilling(body: Record<string, unknown>) {
     const { data } = await client.patch('/operator/billing/settings', body);
+    return data;
+  },
+  async getPlans() {
+    const { data } = await client.get<PlanConfig[]>('/operator/billing/plans');
+    return data;
+  },
+  async updatePlan(tier: string, body: Record<string, unknown>) {
+    const { data } = await client.patch<PlanConfig>(`/operator/billing/plans/${tier}`, body);
     return data;
   },
   async listAudit(limit = 50, offset = 0, action?: string) {

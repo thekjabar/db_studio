@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { DollarSign, Sparkles, Save, Loader2 } from 'lucide-react';
-import { api, money } from '@/lib/api';
+import { DollarSign, Sparkles, Save, Loader2, Layers } from 'lucide-react';
+import { api, money, type PlanConfig } from '@/lib/api';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -54,7 +54,7 @@ export default function Billing() {
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-2xl">
+    <div className="p-6 space-y-6 max-w-5xl">
       <div>
         <h1 className="text-2xl font-semibold">Billing settings</h1>
         <p className="text-sm text-muted-foreground">
@@ -71,7 +71,7 @@ export default function Billing() {
           }
           save.mutate();
         }}
-        className="space-y-6"
+        className="space-y-6 max-w-2xl"
       >
         <Card className="p-5 space-y-4">
           <div className="flex items-center gap-2">
@@ -161,6 +161,167 @@ export default function Billing() {
           </Button>
         </div>
       </form>
+
+      <PlanTiers />
+    </div>
+  );
+}
+
+/**
+ * Per-tier pricing + feature limits for the customer-facing plans (Free / Pro /
+ * Team). Prices are whole IQD per seat / month — Wayl settles in Iraqi Dinar.
+ */
+function PlanTiers() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ['plans'], queryFn: () => api.getPlans() });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 pt-2">
+        <Layers className="h-4 w-4 text-primary" />
+        <h2 className="text-lg font-semibold">Plan tiers</h2>
+      </div>
+      <p className="text-sm text-muted-foreground -mt-2">
+        Customer-facing subscription tiers. Prices are per seat, per month, in IQD. Limits
+        apply immediately to every workspace on that tier.
+      </p>
+      {q.isLoading || !q.data ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading plans…
+        </div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-3">
+          {q.data.map((p) => (
+            <PlanCardEditor key={p.tier} plan={p} onSaved={() => qc.invalidateQueries({ queryKey: ['plans'] })} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlanCardEditor({ plan, onSaved }: { plan: PlanConfig; onSaved: () => void }) {
+  const [f, setF] = useState(plan);
+  const [reason, setReason] = useState('');
+  useEffect(() => setF(plan), [plan]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.updatePlan(plan.tier, {
+        name: f.name,
+        seatPriceIqd: f.seatPriceIqd,
+        maxConnections: f.maxConnections,
+        aiEnabled: f.aiEnabled,
+        dailyAiCalls: f.dailyAiCalls,
+        maxScheduledQueries: f.maxScheduledQueries,
+        maxWebhooksPerConnection: f.maxWebhooksPerConnection,
+        maxSeats: f.maxSeats,
+        reason,
+      }),
+    onSuccess: () => {
+      toast.success(`${plan.name} plan updated`);
+      setReason('');
+      onSaved();
+    },
+    onError: (e: { response?: { data?: { message?: string } } }) =>
+      toast.error(e.response?.data?.message ?? 'Update failed'),
+  });
+
+  const num = (v: string) => (v === '' ? 0 : parseInt(v) || 0);
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="font-semibold">{plan.name}</span>
+        <span className="text-[11px] uppercase tracking-wider text-muted-foreground">{plan.tier}</span>
+      </div>
+
+      <Field label="Display name">
+        <Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+      </Field>
+      <Field label="Price / seat / month (IQD)">
+        <Input
+          type="number"
+          min={0}
+          value={f.seatPriceIqd}
+          onChange={(e) => setF({ ...f, seatPriceIqd: num(e.target.value) })}
+        />
+      </Field>
+      <Field label="Max connections">
+        <Input
+          type="number"
+          min={0}
+          value={f.maxConnections}
+          onChange={(e) => setF({ ...f, maxConnections: num(e.target.value) })}
+        />
+      </Field>
+      <label className="flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          checked={f.aiEnabled}
+          onChange={(e) => setF({ ...f, aiEnabled: e.target.checked })}
+        />
+        AI assistant enabled
+      </label>
+      <Field label="AI calls / user / day">
+        <Input
+          type="number"
+          min={0}
+          value={f.dailyAiCalls}
+          disabled={!f.aiEnabled}
+          onChange={(e) => setF({ ...f, dailyAiCalls: num(e.target.value) })}
+        />
+      </Field>
+      <Field label="Max scheduled queries">
+        <Input
+          type="number"
+          min={0}
+          value={f.maxScheduledQueries}
+          onChange={(e) => setF({ ...f, maxScheduledQueries: num(e.target.value) })}
+        />
+      </Field>
+      <Field label="Max webhooks / connection">
+        <Input
+          type="number"
+          min={0}
+          value={f.maxWebhooksPerConnection}
+          onChange={(e) => setF({ ...f, maxWebhooksPerConnection: num(e.target.value) })}
+        />
+      </Field>
+      <Field label="Max seats (blank = unlimited)">
+        <Input
+          type="number"
+          min={1}
+          value={f.maxSeats ?? ''}
+          onChange={(e) =>
+            setF({ ...f, maxSeats: e.target.value === '' ? null : num(e.target.value) })
+          }
+        />
+      </Field>
+
+      <Input
+        placeholder="Reason for change (required)"
+        value={reason}
+        onChange={(e) => setReason(e.target.value)}
+      />
+      <Button
+        className="w-full"
+        size="sm"
+        disabled={save.isPending || !reason.trim()}
+        onClick={() => save.mutate()}
+      >
+        {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+        Save {plan.name}
+      </Button>
+    </Card>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs text-muted-foreground font-normal">{label}</Label>
+      {children}
     </div>
   );
 }

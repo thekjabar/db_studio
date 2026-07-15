@@ -126,6 +126,11 @@ export class AuthService {
     // ensurePersonalWorkspace below) and is fully isolated from other tenants.
     const existingCount = await this.prisma.user.count();
     const isFirst = existingCount === 0;
+    // Approval gate is opt-in (REQUIRE_SIGNUP_APPROVAL). Off by default now that
+    // billing gates usage — new users are approved immediately and prompted to
+    // subscribe. The first-ever user is always approved so the instance isn't
+    // locked out.
+    const autoApprove = isFirst || !this.cfg.requireSignupApproval;
     const user = await this.prisma.user.create({
       data: {
         email: dto.email,
@@ -133,8 +138,8 @@ export class AuthService {
         displayName: dto.displayName,
         emailVerifiedAt: needsVerify ? null : new Date(),
         isAdmin: false,
-        approvalStatus: isFirst ? 'approved' : 'pending',
-        approvedAt: isFirst ? new Date() : null,
+        approvalStatus: autoApprove ? 'approved' : 'pending',
+        approvedAt: autoApprove ? new Date() : null,
       },
     });
 
@@ -150,10 +155,9 @@ export class AuthService {
       return { userId: user.id, needsVerification: true };
     }
 
-    // Non-first signups go into the approval queue. No tokens issued
-    // — the user has to wait for an operator. The client distinguishes
-    // this from `needsVerification` by the `awaitingApproval` flag.
-    if (!isFirst) {
+    // Only when approval is explicitly required do signups wait for an
+    // operator. Otherwise they fall through and get tokens immediately.
+    if (!autoApprove) {
       return { userId: user.id, awaitingApproval: true };
     }
 
@@ -414,6 +418,7 @@ export class AuthService {
     if (!user) {
       const existingCount = await this.prisma.user.count();
       const isFirst = existingCount === 0;
+      const autoApprove = isFirst || !this.cfg.requireSignupApproval;
       user = await this.prisma.user.create({
         data: {
           email: profile.email,
@@ -425,8 +430,8 @@ export class AuthService {
           // Never grant global isAdmin at signup — instance admin lives only
           // in the separate operator portal. See password-signup note above.
           isAdmin: false,
-          approvalStatus: isFirst ? 'approved' : 'pending',
-          approvedAt: isFirst ? new Date() : null,
+          approvalStatus: autoApprove ? 'approved' : 'pending',
+          approvedAt: autoApprove ? new Date() : null,
         },
       });
       await this.audit.log({ userId: user.id, action: 'SIGNUP', ...meta });

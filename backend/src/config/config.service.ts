@@ -129,6 +129,13 @@ const EnvSchema = z.object({
     .string()
     .default('false')
     .transform((v) => v === 'true'),
+  // When true, self-signups land in a `pending` queue and an operator must
+  // approve them before they can log in. Default OFF now that billing gates
+  // usage — new users get in immediately and are prompted to subscribe.
+  REQUIRE_SIGNUP_APPROVAL: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
   // --- Wayl online payments (subscription checkout) ---
   // Merchant token, sent as the `X-WAYL-AUTHENTICATION` header. When unset,
   // online payments are disabled and checkout returns a friendly "not
@@ -283,6 +290,7 @@ export class AppConfigService {
   get operatorBootstrapEmail() { return this.env.OPERATOR_BOOTSTRAP_EMAIL; }
   get operatorBootstrapPassword() { return this.env.OPERATOR_BOOTSTRAP_PASSWORD; }
   get requireInviteCode() { return this.env.REQUIRE_INVITE_CODE_ON_SIGNUP; }
+  get requireSignupApproval() { return this.env.REQUIRE_SIGNUP_APPROVAL; }
 
   // --- Wayl payments ---
   get waylApiToken() { return this.env.WAYL_API_TOKEN; }

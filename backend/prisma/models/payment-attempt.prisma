@@ -1,0 +1,34 @@
+/// One row per Wayl hosted-checkout attempt. Each retry mints a fresh
+/// referenceId (and row) so the full payment history is preserved. Both trust
+/// paths — the HMAC-verified webhook and verify-on-return — reconcile against
+/// this row by providerRef (the Wayl link id), idempotently.
+model PaymentAttempt {
+  id            String               @id @default(cuid())
+  workspaceId   String
+  workspace     Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// User who started checkout (the billing contact / workspace owner).
+  userId        String?
+  /// Merchant-side reference sent to Wayl; unique per attempt.
+  referenceId   String               @unique
+  /// Wayl's link id — the key the webhook routes on. Set once Wayl responds.
+  providerRef   String?
+  provider      String               @default("wayl")
+  status        PaymentAttemptStatus @default(PENDING)
+  /// Plan + seat count this payment covers, snapshotted at checkout so a later
+  /// price/seat change can't retroactively alter what was charged.
+  plan          PlanTier
+  seats         Int
+  /// Amount charged = seatPriceIqd * seats, in whole IQD.
+  amountIqd     Int
+  /// Months of access this payment grants (1 = one monthly period).
+  months        Int                  @default(1)
+  /// Full Wayl link / webhook payload for audit + debugging.
+  rawResponse   Json?
+  failureReason String?
+  paidAt        DateTime?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@index([workspaceId])
+  @@index([providerRef])
+}

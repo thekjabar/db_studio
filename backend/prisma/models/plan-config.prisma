@@ -1,0 +1,32 @@
+/// Operator-editable pricing + feature limits, one row per PlanTier. Seeded on
+/// first boot (see prisma/seed.ts) and edited from the admin panel
+/// (operator/billing/plans). Prices are in IQD as whole integers — Wayl
+/// settles in Iraqi Dinar, which has no minor unit, so no cents here.
+///
+/// The "effective plan" for a workspace is resolved at runtime:
+///   - no Subscription row, or plan=FREE, or a lapsed (SUSPENDED/CANCELLED)
+///     paid sub  -> FREE limits
+///   - plan=PRO/TEAM with status ACTIVE/TRIALING/PAST_DUE -> that tier's limits
+model PlanConfig {
+  tier                     PlanTier @id
+  /// Customer-facing name, e.g. "Free", "Pro", "Team".
+  name                     String
+  /// Monthly price per seat (= per workspace member), IQD. 0 for FREE.
+  seatPriceIqd             Int      @default(0)
+  /// Max connections a workspace on this tier may create.
+  maxConnections           Int      @default(3)
+  /// Whether the AI assistant is available on this tier at all.
+  aiEnabled                Boolean  @default(false)
+  /// Daily AI calls per user when aiEnabled. Ignored when aiEnabled=false.
+  dailyAiCalls             Int      @default(0)
+  /// Max scheduled queries per workspace owner on this tier.
+  maxScheduledQueries      Int      @default(2)
+  /// Max webhooks per connection on this tier.
+  maxWebhooksPerConnection Int      @default(1)
+  /// Max workspace members. null = unlimited.
+  maxSeats                 Int?
+  /// Last operator who edited this tier — for audit display.
+  updatedByOperatorId      String?
+  updatedAt                DateTime @updatedAt
+  createdAt                DateTime @default(now())
+}

@@ -30,6 +30,9 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn', 'log'],
     bufferLogs: true,
+    // Preserve the exact request bytes on `req.rawBody` so the Wayl webhook can
+    // verify its HMAC-SHA256 signature (a re-serialized JSON body would differ).
+    rawBody: true,
   });
 
   const config = app.get(AppConfigService);

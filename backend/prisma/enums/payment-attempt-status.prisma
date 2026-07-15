@@ -1,0 +1,8 @@
+/// Lifecycle of a single Wayl checkout attempt. Only PENDING can transition;
+/// PAID and FAILED are terminal. The webhook and verify-on-return both drive
+/// PENDING -> PAID / FAILED idempotently.
+enum PaymentAttemptStatus {
+  PENDING
+  PAID
+  FAILED
+}

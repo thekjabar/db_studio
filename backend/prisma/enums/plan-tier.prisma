@@ -1,0 +1,8 @@
+/// The subscription plan tiers. FREE needs no payment; PRO and TEAM are
+/// paid per seat (workspace member) each month via Wayl. Prices and limits
+/// for each tier live in the operator-editable PlanConfig table.
+enum PlanTier {
+  FREE
+  PRO
+  TEAM
+}

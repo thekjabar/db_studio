@@ -25,6 +25,10 @@ model Subscription {
   id                 String             @id @default(cuid())
   workspaceId        String             @unique
   workspace          Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Which paid tier this workspace is on. FREE (the default) needs no
+  /// payment; PRO/TEAM are unlocked by a successful Wayl payment and lifted
+  /// back to FREE if the subscription lapses (SUSPENDED/CANCELLED).
+  plan               PlanTier           @default(FREE)
   status             SubscriptionStatus @default(TRIALING)
   /// When the current billing period started. Renewed monthly by the
   /// scheduler. Manual overrides also set this to "now".

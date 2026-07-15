@@ -129,6 +129,23 @@ const EnvSchema = z.object({
     .string()
     .default('false')
     .transform((v) => v === 'true'),
+  // --- Wayl online payments (subscription checkout) ---
+  // Merchant token, sent as the `X-WAYL-AUTHENTICATION` header. When unset,
+  // online payments are disabled and checkout returns a friendly "not
+  // configured yet" message — nothing else breaks.
+  WAYL_API_TOKEN: z.string().transform((v) => v || undefined).optional(),
+  // Shared secret: sent to Wayl at link creation AND used to verify the
+  // HMAC-SHA256 webhook signature. Required for the webhook to be trusted.
+  WAYL_WEBHOOK_SECRET: z.string().transform((v) => v || undefined).optional(),
+  // 'live' takes real payments; 'test' uses Wayl's sandbox.
+  WAYL_ENV: z.enum(['live', 'test']).default('test'),
+  WAYL_API_BASE: z.string().default('https://api.thewayl.com'),
+  // Public URL Wayl POSTs payment results to. Defaults to the app origin's
+  // proxied API path, which nginx routes to this backend.
+  WAYL_WEBHOOK_URL: z.string().transform((v) => v || undefined).optional(),
+  // Where Wayl bounces the customer after checkout. Defaults to the billing
+  // page, which then verifies the payment on return.
+  WAYL_REDIRECTION_URL: z.string().transform((v) => v || undefined).optional(),
 });
 
 export type AppEnv = z.infer<typeof EnvSchema>;
@@ -266,4 +283,24 @@ export class AppConfigService {
   get operatorBootstrapEmail() { return this.env.OPERATOR_BOOTSTRAP_EMAIL; }
   get operatorBootstrapPassword() { return this.env.OPERATOR_BOOTSTRAP_PASSWORD; }
   get requireInviteCode() { return this.env.REQUIRE_INVITE_CODE_ON_SIGNUP; }
+
+  // --- Wayl payments ---
+  get waylApiToken() { return this.env.WAYL_API_TOKEN; }
+  get waylWebhookSecret() { return this.env.WAYL_WEBHOOK_SECRET; }
+  get waylEnv() { return this.env.WAYL_ENV; }
+  get waylApiBase() { return this.env.WAYL_API_BASE; }
+  /** Public URL Wayl calls back. Falls back to the app origin's proxied API
+   *  path (nginx routes `/api` to this backend). */
+  get waylWebhookUrl() {
+    return this.env.WAYL_WEBHOOK_URL ?? `${this.appBaseUrl}/api/billing/wayl/webhook`;
+  }
+  /** Where the customer returns after checkout — the billing page verifies. */
+  get waylRedirectionUrl() {
+    return this.env.WAYL_REDIRECTION_URL ?? `${this.appBaseUrl}/billing`;
+  }
+  /** Online payments are usable only when both the merchant token and the
+   *  webhook secret are set. Otherwise checkout degrades gracefully. */
+  get waylEnabled() {
+    return !!(this.env.WAYL_API_TOKEN && this.env.WAYL_WEBHOOK_SECRET);
+  }
 }

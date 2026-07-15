@@ -1,5 +1,6 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { PlanService } from '../billing/plan.service';
 
 /**
  * Enforces per-user, per-day AI call limits and atomically increments
@@ -20,16 +21,20 @@ import { PrismaService } from '../prisma/prisma.service';
  */
 @Injectable()
 export class AiQuotaService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly plans: PlanService,
+  ) {}
 
   private todayUtc(): string {
     return new Date().toISOString().slice(0, 10);
   }
 
   /**
-   * Compute the user's per-day AI allowance from billing settings and
-   * every workspace they belong to that has an active-ish subscription.
-   * Suspended users get 0 regardless.
+   * Compute the user's per-day AI allowance. AI is a paid-tier feature: the
+   * user's strongest plan must have aiEnabled, and its `dailyAiCalls` is the
+   * base allowance. Operator top-up packs (across the user's active-sub
+   * workspaces) stack on top. Suspended users always get 0.
    */
   private async computeAllowance(userId: string): Promise<{ allowance: number; reason?: string }> {
     const user = await this.prisma.user.findUnique({
@@ -39,17 +44,20 @@ export class AiQuotaService {
     if (!user) return { allowance: 0, reason: 'user-not-found' };
     if (user.suspendedAt) return { allowance: 0, reason: 'suspended' };
 
+    // Effective plan across every workspace the user belongs to / owns.
+    const plan = await this.plans.forUser(userId);
+    if (!plan.aiEnabled || plan.dailyAiCalls <= 0) {
+      return { allowance: 0, reason: 'plan-no-ai' };
+    }
+
     const settings = await this.prisma.billingSettings.findUnique({
       where: { id: 'singleton' },
-      select: { dailyFreeAiCalls: true, aiTopUpCallsPerPack: true },
+      select: { aiTopUpCallsPerPack: true },
     });
-    const freePerDay = settings?.dailyFreeAiCalls ?? 10;
     const perPack = settings?.aiTopUpCallsPerPack ?? 10;
 
-    // The user gets the free allowance once per day (not multiplied by
-    // workspace count). Top-up packs stack across every workspace they're
-    // a member of that has an active subscription — owners pay per-
-    // workspace so users in multiple teams benefit from each team's packs.
+    // Top-up packs stack across every workspace they're a member of that has
+    // an active subscription.
     const activeSubs = await this.prisma.subscription.findMany({
       where: {
         status: { in: ['ACTIVE', 'TRIALING', 'PAST_DUE'] },
@@ -57,11 +65,8 @@ export class AiQuotaService {
       },
       select: { aiTopUpPacks: true },
     });
-    if (activeSubs.length === 0) {
-      return { allowance: 0, reason: 'no-active-subscription' };
-    }
     const packsTotal = activeSubs.reduce((n, s) => n + s.aiTopUpPacks, 0);
-    return { allowance: freePerDay + packsTotal * perPack };
+    return { allowance: plan.dailyAiCalls + packsTotal * perPack };
   }
 
   /**
@@ -74,8 +79,8 @@ export class AiQuotaService {
       throw new HttpException(
         reason === 'suspended'
           ? 'Your account is suspended. Contact support to restore access.'
-          : reason === 'no-active-subscription'
-            ? 'No active subscription. Ask the workspace owner to activate billing to use AI.'
+          : reason === 'plan-no-ai'
+            ? 'The AI assistant is available on the Pro and Team plans. Upgrade your plan to use it.'
             : 'AI is not available for this account.',
         HttpStatus.PAYMENT_REQUIRED,
       );

@@ -19,6 +19,7 @@ model Workspace {
   /// billing contact; seat count derives from WorkspaceMember.
   subscription   Subscription?
   billingAdjustments BillingAdjustment[]
+  paymentAttempts    PaymentAttempt[]
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
 

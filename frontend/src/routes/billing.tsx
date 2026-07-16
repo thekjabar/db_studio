@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -9,15 +9,15 @@ import {
   Database,
   Loader2,
   Minus,
+  Plus,
   Sparkles,
+  Users,
 } from "lucide-react";
 import {
   api,
   extractErrorMessage,
   type BillingOverview,
-  type PaidTier,
-  type PlanOption,
-  type PlanTier,
+  type PlanLimits,
 } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -69,7 +69,7 @@ export default function BillingRoute() {
   }, [qc]);
 
   const checkout = useMutation({
-    mutationFn: (plan: PaidTier) => api.createCheckout(plan),
+    mutationFn: (seats: number) => api.createCheckout(seats),
     onSuccess: (res) => {
       // Remember the attempt so we can verify when Wayl redirects us back.
       localStorage.setItem(PENDING_KEY, res.referenceId);
@@ -98,7 +98,7 @@ export default function BillingRoute() {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-8">
+      <main className="max-w-4xl mx-auto px-6 py-8">
         <div className="mb-6">
           <h1 className="text-2xl font-semibold flex items-center gap-2">
             <CreditCard className="h-6 w-6 text-primary" />
@@ -108,8 +108,10 @@ export default function BillingRoute() {
             {data ? (
               <>
                 Workspace <span className="font-medium text-foreground">{data.workspace.name}</span>
-                {data.workspace.isPersonal && " (personal)"} · {data.seats} seat
-                {data.seats === 1 ? "" : "s"}
+                {data.workspace.isPersonal && " (personal)"}
+                {data.currentSeats > 0 && (
+                  <> · {data.currentSeats} seat{data.currentSeats === 1 ? "" : "s"}</>
+                )}
               </>
             ) : (
               "Manage your subscription and payment."
@@ -132,66 +134,30 @@ export default function BillingRoute() {
 
             {!data.waylEnabled && (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-600 dark:text-amber-400">
-                Online payments aren't enabled on this server yet. Plans are visible, but
-                checkout is temporarily unavailable.
+                Online payments aren't enabled on this server yet. Checkout is temporarily
+                unavailable.
               </div>
             )}
             {!data.isOwner && (
               <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-                Only the workspace owner can change the plan. Ask them to upgrade.
+                Only the workspace owner can change the plan. Ask them to manage billing.
               </div>
             )}
 
-            <div className="grid gap-4 md:grid-cols-3">
-              {data.plans.map((p) => (
-                <PlanCard
-                  key={p.tier}
-                  plan={p}
-                  seats={data.seats}
-                  current={data.effectiveTier === p.tier}
-                  currentTier={data.effectiveTier}
-                  canBuy={data.waylEnabled && data.isOwner && p.tier !== "FREE"}
-                  // Only the plan actually being checked out spins.
-                  busy={checkout.isPending && checkout.variables === p.tier}
-                  onBuy={() => checkout.mutate(p.tier as PaidTier)}
+            {data.unlimited ? (
+              <UnlimitedCard data={data} />
+            ) : (
+              <div className="grid gap-4 md:grid-cols-[1fr_1.3fr]">
+                <FreePlanCard data={data} />
+                <SeatPicker
+                  data={data}
+                  busy={checkout.isPending}
+                  onBuy={(seats) => checkout.mutate(seats)}
                 />
-              ))}
-            </div>
-
-            {data.recentPayments.filter((p) => p.status === "PAID").length > 0 && (
-              <div className="rounded-lg border border-border bg-card p-5">
-                <div className="text-sm font-medium mb-3">Payment history</div>
-                <div className="divide-y divide-border">
-                  {data.recentPayments.filter((p) => p.status === "PAID").map((pmt) => (
-                    <div key={pmt.id} className="flex items-center justify-between py-2 text-sm">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{pmt.plan}</span>
-                        <span className="text-muted-foreground">
-                          {pmt.seats} seat{pmt.seats === 1 ? "" : "s"} · {iqd(pmt.amountIqd)}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-muted-foreground text-xs">
-                          {format(new Date(pmt.createdAt), "d MMM yyyy")}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className={
-                            pmt.status === "PAID"
-                              ? "bg-primary/15 text-primary border-primary/30"
-                              : pmt.status === "FAILED"
-                                ? "bg-destructive/15 text-destructive border-destructive/30"
-                                : "bg-muted text-muted-foreground border-border"
-                          }
-                        >
-                          {pmt.status}
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
+
+            <PaymentHistory data={data} />
           </div>
         )}
       </main>
@@ -202,17 +168,29 @@ export default function BillingRoute() {
 function CurrentPlanCard({ data }: { data: BillingOverview }) {
   const sub = data.subscription;
   const status = sub ? STATUS_LABEL[sub.status] : null;
-  const tierName = data.plans.find((p) => p.tier === data.effectiveTier)?.name ?? data.effectiveTier;
+  const paid = data.effectiveTier !== "FREE" && !data.locked;
+  const tierName = data.locked
+    ? "No active plan"
+    : data.effectiveTier === "FREE"
+      ? "Trial"
+      : data.effectiveTier === "TEAM"
+        ? "Team"
+        : data.paidPlan.name;
   return (
     <div className="rounded-lg border border-border bg-card p-5 flex flex-wrap items-center justify-between gap-4">
       <div>
         <div className="text-xs uppercase tracking-wider text-muted-foreground">Current plan</div>
         <div className="text-xl font-semibold mt-1 flex items-center gap-2">
           {tierName}
-          {data.effectiveTier !== "FREE" && <Sparkles className="h-4 w-4 text-primary" />}
+          {paid && <Sparkles className="h-4 w-4 text-primary" />}
         </div>
+        {paid && data.currentSeats > 0 && (
+          <div className="text-xs text-muted-foreground mt-1">
+            {data.unlimited ? "Unlimited members" : `${data.currentSeats} seat${data.currentSeats === 1 ? "" : "s"}`}
+          </div>
+        )}
       </div>
-      {sub && sub.plan !== "FREE" && status && (
+      {sub && paid && status && (
         <div className="text-right">
           <Badge variant="outline" className={status.className}>
             {status.label}
@@ -227,100 +205,182 @@ function CurrentPlanCard({ data }: { data: BillingOverview }) {
   );
 }
 
-/** Tier ordering so the CTA can tell an upgrade from a downgrade. */
-const TIER_RANK: Record<string, number> = { FREE: 0, PRO: 1, TEAM: 2 };
-
-function PlanCard({
-  plan,
-  seats,
-  current,
-  currentTier,
-  canBuy,
+/** The dynamic per-seat purchase card: pick a team size, see the live total. */
+function SeatPicker({
+  data,
   busy,
   onBuy,
 }: {
-  plan: PlanOption;
-  seats: number;
-  current: boolean;
-  currentTier: string;
-  canBuy: boolean;
+  data: BillingOverview;
   busy: boolean;
-  onBuy: () => void;
+  onBuy: (seats: number) => void;
 }) {
-  const isFree = plan.tier === "FREE";
-  const highlight = plan.tier === "PRO";
-  // Is this card a step up or down from the plan the user is already on?
-  const isDowngrade = (TIER_RANK[plan.tier] ?? 0) < (TIER_RANK[currentTier] ?? 0);
+  const price = data.perSeatPriceIqd;
+  const min = Math.max(1, data.minSeats);
+  const hasPlan = data.currentSeats > 0;
+  const [seats, setSeats] = useState(() => Math.max(min, data.currentSeats || min));
+
+  // Keep in range if the overview refreshes.
+  useEffect(() => {
+    setSeats((s) => Math.max(min, Math.min(s, 1000)));
+  }, [min]);
+
+  const total = seats * price;
+  const sameAsNow = hasPlan && seats === data.currentSeats;
+  const canBuy = data.waylEnabled && data.isOwner && !sameAsNow;
+
+  const dec = () => setSeats((s) => Math.max(min, s - 1));
+  const inc = () => setSeats((s) => Math.min(1000, s + 1));
+
   return (
-    <div
-      className={`rounded-lg border bg-card p-5 flex flex-col ${
-        current
-          ? "border-primary ring-1 ring-primary/40"
-          : highlight
-            ? "border-primary/40"
-            : "border-border"
-      }`}
-    >
+    <div className="rounded-lg border border-primary/40 bg-card p-5 flex flex-col">
       <div className="flex items-center justify-between">
-        <div className="font-semibold text-lg">{plan.name}</div>
-        {current && (
+        <div className="font-semibold text-lg flex items-center gap-2">
+          {data.paidPlan.name}
+          <Sparkles className="h-4 w-4 text-primary" />
+        </div>
+        <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30">
+          Per seat
+        </Badge>
+      </div>
+
+      <div className="mt-3 mb-1 text-sm text-muted-foreground flex items-center gap-1.5">
+        <Users className="h-4 w-4" /> Choose your team size
+      </div>
+      <div className="flex items-center gap-3 mb-1">
+        <Button variant="outline" size="icon" className="h-10 w-10" onClick={dec} disabled={seats <= min}>
+          <Minus className="h-4 w-4" />
+        </Button>
+        <input
+          type="number"
+          value={seats}
+          min={min}
+          max={1000}
+          onChange={(e) => {
+            const v = Math.floor(Number(e.target.value));
+            if (Number.isFinite(v)) setSeats(Math.max(min, Math.min(1000, v)));
+          }}
+          className="w-20 text-center text-2xl font-bold bg-transparent border border-border rounded-md py-1 focus:outline-none focus:ring-1 focus:ring-primary"
+        />
+        <Button variant="outline" size="icon" className="h-10 w-10" onClick={inc} disabled={seats >= 1000}>
+          <Plus className="h-4 w-4" />
+        </Button>
+        <div className="ml-auto text-right">
+          <div className="text-2xl font-bold">{iqd(total)}</div>
+          <div className="text-xs text-muted-foreground">
+            {seats} × {iqd(price)} / month
+          </div>
+        </div>
+      </div>
+      {min > 1 && (
+        <p className="text-[11px] text-muted-foreground mb-2">
+          Minimum {min} seats — that's how many members you already have.
+        </p>
+      )}
+
+      <ul className="space-y-2 text-sm my-3 flex-1">
+        <Feature ok>
+          {seats} member{seats === 1 ? "" : "s"} across your connections
+        </Feature>
+        <Feature ok={data.paidPlan.aiEnabled}>
+          {data.paidPlan.aiEnabled ? `AI assistant · ${data.paidPlan.dailyAiCalls}/day` : "No AI assistant"}
+        </Feature>
+        <Feature ok>{data.paidPlan.maxConnections} connections</Feature>
+        <Feature ok>{data.paidPlan.maxScheduledQueries} scheduled queries</Feature>
+        <Feature ok>{data.paidPlan.maxWebhooksPerConnection} webhooks / connection</Feature>
+      </ul>
+
+      <Button className="w-full" disabled={!canBuy || busy} onClick={() => onBuy(seats)}>
+        {busy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : sameAsNow ? (
+          `You have ${seats} seat${seats === 1 ? "" : "s"}`
+        ) : hasPlan ? (
+          `Change to ${seats} seat${seats === 1 ? "" : "s"} · ${iqd(total)}/mo`
+        ) : (
+          `Subscribe · ${iqd(total)}/mo`
+        )}
+      </Button>
+      <p className="text-[11px] text-muted-foreground text-center mt-2">
+        Billed monthly. Change your team size anytime.
+      </p>
+    </div>
+  );
+}
+
+function FreePlanCard({ data }: { data: BillingOverview }) {
+  const free: PlanLimits & { maxSeats: number } = data.freePlan;
+  const onFree = data.effectiveTier === "FREE" && !data.locked;
+  return (
+    <div className={`rounded-lg border bg-card p-5 flex flex-col ${onFree ? "border-primary/40" : "border-border"}`}>
+      <div className="flex items-center justify-between">
+        <div className="font-semibold text-lg">{free.name}</div>
+        {onFree && (
           <Badge variant="outline" className="bg-primary/15 text-primary border-primary/30">
             Current
           </Badge>
         )}
       </div>
-
-      <div className="mt-2 mb-4">
-        {isFree ? (
-          <div className="text-2xl font-bold">Free</div>
-        ) : (
-          <>
-            <div className="text-2xl font-bold">{iqd(plan.seatPriceIqd)}</div>
-            <div className="text-xs text-muted-foreground">
-              per seat / month · {iqd(plan.monthlyTotalIqd)} for {seats} seat
-              {seats === 1 ? "" : "s"}
-            </div>
-          </>
-        )}
-      </div>
-
+      <div className="mt-2 mb-4 text-2xl font-bold">Free</div>
       <ul className="space-y-2 text-sm flex-1">
-        <Feature ok>{plan.maxConnections} connections</Feature>
-        <Feature ok={plan.aiEnabled}>
-          {plan.aiEnabled ? `AI assistant · ${plan.dailyAiCalls}/day` : "No AI assistant"}
+        <Feature ok>{free.maxSeats} member{free.maxSeats === 1 ? "" : "s"}</Feature>
+        <Feature ok={free.aiEnabled}>
+          {free.aiEnabled ? `AI assistant · ${free.dailyAiCalls}/day` : "No AI assistant"}
         </Feature>
-        <Feature ok>{plan.maxScheduledQueries} scheduled queries</Feature>
-        <Feature ok>{plan.maxWebhooksPerConnection} webhooks / connection</Feature>
-        <Feature ok>
-          {plan.maxSeats == null ? "Unlimited members" : `Up to ${plan.maxSeats} members`}
+        <Feature ok={free.maxConnections > 0}>{free.maxConnections} connections</Feature>
+        <Feature ok={free.maxScheduledQueries > 0}>{free.maxScheduledQueries} scheduled queries</Feature>
+        <Feature ok={free.maxWebhooksPerConnection > 0}>
+          {free.maxWebhooksPerConnection} webhooks / connection
         </Feature>
       </ul>
+      <p className="text-[11px] text-muted-foreground mt-4">
+        Subscribe to unlock connections, the AI assistant and your team.
+      </p>
+    </div>
+  );
+}
 
-      <div className="mt-5">
-        {current ? (
-          <Button variant="outline" className="w-full" disabled>
-            Your plan
-          </Button>
-        ) : isFree ? (
-          <Button variant="outline" className="w-full" disabled>
-            —
-          </Button>
-        ) : (
-          <Button
-            className="w-full"
-            variant={isDowngrade ? "outline" : "default"}
-            disabled={!canBuy || busy}
-            onClick={onBuy}
-          >
-            {busy ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : isDowngrade ? (
-              <>Downgrade to {plan.name}</>
-            ) : (
-              <>Upgrade to {plan.name}</>
-            )}
-          </Button>
-        )}
+/** Shown to the grandfathered unlimited (Team) plan — no seat picker needed. */
+function UnlimitedCard({ data }: { data: BillingOverview }) {
+  return (
+    <div className="rounded-lg border border-primary/40 bg-card p-5">
+      <div className="font-semibold text-lg flex items-center gap-2">
+        Team <Sparkles className="h-4 w-4 text-primary" />
+      </div>
+      <div className="mt-2 text-2xl font-bold">Unlimited members</div>
+      <ul className="space-y-2 text-sm mt-4">
+        <Feature ok>Unlimited members across your connections</Feature>
+        <Feature ok={data.paidPlan.aiEnabled}>AI assistant · {data.paidPlan.dailyAiCalls}/day</Feature>
+        <Feature ok>{data.paidPlan.maxConnections}+ connections</Feature>
+      </ul>
+    </div>
+  );
+}
+
+function PaymentHistory({ data }: { data: BillingOverview }) {
+  const paid = data.recentPayments.filter((p) => p.status === "PAID");
+  if (paid.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-border bg-card p-5">
+      <div className="text-sm font-medium mb-3">Payment history</div>
+      <div className="divide-y divide-border">
+        {paid.map((pmt) => (
+          <div key={pmt.id} className="flex items-center justify-between py-2 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">
+                {pmt.seats} seat{pmt.seats === 1 ? "" : "s"} · {iqd(pmt.amountIqd)}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-muted-foreground text-xs">
+                {format(new Date(pmt.createdAt), "d MMM yyyy")}
+              </span>
+              <Badge variant="outline" className="bg-primary/15 text-primary border-primary/30">
+                Paid
+              </Badge>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

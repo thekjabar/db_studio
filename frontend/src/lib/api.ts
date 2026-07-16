@@ -787,20 +787,14 @@ export type SubscriptionStatus =
   | "SUSPENDED"
   | "CANCELLED";
 
-export interface PlanOption {
-  tier: PlanTier;
+/** Feature limits for a tier (shown in the Free-vs-Paid comparison). */
+export interface PlanLimits {
   name: string;
-  /** Monthly price per seat, whole IQD. */
-  seatPriceIqd: number;
-  /** seatPriceIqd × current seat count. */
-  monthlyTotalIqd: number;
   maxConnections: number;
   aiEnabled: boolean;
   dailyAiCalls: number;
   maxScheduledQueries: number;
   maxWebhooksPerConnection: number;
-  /** null = unlimited seats. */
-  maxSeats: number | null;
 }
 
 export interface BillingPayment {
@@ -820,19 +814,28 @@ export interface BillingOverview {
   currency: "IQD";
   workspace: { id: string; name: string; isPersonal: boolean };
   isOwner: boolean;
-  seats: number;
   effectiveTier: PlanTier;
   /** True when there's no active entitlement — the user must subscribe. */
   locked: boolean;
   /** Whole days left in an active trial (0 if not trialing). */
   trialDaysLeft: number;
+  /** Dynamic per-seat monthly price (whole IQD). */
+  perSeatPriceIqd: number;
+  /** Seats the workspace currently holds (0 if not on a paid plan). */
+  currentSeats: number;
+  /** True when on the grandfathered unlimited (Team) plan. */
+  unlimited: boolean;
+  /** Fewest seats they may buy (largest member+invite count on a connection). */
+  minSeats: number;
+  freePlan: PlanLimits & { maxSeats: number };
+  paidPlan: PlanLimits;
   subscription: {
     plan: PlanTier;
+    seats: number;
     status: SubscriptionStatus;
     periodStart: string;
     periodEnd: string;
   } | null;
-  plans: PlanOption[];
   recentPayments: BillingPayment[];
 }
 
@@ -2228,9 +2231,9 @@ export const api = {
         params: workspaceId ? { workspaceId } : undefined,
       })
       .then((r) => r.data),
-  createCheckout: (plan: PaidTier, workspaceId?: string) =>
+  createCheckout: (seats: number, workspaceId?: string) =>
     http
-      .post<CheckoutResult>('/billing/checkout', { plan, workspaceId })
+      .post<CheckoutResult>('/billing/checkout', { seats, workspaceId })
       .then((r) => r.data),
   verifyPayment: (referenceId: string) =>
     http

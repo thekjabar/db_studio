@@ -362,6 +362,20 @@ export interface ConnectionMember {
   createdAt: string;
 }
 
+/** A pending invitation for someone who hasn't registered yet. */
+export interface ConnectionInvite {
+  id: string;
+  email: string;
+  role: MemberRole;
+  status: string;
+  createdAt: string;
+}
+
+/** addConnectionMember either adds a registered user or sends an invite. */
+export type AddMemberResult =
+  | { kind: "member"; member: ConnectionMember }
+  | { kind: "invite"; invite: ConnectionInvite; emailed: boolean };
+
 export interface TableGrant {
   id: string;
   userId: string;
@@ -1191,11 +1205,15 @@ export const api = {
   listConnectionMembers: (id: string) =>
     http.get<ConnectionMember[]>(`/connections/${id}/permissions/members`).then((r) => r.data),
   addConnectionMember: (id: string, body: { email: string; role: MemberRole }) =>
-    http.post<ConnectionMember>(`/connections/${id}/permissions/members`, body).then((r) => r.data),
+    http.post<AddMemberResult>(`/connections/${id}/permissions/members`, body).then((r) => r.data),
   updateConnectionMember: (id: string, memberId: string, role: MemberRole) =>
     http.patch<ConnectionMember>(`/connections/${id}/permissions/members/${memberId}`, { role }).then((r) => r.data),
   removeConnectionMember: (id: string, memberId: string) =>
     http.delete(`/connections/${id}/permissions/members/${memberId}`).then((r) => r.data),
+  listConnectionInvites: (id: string) =>
+    http.get<ConnectionInvite[]>(`/connections/${id}/permissions/invites`).then((r) => r.data),
+  revokeConnectionInvite: (id: string, inviteId: string) =>
+    http.delete(`/connections/${id}/permissions/invites/${inviteId}`).then((r) => r.data),
 
   listTableGrants: (id: string) =>
     http.get<TableGrant[]>(`/connections/${id}/permissions/table-grants`).then((r) => r.data),

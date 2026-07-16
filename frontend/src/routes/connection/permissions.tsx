@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Trash2, UserPlus } from "lucide-react";
+import { Loader2, Mail, Trash2, UserPlus } from "lucide-react";
 import { toast } from "sonner";
-import { api, extractErrorMessage, type ConnectionMember, type MemberRole, type TableGrant } from "@/lib/api";
+import { api, extractErrorMessage, type ConnectionInvite, type ConnectionMember, type MemberRole, type TableGrant } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -39,6 +39,11 @@ function PermissionsInner({ connectionId }: { connectionId: string }) {
     queryFn: () => api.listConnectionMembers(connectionId),
   });
 
+  const invites = useQuery({
+    queryKey: ["conn-invites", connectionId],
+    queryFn: () => api.listConnectionInvites(connectionId),
+  });
+
   const grants = useQuery({
     queryKey: ["table-grants", connectionId],
     queryFn: () => api.listTableGrants(connectionId),
@@ -51,14 +56,32 @@ function PermissionsInner({ connectionId }: { connectionId: string }) {
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["conn-members", connectionId] });
+    qc.invalidateQueries({ queryKey: ["conn-invites", connectionId] });
     qc.invalidateQueries({ queryKey: ["table-grants", connectionId] });
   };
 
   const addMember = useMutation({
     mutationFn: (input: { email: string; role: MemberRole }) =>
       api.addConnectionMember(connectionId, input),
+    onSuccess: (res) => {
+      if (res.kind === "invite") {
+        toast.success(
+          res.emailed
+            ? `${res.invite.email} isn't on Query Schema yet — we've emailed them an invitation. They'll get access as soon as they sign up.`
+            : `${res.invite.email} isn't on Query Schema yet — invitation created. They'll get access once they sign up (email couldn't be sent).`,
+        );
+      } else {
+        toast.success("Member added");
+      }
+      invalidate();
+    },
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
+  const revokeInvite = useMutation({
+    mutationFn: (inviteId: string) => api.revokeConnectionInvite(connectionId, inviteId),
     onSuccess: () => {
-      toast.success("Member added");
+      toast.success("Invitation cancelled");
       invalidate();
     },
     onError: (e) => toast.error(extractErrorMessage(e)),
@@ -139,6 +162,20 @@ function PermissionsInner({ connectionId }: { connectionId: string }) {
             if (ok) removeMember.mutate(memberId);
           }}
           busy={updateMember.isPending || removeMember.isPending}
+        />
+
+        <InvitesTable
+          invites={invites.data ?? []}
+          onRevoke={async (inviteId, email) => {
+            const ok = await modal.confirm({
+              title: "Cancel invitation",
+              description: `Cancel the invitation to ${email}? They won't get access when they sign up.`,
+              confirmLabel: "Cancel invitation",
+              destructive: true,
+            });
+            if (ok) revokeInvite.mutate(inviteId);
+          }}
+          busy={revokeInvite.isPending}
         />
       </section>
 
@@ -280,6 +317,56 @@ function MembersTable({
                   className="h-8 w-8 text-destructive"
                   onClick={() => onRemove(m.id, m.email)}
                   disabled={busy}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function InvitesTable({
+  invites,
+  onRevoke,
+  busy,
+}: {
+  invites: ConnectionInvite[];
+  onRevoke: (inviteId: string, email: string) => void;
+  busy: boolean;
+}) {
+  if (invites.length === 0) return null;
+  return (
+    <div className="rounded-md border border-border overflow-hidden">
+      <div className="bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+        <Mail className="h-3.5 w-3.5" />
+        Pending invitations — these people haven't joined yet; they'll get access automatically when they sign up with this email.
+      </div>
+      <table className="w-full text-sm">
+        <tbody className="divide-y divide-border">
+          {invites.map((inv) => (
+            <tr key={inv.id}>
+              <td className="px-3 py-2">
+                <div className="font-medium">{inv.email}</div>
+                <div className="text-xs text-muted-foreground">Invited as {inv.role}</div>
+              </td>
+              <td className="px-3 py-2 w-40">
+                <Badge variant="secondary" className="gap-1">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400 inline-block" />
+                  Pending
+                </Badge>
+              </td>
+              <td className="px-3 py-2 text-right w-10">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-destructive"
+                  onClick={() => onRevoke(inv.id, inv.email)}
+                  disabled={busy}
+                  title="Cancel invitation"
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>

@@ -23,6 +23,7 @@ import { AiModule } from './ai/ai.module';
 import { CommentsModule } from './comments/comments.module';
 import { WorkspacesModule } from './workspaces/workspaces.module';
 import { SchedulerModule } from './scheduler/scheduler.module';
+import { EmailModule } from './scheduler/email.module';
 import { CsvImportModule } from './csv-import/csv-import.module';
 import { BackupModule } from './backup/backup.module';
 import { SlowQueryModule } from './slow-query/slow-query.module';
@@ -90,6 +91,7 @@ import { BillingModule } from './billing/billing.module';
     CommentsModule,
     WorkspacesModule,
     SchedulerModule,
+    EmailModule,
     CsvImportModule,
     BackupModule,
     SlowQueryModule,

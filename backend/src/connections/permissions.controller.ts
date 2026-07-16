@@ -35,9 +35,26 @@ export class PermissionsController {
     return this.svc.listMembers(id);
   }
 
+  /** Add a registered user as a member, or (if they have no account yet) send
+   *  them an invitation. Returns { kind: 'member' | 'invite', ... }. */
   @Post('members')
   addMember(@Param('id') id: string, @CurrentUser() u: AuthUser, @Body() dto: AddMemberDto) {
     return this.svc.addMember(id, u.id, dto.email, dto.role);
+  }
+
+  /** Pending invitations (people invited who haven't registered yet). */
+  @Get('invites')
+  listInvites(@Param('id') id: string) {
+    return this.svc.listInvites(id);
+  }
+
+  @Delete('invites/:inviteId')
+  async revokeInvite(
+    @Param('id') id: string,
+    @Param('inviteId') inviteId: string,
+    @CurrentUser() u: AuthUser,
+  ) {
+    await this.svc.revokeInvite(id, u.id, inviteId);
   }
 
   @Patch('members/:memberId')

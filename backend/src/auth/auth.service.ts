@@ -47,6 +47,39 @@ export class AuthService {
     return createHash('sha256').update(token).digest('hex');
   }
 
+  /**
+   * When a user signs up / logs in, turn any pending ConnectionInvite for their
+   * email into a real ConnectionMember. Best-effort — never blocks auth. Kept
+   * here (prisma-only) rather than calling PermissionsService to avoid an
+   * Auth↔Connections module cycle.
+   */
+  private async claimConnectionInvites(userId: string, email: string): Promise<void> {
+    try {
+      const normEmail = email.trim().toLowerCase();
+      const pending = await this.prisma.connectionInvite.findMany({
+        where: { email: normEmail, status: 'PENDING' },
+        select: { id: true, connectionId: true, role: true },
+      });
+      for (const inv of pending) {
+        await this.prisma
+          .$transaction([
+            this.prisma.connectionMember.upsert({
+              where: { connectionId_userId: { connectionId: inv.connectionId, userId } },
+              create: { connectionId: inv.connectionId, userId, role: inv.role },
+              update: { role: inv.role },
+            }),
+            this.prisma.connectionInvite.update({
+              where: { id: inv.id },
+              data: { status: 'ACCEPTED', acceptedById: userId, acceptedAt: new Date() },
+            }),
+          ])
+          .catch(() => undefined);
+      }
+    } catch {
+      // Non-fatal: a claim failure must never prevent login.
+    }
+  }
+
   /** Length of the free trial granted to a new workspace, in days. */
   private readonly TRIAL_DAYS = 7;
 
@@ -187,6 +220,7 @@ export class AuthService {
       return { userId: user.id, awaitingApproval: true };
     }
 
+    await this.claimConnectionInvites(user.id, user.email);
     const tokens = await this.issueTokens(user.id, user.email, meta);
     return { userId: user.id, ...tokens };
   }
@@ -271,6 +305,7 @@ export class AuthService {
     await this.cooldown.recordSuccess(dto.email);
 
     await this.audit.log({ userId: user.id, action: 'LOGIN', ...meta });
+    await this.claimConnectionInvites(user.id, user.email);
     const tokens = await this.issueTokens(user.id, user.email, meta);
     return { userId: user.id, ...tokens };
   }
@@ -402,6 +437,7 @@ export class AuthService {
     meta: ReqMeta,
   ): Promise<AuthTokens & { userId: string }> {
     await this.audit.log({ userId, action: 'LOGIN', ...meta });
+    await this.claimConnectionInvites(userId, email);
     const tokens = await this.issueTokens(userId, email, meta);
     return { userId, ...tokens };
   }

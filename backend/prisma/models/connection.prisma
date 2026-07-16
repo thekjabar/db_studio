@@ -29,6 +29,7 @@ model Connection {
   agentId          String?
   agent            Agent?             @relation(fields: [agentId], references: [id])
   members          ConnectionMember[]
+  invites          ConnectionInvite[]
   tableGrants      TableGrant[]
   scheduledQueries ScheduledQuery[]
   slowQueryLogs    SlowQueryLog[]

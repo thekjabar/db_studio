@@ -1,0 +1,29 @@
+/// A pending invitation to collaborate on a connection, for people who don't
+/// have a Query Schema account yet. When someone signs up / logs in with the
+/// invited email, the invite is claimed: a ConnectionMember is created with the
+/// invited role and the invite is marked ACCEPTED. This lets an owner grant
+/// access before the invitee has registered, and see whether they've joined.
+model ConnectionInvite {
+  id           String     @id @default(cuid())
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  /// Lowercased invited email.
+  email        String
+  role         Role       @default(VIEWER)
+  /// Owner who sent the invite.
+  invitedById  String
+  /// Opaque token embedded in the invite link (not required to claim — claim is
+  /// by verified email match — but lets us build a nice accept URL).
+  token        String     @unique
+  /// PENDING → ACCEPTED (joined) or REVOKED (cancelled by owner).
+  status       String     @default("PENDING")
+  acceptedById String?
+  acceptedAt   DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  /// One outstanding invite per (connection, email).
+  @@unique([connectionId, email])
+  @@index([email])
+  @@index([connectionId])
+}

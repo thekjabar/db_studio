@@ -15,9 +15,6 @@ import type { Request } from 'express';
 import { CurrentUser, type AuthUser } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { BillingService } from './billing.service';
-import type { PlanTier } from '@prisma/client';
-
-const PAID_TIERS: PlanTier[] = ['PRO', 'TEAM'];
 
 /**
  * Customer-facing billing + Wayl checkout. All routes require the customer JWT
@@ -34,17 +31,18 @@ export class BillingController {
     return this.billing.overview(u.id, workspaceId);
   }
 
-  /** Begin checkout for a paid tier — returns the Wayl hosted-checkout URL. */
+  /** Begin checkout for `seats` seats on the paid plan — returns the Wayl URL. */
   @Post('checkout')
   checkout(
     @CurrentUser() u: AuthUser,
-    @Body('plan') plan: string,
+    @Body('seats') seats: number,
     @Body('workspaceId') workspaceId?: string,
   ) {
-    if (!PAID_TIERS.includes(plan as PlanTier)) {
-      throw new BadRequestException('Choose a paid plan (PRO or TEAM).');
+    const n = Math.floor(Number(seats));
+    if (!Number.isFinite(n) || n < 1) {
+      throw new BadRequestException('Choose at least 1 seat.');
     }
-    return this.billing.checkout(u.id, plan as PlanTier, workspaceId);
+    return this.billing.checkout(u.id, n, workspaceId);
   }
 
   /** Re-check a payment straight from Wayl after the customer returns. */

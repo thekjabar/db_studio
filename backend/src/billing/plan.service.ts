@@ -100,6 +100,36 @@ export class PlanService implements OnModuleInit {
     });
   }
 
+  /**
+   * How many members the owner may put on a connection — the effective seat
+   * cap under dynamic per-seat billing:
+   *   PRO  → the seats they paid for (Subscription.seats)
+   *   TEAM → unlimited (null) — grandfathered manual overrides
+   *   else → 1 (trial / locked)
+   * Considers every workspace the user owns; takes the most generous.
+   */
+  async seatLimitForUser(userId: string): Promise<number | null> {
+    const owned = await this.prisma.subscription.findMany({
+      where: { workspace: { ownerId: userId } },
+      select: { plan: true, status: true, periodEnd: true, seats: true },
+    });
+    const now = new Date();
+    const entitled = owned.filter((s) => isEntitled(s, now));
+    if (entitled.length === 0) return 1;
+    if (entitled.some((s) => s.plan === 'TEAM')) return null; // unlimited
+    const proSeats = entitled.filter((s) => s.plan === 'PRO').map((s) => s.seats);
+    if (proSeats.length) return Math.max(1, ...proSeats);
+    return 1;
+  }
+
+  /** Seat cap for a specific workspace (its own subscription). */
+  async seatLimitForWorkspace(workspaceId: string): Promise<number | null> {
+    const { tier, subscription } = await this.forWorkspace(workspaceId);
+    if (tier === 'TEAM') return null;
+    if (tier === 'PRO') return Math.max(1, subscription?.seats ?? 1);
+    return 1;
+  }
+
   private defaultRow(tier: PlanTier) {
     const d = DEFAULT_PLANS.find((p) => p.tier === tier)!;
     return { ...d, updatedByOperatorId: null, updatedAt: new Date(), createdAt: new Date() };

@@ -35,6 +35,9 @@ model Subscription {
   periodStart        DateTime           @default(now())
   /// End of the current billing period. Access ends here if unpaid.
   periodEnd          DateTime
+  /// Seats the workspace has paid for (dynamic per-seat billing). The member
+  /// cap for the owner's connections is this number. FREE/trial = 1.
+  seats              Int                @default(1)
   /// Operator-supplied override — when non-null, this wins over normal
   /// billing automation. E.g. "comp for 3 months during onboarding".
   manualOverrideNote String?

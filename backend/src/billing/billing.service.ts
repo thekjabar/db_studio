@@ -32,12 +32,12 @@ export class BillingService {
     private readonly plans: PlanService,
   ) {}
 
-  /** Everything the billing page needs in one call. */
+  /** Everything the (dynamic per-seat) billing page needs in one call. */
   async overview(userId: string, workspaceId?: string) {
     const ws = await this.resolveWorkspace(userId, workspaceId);
-    const seats = await this.seatCount(ws.id);
     const { tier, subscription, locked } = await this.plans.forWorkspace(ws.id);
-    const plans = await this.plans.all();
+    const paid = await this.plans.config('PRO'); // the single dynamic paid plan
+    const free = await this.plans.config('FREE');
 
     // Whole days left in an active trial (0 when not trialing / lapsed).
     const now = Date.now();
@@ -46,37 +46,50 @@ export class BillingService {
         ? Math.ceil((subscription.periodEnd.getTime() - now) / (24 * 60 * 60 * 1000))
         : 0;
 
+    // Seats they currently hold (only meaningful while entitled + paid).
+    const entitledPaid = !locked && (tier === 'PRO' || tier === 'TEAM');
+    const currentSeats = entitledPaid ? subscription?.seats ?? 0 : 0;
+    const unlimited = entitledPaid && tier === 'TEAM';
+    const minSeats = await this.minSeatsForOwner(ws.ownerId);
+
+    const limits = (p: typeof paid) => ({
+      maxConnections: p.maxConnections,
+      aiEnabled: p.aiEnabled,
+      dailyAiCalls: p.dailyAiCalls,
+      maxScheduledQueries: p.maxScheduledQueries,
+      maxWebhooksPerConnection: p.maxWebhooksPerConnection,
+    });
+
     return {
       waylEnabled: this.cfg.waylEnabled,
       currency: 'IQD' as const,
       workspace: { id: ws.id, name: ws.name, isPersonal: ws.isPersonal },
       isOwner: ws.ownerId === userId,
-      seats,
       effectiveTier: tier,
       /** True when there's no active entitlement — the user must subscribe. */
       locked,
       /** Days remaining in the trial (0 if not on an active trial). */
       trialDaysLeft,
+      /** Dynamic per-seat pricing. */
+      perSeatPriceIqd: paid.seatPriceIqd,
+      /** Seats the workspace currently holds (0 if not on a paid plan). */
+      currentSeats,
+      /** Owner is on the grandfathered unlimited (Team) plan. */
+      unlimited,
+      /** Fewest seats they may buy (largest member+invite count on a connection). */
+      minSeats,
+      /** Feature limits by tier for the comparison UI. */
+      freePlan: { name: free.name, maxSeats: free.maxSeats ?? 1, ...limits(free) },
+      paidPlan: { name: paid.name, ...limits(paid) },
       subscription: subscription
         ? {
             plan: subscription.plan,
+            seats: subscription.seats,
             status: subscription.status,
             periodStart: subscription.periodStart,
             periodEnd: subscription.periodEnd,
           }
         : null,
-      plans: plans.map((p) => ({
-        tier: p.tier,
-        name: p.name,
-        seatPriceIqd: p.seatPriceIqd,
-        monthlyTotalIqd: p.seatPriceIqd * seats,
-        maxConnections: p.maxConnections,
-        aiEnabled: p.aiEnabled,
-        dailyAiCalls: p.dailyAiCalls,
-        maxScheduledQueries: p.maxScheduledQueries,
-        maxWebhooksPerConnection: p.maxWebhooksPerConnection,
-        maxSeats: p.maxSeats,
-      })),
       recentPayments: await this.prisma.paymentAttempt.findMany({
         where: { workspaceId: ws.id },
         orderBy: { createdAt: 'desc' },
@@ -95,14 +108,13 @@ export class BillingService {
   }
 
   /**
-   * Start a Wayl hosted checkout for a paid tier. Only the workspace owner may
-   * pay; the charge = tier seat price × current member count, snapshotted onto
-   * the PaymentAttempt so a later price/seat change can't rewrite history.
+   * Start a Wayl hosted checkout for `seats` seats on the paid plan. Dynamic
+   * per-seat billing: the customer picks a team size and pays seatPrice × seats
+   * for a monthly period. Only the workspace owner may pay. The seat count and
+   * amount are snapshotted onto the PaymentAttempt so a later price change can't
+   * rewrite history.
    */
-  async checkout(userId: string, plan: PlanTier, workspaceId?: string) {
-    if (plan === 'FREE') {
-      throw new BadRequestException('Free plan needs no payment.');
-    }
+  async checkout(userId: string, seats: number, workspaceId?: string) {
     if (!this.cfg.waylEnabled) {
       throw new ServiceUnavailableException(
         "Online payment isn't configured yet. Please try again later.",
@@ -113,16 +125,28 @@ export class BillingService {
       throw new ForbiddenException('Only the workspace owner can manage billing.');
     }
 
+    const plan: PlanTier = 'PRO'; // the single dynamic paid plan
     const config = await this.plans.config(plan);
-    const seats = await this.seatCount(ws.id);
-    if (config.maxSeats != null && seats > config.maxSeats) {
+
+    // Clamp/validate the requested seat count: at least what the owner already
+    // uses (so a downgrade can't strand an over-limit connection), min 1.
+    const seatsInt = Math.floor(Number(seats));
+    if (!Number.isFinite(seatsInt) || seatsInt < 1) {
+      throw new BadRequestException('Choose at least 1 seat.');
+    }
+    if (seatsInt > 1000) {
+      throw new BadRequestException('That is more seats than we can process at once — contact us.');
+    }
+    const minSeats = await this.minSeatsForOwner(userId);
+    if (seatsInt < minSeats) {
       throw new BadRequestException(
-        `This workspace has ${seats} member(s), above the ${config.name} limit of ${config.maxSeats}. Choose a higher tier.`,
+        `You already use ${minSeats} seat(s) on your connections; choose at least ${minSeats}.`,
       );
     }
-    const amountIqd = config.seatPriceIqd * seats;
+
+    const amountIqd = config.seatPriceIqd * seatsInt;
     if (amountIqd <= 0) {
-      throw new BadRequestException('This plan is free — no payment needed.');
+      throw new BadRequestException('Per-seat price is not set. Contact support.');
     }
 
     const referenceId = `QS-${ws.id.slice(0, 8)}-${randomBytes(4).toString('hex')}`;
@@ -135,7 +159,7 @@ export class BillingService {
         userId,
         referenceId,
         plan,
-        seats,
+        seats: seatsInt,
         amountIqd,
         months: 1,
         status: 'PENDING',
@@ -149,7 +173,7 @@ export class BillingService {
         customParameter: `sub:${ws.id}:${plan}`,
         lineItems: [
           {
-            label: `Query Schema ${config.name} — ${seats} seat(s) × ${config.seatPriceIqd} IQD/mo`,
+            label: `Query Schema — ${seatsInt} seat(s) × ${config.seatPriceIqd} IQD/mo`,
             amountIqd,
             type: 'increase',
           },
@@ -159,7 +183,7 @@ export class BillingService {
         where: { id: attempt.id },
         data: { providerRef: link.id, rawResponse: link as unknown as Prisma.InputJsonValue },
       });
-      return { url: link.url, referenceId, amountIqd, seats, plan };
+      return { url: link.url, referenceId, amountIqd, seats: seatsInt, plan };
     } catch (e) {
       await this.prisma.paymentAttempt.update({
         where: { id: attempt.id },
@@ -289,14 +313,15 @@ export class BillingService {
           create: {
             workspaceId: fresh.workspaceId,
             plan: fresh.plan,
+            seats: fresh.seats,
             status: 'ACTIVE',
             periodStart: now,
             periodEnd,
           },
-          update: { plan: fresh.plan, status: 'ACTIVE', periodEnd },
+          update: { plan: fresh.plan, seats: fresh.seats, status: 'ACTIVE', periodEnd },
         });
         this.logger.log(
-          `Payment ${fresh.referenceId} settled → workspace ${fresh.workspaceId} on ${fresh.plan} until ${periodEnd.toISOString()}`,
+          `Payment ${fresh.referenceId} settled → workspace ${fresh.workspaceId} on ${fresh.plan} × ${fresh.seats} seat(s) until ${periodEnd.toISOString()}`,
         );
       } else if (FAILED_STATUSES.includes(status)) {
         await tx.paymentAttempt.update({
@@ -349,6 +374,25 @@ export class BillingService {
   private async seatCount(workspaceId: string): Promise<number> {
     const members = await this.prisma.workspaceMember.count({ where: { workspaceId } });
     return Math.max(members, 1);
+  }
+
+  /**
+   * The fewest seats the owner can buy: the largest member+invite count across
+   * any connection they own (a connection can hold up to `seats` members, so
+   * you can't buy fewer seats than a connection already uses). Minimum 1.
+   */
+  private async minSeatsForOwner(userId: string): Promise<number> {
+    const conns = await this.prisma.connection.findMany({
+      where: { ownerId: userId },
+      select: {
+        _count: { select: { members: true, invites: true } },
+      },
+    });
+    let max = 1;
+    for (const c of conns) {
+      max = Math.max(max, c._count.members + c._count.invites);
+    }
+    return max;
   }
 
   /** Effective tier for a workspace (used by gating services). */

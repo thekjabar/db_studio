@@ -57,15 +57,15 @@ export class PermissionsService {
    * implicit and doesn't count). null maxSeats (Team) = unlimited.
    */
   private async assertSeatAvailable(connectionId: string, ownerId: string): Promise<void> {
-    const plan = await this.plans.forUser(ownerId);
-    if (plan.maxSeats == null) return;
+    const limit = await this.plans.seatLimitForUser(ownerId);
+    if (limit == null) return; // unlimited
     const [members, invites] = await Promise.all([
       this.prisma.connectionMember.count({ where: { connectionId } }),
       this.prisma.connectionInvite.count({ where: { connectionId, status: 'PENDING' } }),
     ]);
-    if (members + invites >= plan.maxSeats) {
+    if (members + invites >= limit) {
       throw new ForbiddenException(
-        `Your ${plan.name} plan allows up to ${plan.maxSeats} member(s) per connection. Upgrade your plan to add more.`,
+        `You've used all ${limit} of your seat(s). Add more seats on the Billing page to invite more members.`,
       );
     }
   }

@@ -178,6 +178,11 @@ export class BillingService {
    */
   async handleWebhook(rawBody: Buffer, signature: string | undefined) {
     if (!this.wayl.verifySignature(rawBody, signature)) {
+      // Log (without the body) so we can tell "Wayl never called" apart from
+      // "Wayl called but the signature didn't match" when debugging payments.
+      this.logger.warn(
+        `Wayl webhook rejected: ${signature ? 'signature mismatch' : 'missing signature'} (${rawBody.length} bytes)`,
+      );
       throw new UnauthorizedException('Invalid signature');
     }
     let payload: WaylWebhookPayload;
@@ -217,7 +222,9 @@ export class BillingService {
 
     if (attempt.status === 'PENDING' && this.cfg.waylEnabled) {
       try {
-        const link = await this.wayl.getLink(attempt.providerRef ?? referenceId);
+        // Wayl's GET /links/{ref} resolves ONLY by our merchant referenceId,
+        // not by the internal link id — passing providerRef 404s.
+        const link = await this.wayl.getLink(referenceId);
         await this.reconcile(attempt, link.status, Number(link.total), link);
       } catch (e) {
         this.logger.warn(`verifyReturn getLink failed for ${referenceId}: ${(e as Error).message}`);

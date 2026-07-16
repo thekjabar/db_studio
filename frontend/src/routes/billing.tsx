@@ -149,6 +149,7 @@ export default function BillingRoute() {
                   plan={p}
                   seats={data.seats}
                   current={data.effectiveTier === p.tier}
+                  currentTier={data.effectiveTier}
                   canBuy={data.waylEnabled && data.isOwner && p.tier !== "FREE"}
                   // Only the plan actually being checked out spins.
                   busy={checkout.isPending && checkout.variables === p.tier}
@@ -226,10 +227,14 @@ function CurrentPlanCard({ data }: { data: BillingOverview }) {
   );
 }
 
+/** Tier ordering so the CTA can tell an upgrade from a downgrade. */
+const TIER_RANK: Record<string, number> = { FREE: 0, PRO: 1, TEAM: 2 };
+
 function PlanCard({
   plan,
   seats,
   current,
+  currentTier,
   canBuy,
   busy,
   onBuy,
@@ -237,12 +242,15 @@ function PlanCard({
   plan: PlanOption;
   seats: number;
   current: boolean;
+  currentTier: string;
   canBuy: boolean;
   busy: boolean;
   onBuy: () => void;
 }) {
   const isFree = plan.tier === "FREE";
   const highlight = plan.tier === "PRO";
+  // Is this card a step up or down from the plan the user is already on?
+  const isDowngrade = (TIER_RANK[plan.tier] ?? 0) < (TIER_RANK[currentTier] ?? 0);
   return (
     <div
       className={`rounded-lg border bg-card p-5 flex flex-col ${
@@ -298,9 +306,16 @@ function PlanCard({
             —
           </Button>
         ) : (
-          <Button className="w-full" disabled={!canBuy || busy} onClick={onBuy}>
+          <Button
+            className="w-full"
+            variant={isDowngrade ? "outline" : "default"}
+            disabled={!canBuy || busy}
+            onClick={onBuy}
+          >
             {busy ? (
               <Loader2 className="h-4 w-4 animate-spin" />
+            ) : isDowngrade ? (
+              <>Downgrade to {plan.name}</>
             ) : (
               <>Upgrade to {plan.name}</>
             )}

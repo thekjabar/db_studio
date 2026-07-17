@@ -32,6 +32,30 @@ export class BillingService {
     private readonly plans: PlanService,
   ) {}
 
+  /**
+   * Public plan catalogue for the marketing pricing section — no auth. Reads
+   * the operator-editable PlanConfig rows so the landing always shows the real
+   * live prices (whole IQD per seat / month) and limits.
+   */
+  async publicPlans() {
+    const plans = await this.plans.all();
+    const order: Record<string, number> = { FREE: 0, PRO: 1, TEAM: 2 };
+    return plans
+      .slice()
+      .sort((a, b) => (order[a.tier] ?? 9) - (order[b.tier] ?? 9))
+      .map((p) => ({
+        tier: p.tier,
+        name: p.name,
+        seatPriceIqd: p.seatPriceIqd,
+        maxConnections: p.maxConnections,
+        aiEnabled: p.aiEnabled,
+        dailyAiCalls: p.dailyAiCalls,
+        maxScheduledQueries: p.maxScheduledQueries,
+        maxWebhooksPerConnection: p.maxWebhooksPerConnection,
+        maxSeats: p.maxSeats,
+      }));
+  }
+
   /** Everything the (dynamic per-seat) billing page needs in one call. */
   async overview(userId: string, workspaceId?: string) {
     const ws = await this.resolveWorkspace(userId, workspaceId);

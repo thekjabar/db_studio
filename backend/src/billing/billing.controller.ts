@@ -25,6 +25,13 @@ import { BillingService } from './billing.service';
 export class BillingController {
   constructor(private readonly billing: BillingService) {}
 
+  /** Public plan catalogue for the marketing pricing section (no auth). */
+  @Public()
+  @Get('plans/public')
+  publicPlans() {
+    return this.billing.publicPlans();
+  }
+
   /** Current plan, seats, tier catalogue and recent payments. */
   @Get()
   overview(@CurrentUser() u: AuthUser, @Query('workspaceId') workspaceId?: string) {

@@ -7,6 +7,7 @@ import {
 import { Role } from '@prisma/client';
 import { ConnectionsService } from '../connections/connections.service';
 import { ColumnMasksService } from '../connections/column-masks.service';
+import { SsrfGuardService } from '../common/ssrf-guard.service';
 import { AuditService } from '../audit/audit.service';
 import { EmailService } from '../scheduler/email.service';
 
@@ -63,6 +64,7 @@ export class ExportsService {
     private readonly audit: AuditService,
     private readonly email: EmailService,
     private readonly masks: ColumnMasksService,
+    private readonly ssrf: SsrfGuardService,
   ) {}
 
   async run(
@@ -82,6 +84,12 @@ export class ExportsService {
     }
     if (req.target === 'webhook' && !/^https:\/\//.test(req.to)) {
       throw new BadRequestException('Webhook target requires an https:// URL');
+    }
+    // SECURITY: https alone doesn't stop this pointing at our own internals —
+    // and a non-2xx reply reflects 200 chars of the internal response body back
+    // in the error message.
+    if (req.target === 'webhook') {
+      await this.ssrf.assertPublicUrl(req.to, 'Webhook target');
     }
 
     const drv = await this.connections.buildDriverForRole(req.connectionId, role);

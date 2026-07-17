@@ -6,6 +6,7 @@ import { CryptoService } from '../crypto/crypto.service';
 import { RbacService } from '../rbac/rbac.service';
 import { WebhookQueue } from './webhook.queue';
 import { QuotaService } from '../common/quota.service';
+import { SsrfGuardService } from '../common/ssrf-guard.service';
 
 const PURPOSE = (id: string) => `webhook:${id}`;
 const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
@@ -40,9 +41,10 @@ export class WebhooksService {
     private readonly rbac: RbacService,
     private readonly queue: WebhookQueue,
     private readonly quota: QuotaService,
+    private readonly ssrf: SsrfGuardService,
   ) {}
 
-  private validateInput(input: CreateWebhookInput | UpdateWebhookInput) {
+  private async validateInput(input: CreateWebhookInput | UpdateWebhookInput): Promise<void> {
     if ('schemaName' in input && input.schemaName !== undefined && !IDENT_RE.test(input.schemaName)) {
       throw new BadRequestException('Invalid schema name');
     }
@@ -59,12 +61,17 @@ export class WebhooksService {
       if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
         throw new BadRequestException('URL must be http(s)');
       }
+      // SECURITY: the protocol check alone let a webhook point at our own
+      // internals — and because the worker stores the response body and the
+      // deliveries endpoint hands it back, that was a *readable* SSRF, not a
+      // blind one.
+      await this.ssrf.assertPublicUrl(input.url, 'Webhook URL');
     }
   }
 
   async create(userId: string, connectionId: string, input: CreateWebhookInput) {
     await this.rbac.require(userId, connectionId, Role.OWNER);
-    this.validateInput(input);
+    await this.validateInput(input);
     if (input.events.length === 0) {
       throw new BadRequestException('At least one event must be selected');
     }
@@ -118,7 +125,7 @@ export class WebhooksService {
       const role = await this.rbac.effectiveRole(userId, existing.connectionId);
       if (role !== Role.OWNER) throw new ForbiddenException('Only the owner or connection owner can edit');
     }
-    this.validateInput(patch);
+    await this.validateInput(patch);
 
     const data: Record<string, unknown> = {};
     if (patch.name !== undefined) data.name = patch.name;

@@ -9,6 +9,7 @@ import { AuditService } from '../audit/audit.service';
 import { ConnectionCredentials, IDatabaseDriver } from '../drivers/driver.interface';
 import { CreateConnectionDto, UpdateConnectionDto } from './connections.dto';
 import { QuotaService } from '../common/quota.service';
+import { SsrfGuardService } from '../common/ssrf-guard.service';
 import { buildRows } from './sample-data.util';
 
 const PURPOSE = (id: string) => `conn:${id}`;
@@ -60,6 +61,7 @@ export class ConnectionsService implements OnModuleDestroy {
     private readonly agentTunnel: AgentTunnelService,
     private readonly audit: AuditService,
     private readonly quota: QuotaService,
+    private readonly ssrf: SsrfGuardService,
   ) {
     this.sweeper = setInterval(() => this.sweepIdle(), SWEEP_INTERVAL_MS);
     // Don't keep the process alive just for this.
@@ -148,6 +150,12 @@ export class ConnectionsService implements OnModuleDestroy {
     const viaAgent = dto.viaAgent ?? false;
     const agentId = viaAgent ? await this.assertOwnedAgent(dto.agentId, userId) : null;
 
+    // SECURITY: when WE dial the database, the host must be a public address —
+    // otherwise any user could point a connection at our own internal services
+    // (redis, sibling containers, cloud metadata) and query them. Agent-routed
+    // connections are exempt: those are dialed from the user's own machine.
+    await this.assertDialableTarget(dto.credentials, viaAgent, userId);
+
     const credCt = await this.crypto.encryptJson(dto.credentials, 'conn:new');
     const created = await this.prisma.connection.create({
       data: {
@@ -197,6 +205,46 @@ export class ConnectionsService implements OnModuleDestroy {
 
   /** Resolve+authorize an agentId for a connection: it must exist and be owned
    *  by the requesting user. Returns the validated id. */
+  /**
+   * SECURITY: refuse to let the SERVER dial an internal address. Applied to the
+   * database host and, when configured, the SSH bastion. Skipped for
+   * agent-routed connections — the agent dials from inside the user's own
+   * network, where private addresses are exactly the point.
+   */
+  private async assertDialableTarget(
+    // Structural on purpose: this is called with both the inbound DTO (whose
+    // `ssh` may be null to mean "remove the tunnel") and stored credentials.
+    creds: { host?: string; ssh?: { host?: string } | null } | undefined,
+    viaAgent: boolean,
+    userId?: string,
+  ): Promise<void> {
+    if (!creds) return;
+    // Instance admins are the operators of this deployment — they already have
+    // server access, and on a self-hosted box pointing at an internal database
+    // is the normal case. Everyone else (i.e. anyone who can sign up) is held
+    // to public destinations only.
+    if (userId && (await this.isInstanceAdmin(userId))) return;
+    // An SSH bastion is always dialed by us, even when the DB host itself is
+    // only reachable from the far side of the tunnel.
+    if (creds.ssh?.host) {
+      await this.ssrf.assertPublicHost(String(creds.ssh.host), 'SSH host');
+    }
+    // With an agent (or an SSH tunnel) the DB host is resolved on the far side,
+    // not by us, so it may legitimately be private.
+    if (viaAgent || creds.ssh) return;
+    if (creds.host) {
+      await this.ssrf.assertPublicHost(String(creds.host), 'Database host');
+    }
+  }
+
+  private async isInstanceAdmin(userId: string): Promise<boolean> {
+    const u = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { isAdmin: true },
+    });
+    return !!u?.isAdmin;
+  }
+
   private async assertOwnedAgent(agentId: string | null | undefined, userId: string): Promise<string> {
     if (!agentId) {
       throw new BadRequestException('Select a local agent to route this connection through.');
@@ -245,6 +293,11 @@ export class ConnectionsService implements OnModuleDestroy {
       // Switching which agent an already-agent-routed connection uses.
       data.agentId = await this.assertOwnedAgent(dto.agentId, userId);
     }
+    // SECURITY: re-validate the effective dial target. Two things can repoint a
+    // connection at our internals: new credentials, or switching agent routing
+    // OFF — which makes US dial a host that was previously reached from the
+    // user's own network. Both are covered here.
+    const effectiveViaAgent = (data.viaAgent as boolean | undefined) ?? existing.viaAgent;
     if (dto.credentials) {
       const current = await this.crypto.decryptJson<ConnectionCredentials>(existing.credentialsCt, PURPOSE(id));
       // Start from current, apply provided fields, then strip the tunnel if client sent ssh:null.
@@ -252,7 +305,11 @@ export class ConnectionsService implements OnModuleDestroy {
       if ((dto.credentials as { ssh?: unknown }).ssh === null) {
         delete merged.ssh;
       }
+      await this.assertDialableTarget(merged, effectiveViaAgent, userId);
       data.credentialsCt = await this.crypto.encryptJson(merged, PURPOSE(id));
+    } else if (data.viaAgent === false && existing.viaAgent) {
+      const current = await this.crypto.decryptJson<ConnectionCredentials>(existing.credentialsCt, PURPOSE(id));
+      await this.assertDialableTarget(current, false, userId);
     }
     const updated = await this.prisma.connection.update({ where: { id }, data });
     // Credentials, readOnly or timeout might have changed — drop cached pools.

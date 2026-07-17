@@ -4,6 +4,7 @@ import type Redis from 'ioredis';
 import { createHmac } from 'crypto';
 import { WebhookDeliveryStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { SsrfGuardService } from '../common/ssrf-guard.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { REDIS_CLIENT } from '../scheduler/scheduler.constants';
 import { QUEUE_WEBHOOKS, type WebhookJobData } from './webhook.queue';
@@ -20,6 +21,7 @@ export class WebhookWorker implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
+    private readonly ssrf: SsrfGuardService,
   ) {}
 
   onModuleInit() {
@@ -64,6 +66,12 @@ export class WebhookWorker implements OnModuleInit, OnModuleDestroy {
       const body = JSON.stringify(payload);
       const secret = await this.crypto.decrypt(w.secretCt, PURPOSE(w.id));
       const signature = createHmac('sha256', secret).update(body).digest('hex');
+
+      // SECURITY: re-check the destination immediately before dialing. Checking
+      // only at save time is bypassable — the hostname can be re-pointed at an
+      // internal address after validation (DNS rebinding), and rows created
+      // before the guard existed were never checked at all.
+      await this.ssrf.assertPublicUrl(w.url, 'Webhook URL');
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);

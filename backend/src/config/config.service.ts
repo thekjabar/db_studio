@@ -145,6 +145,15 @@ const EnvSchema = z.object({
     .string()
     .default('false')
     .transform((v) => v === 'true'),
+  // Allow the SERVER to dial private/loopback/link-local addresses (connection
+  // hosts, SSH bastions, webhooks). Must stay false on a shared/SaaS install —
+  // it's the SSRF guard. Self-hosted instances that legitimately point at
+  // databases on their own LAN can turn it on. Note this never affects
+  // agent-tunnelled connections, which dial from the user's own machine.
+  ALLOW_PRIVATE_HOSTS: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
   // --- Wayl online payments (subscription checkout) ---
   // Merchant token, sent as the `X-WAYL-AUTHENTICATION` header. When unset,
   // online payments are disabled and checkout returns a friendly "not
@@ -301,6 +310,7 @@ export class AppConfigService {
   get requireInviteCode() { return this.env.REQUIRE_INVITE_CODE_ON_SIGNUP; }
   get requireSignupApproval() { return this.env.REQUIRE_SIGNUP_APPROVAL; }
   get ssoEnabled() { return this.env.SSO_ENABLED; }
+  get allowPrivateHosts() { return this.env.ALLOW_PRIVATE_HOSTS; }
 
   // --- Wayl payments ---
   get waylApiToken() { return this.env.WAYL_API_TOKEN; }

@@ -74,7 +74,9 @@ export class PublicApiController {
     if (conn.readOnly && cls.kind !== 'SELECT') {
       throw new BadRequestException('Connection is read-only');
     }
-    const drv = await this.connections.buildDriverForRole(id, role);
+    // SECURITY: mask for the key's owner — an API key must not be a way to read
+    // columns its user is masked from in the UI.
+    const drv = await this.connections.buildDriverForRole(id, role, { userId: user.id });
     const started = Date.now();
     try {
       const res = await drv.runRawQuery(dto.sql, dto.params);

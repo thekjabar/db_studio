@@ -10,6 +10,8 @@ import { ConnectionCredentials, IDatabaseDriver } from '../drivers/driver.interf
 import { CreateConnectionDto, UpdateConnectionDto } from './connections.dto';
 import { QuotaService } from '../common/quota.service';
 import { SsrfGuardService } from '../common/ssrf-guard.service';
+import { ColumnMasksService } from './column-masks.service';
+import { wrapDriverWithMasks } from './masked-driver';
 import { buildRows } from './sample-data.util';
 
 const PURPOSE = (id: string) => `conn:${id}`;
@@ -62,6 +64,7 @@ export class ConnectionsService implements OnModuleDestroy {
     private readonly audit: AuditService,
     private readonly quota: QuotaService,
     private readonly ssrf: SsrfGuardService,
+    private readonly masks: ColumnMasksService,
   ) {
     this.sweeper = setInterval(() => this.sweepIdle(), SWEEP_INTERVAL_MS);
     // Don't keep the process alive just for this.
@@ -521,12 +524,29 @@ export class ConnectionsService implements OnModuleDestroy {
     }
   }
 
-  async buildDriverForRole(id: string, role: Role): Promise<IDatabaseDriver> {
+  /**
+   * Build a driver scoped to a role.
+   *
+   * SECURITY: pass `userId` for any path that returns row data to a person, and
+   * that user's column masks are applied to everything the driver hands back
+   * (see wrapDriverWithMasks). Masking used to be re-implemented per call site
+   * and was therefore missing from most of them; doing it here makes read paths
+   * safe by default. Omit `userId` only for genuine system paths that return no
+   * row values to a user (introspection, backups, migrations, health checks).
+   */
+  async buildDriverForRole(
+    id: string,
+    role: Role,
+    opts?: { userId?: string },
+  ): Promise<IDatabaseDriver> {
     // Viewer -> always read-only + prefer replica, irrespective of connection setting.
-    return this.buildDriver(id, {
+    const raw = await this.buildDriver(id, {
       readOnly: role === Role.VIEWER ? true : undefined,
       preferReplica: role === Role.VIEWER,
     });
+    if (!opts?.userId) return raw;
+    const masked = await this.masks.maskedColumnNames(opts.userId, id);
+    return wrapDriverWithMasks(raw, masked);
   }
 
   /**

@@ -1,6 +1,8 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
 import { IsEmail, IsString, Length, Matches } from 'class-validator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RbacGuard } from '../rbac/rbac.guard';
+import { RequireRole } from '../rbac/rbac.decorator';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
 import { ColumnMasksService } from './column-masks.service';
 
@@ -14,11 +16,11 @@ export class CreateColumnMaskDto {
 }
 
 @Controller('connections/:id/column-masks')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RbacGuard)
 export class ColumnMasksController {
   constructor(private readonly svc: ColumnMasksService) {}
 
-  @Get()
+  @Get() @RequireRole('OWNER')
   list(@Param('id') id: string) {
     return this.svc.list(id);
   }

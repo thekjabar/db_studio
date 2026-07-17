@@ -289,7 +289,12 @@ export class SchedulerWorker implements OnModuleInit, OnModuleDestroy {
 
     try {
       // Schedules run with owner's role — OWNER implicitly, so all SQL is allowed.
-      const drv = await this.connections.buildDriverForRole(schedule.connectionId, Role.OWNER);
+      // SECURITY: mask as the schedule's owner. Results are emailed/Slacked, so
+      // without this a masked user could schedule `SELECT ssn FROM employees`
+      // and have the masked values delivered to their inbox.
+      const drv = await this.connections.buildDriverForRole(schedule.connectionId, Role.OWNER, {
+        userId: schedule.ownerId,
+      });
       try {
         const timeoutMs = this.cfg.schedulerQueryTimeoutMs;
         // Scope unqualified table names to the chosen schema. The driver sets

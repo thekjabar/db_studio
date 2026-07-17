@@ -291,8 +291,12 @@ export class IntrospectionController {
     @Query('column') column: string,
     @Query('value') value: string,
     @Req() req: Request,
+    @CurrentUser() u: AuthUser,
   ) {
-    const drv = await this.svc.buildDriverForRole(id, this.roleFromReq(req));
+    // SECURITY: pass userId so the row comes back masked. This endpoint returns
+    // a whole row, so without it a masked viewer could read any masked column
+    // with a single GET — the grid's masking simply didn't reach here.
+    const drv = await this.svc.buildDriverForRole(id, this.roleFromReq(req), { userId: u.id });
     try {
       // fetchRowByPk whitelists `column` against the real column list and binds
       // `value` as a parameter, so this is a safe single-row lookup for any

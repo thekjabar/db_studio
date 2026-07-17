@@ -4,6 +4,8 @@ import { Role } from '@prisma/client';
 import { PermissionsService } from './permissions.service';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RbacGuard } from '../rbac/rbac.guard';
+import { RequireRole } from '../rbac/rbac.decorator';
 
 // Ident-shape guard for schema/table names. Mirrors the check in drivers/quote.util.ts
 // so a malformed identifier can't sneak into a grant row.
@@ -26,11 +28,11 @@ export class UpsertTableGrantDto {
 }
 
 @Controller('connections/:id/permissions')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RbacGuard)
 export class PermissionsController {
   constructor(private readonly svc: PermissionsService) {}
 
-  @Get('members')
+  @Get('members') @RequireRole('OWNER')
   listMembers(@Param('id') id: string) {
     return this.svc.listMembers(id);
   }
@@ -43,7 +45,7 @@ export class PermissionsController {
   }
 
   /** Pending invitations (people invited who haven't registered yet). */
-  @Get('invites')
+  @Get('invites') @RequireRole('OWNER')
   listInvites(@Param('id') id: string) {
     return this.svc.listInvites(id);
   }
@@ -76,7 +78,7 @@ export class PermissionsController {
     await this.svc.removeMember(id, u.id, memberId);
   }
 
-  @Get('table-grants')
+  @Get('table-grants') @RequireRole('OWNER')
   listGrants(@Param('id') id: string) {
     return this.svc.listTableGrants(id);
   }

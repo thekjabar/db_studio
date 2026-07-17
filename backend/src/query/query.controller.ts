@@ -7,6 +7,7 @@ import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Length, Max, Min
 import { Dialect, Role } from '@prisma/client';
 import { ConnectionsService } from '../connections/connections.service';
 import { ColumnMasksService } from '../connections/column-masks.service';
+import { RowFiltersService } from '../connections/row-filters.service';
 import { AuditService } from '../audit/audit.service';
 import { RbacGuard } from '../rbac/rbac.guard';
 import { RequireRole } from '../rbac/rbac.decorator';
@@ -133,6 +134,7 @@ export class QueryController {
   constructor(
     private readonly svc: ConnectionsService,
     private readonly masks: ColumnMasksService,
+    private readonly rowFilters: RowFiltersService,
     private readonly audit: AuditService,
     private readonly classifier: SqlClassifierService,
     private readonly explain: ExplainService,
@@ -190,6 +192,15 @@ export class QueryController {
 
     if (cls.kind !== 'SELECT' && role === Role.VIEWER) {
       throw new ForbiddenException('Viewer role may only run SELECT statements');
+    }
+    // SECURITY: row filters can only be enforced where we build the query, so a
+    // filtered user must not be able to hand us arbitrary SQL — `SELECT * FROM
+    // orders` here would return exactly the rows the filter exists to hide.
+    // Owners are exempt (filters are never applied to them anyway).
+    if (conn.ownerId !== user.id && (await this.rowFilters.hasAnyFor(user.id, id))) {
+      throw new ForbiddenException(
+        'Your access to this connection is row-filtered, so raw SQL is disabled for your account. Use the table browser instead.',
+      );
     }
     if (cls.kind === 'DESTRUCTIVE' && !dto.confirmDestructive) {
       throw new BadRequestException({

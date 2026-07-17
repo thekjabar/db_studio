@@ -94,8 +94,11 @@ async function runSavedQuery(
   sql: string,
   connectionId: string,
   role: Role,
+  /** Whose column masks to apply. For a public dashboard this is the owner —
+   *  a share can never reveal more than the person who published it could see. */
+  userId?: string,
 ) {
-  const drv = await connections.buildDriverForRole(connectionId, role);
+  const drv = await connections.buildDriverForRole(connectionId, role, { userId });
   try {
     return await drv.runRawQuery(sql);
   } finally {
@@ -200,14 +203,24 @@ export class DashboardsController {
     // connection can still refresh tiles even if they didn't create the
     // dashboard.
     await this.svc.getOr403(user.id, id);
-    const tile = await this.prisma.dashboardTile.findUnique({
-      where: { id: tileId },
+    // SECURITY: the tile must belong to the dashboard we just authorized.
+    // Looking it up by tileId alone authorized *your* dashboard and then ran
+    // *someone else's* tile against *their* connection — a cross-tenant read
+    // needing no membership at all (tile ids are exposed by public shares).
+    const tile = await this.prisma.dashboardTile.findFirst({
+      where: { id: tileId, dashboardId: id },
       include: { savedQuery: { select: { sqlText: true, connectionId: true } } },
     });
     if (!tile) throw new NotFoundException('Tile not found');
     // Dashboards always run as VIEWER — charting a destructive statement
     // on a timer would be a footgun.
-    return runSavedQuery(this.connections, tile.savedQuery.sqlText, tile.savedQuery.connectionId, Role.VIEWER);
+    return runSavedQuery(
+      this.connections,
+      tile.savedQuery.sqlText,
+      tile.savedQuery.connectionId,
+      Role.VIEWER,
+      user.id,
+    );
   }
 }
 
@@ -262,11 +275,15 @@ export class PublicDashboardsController {
     void req;
     // Always VIEWER for public shares. The dashboard owner's role is irrelevant
     // here — we don't want a shared link to inherit OWNER.
+    // SECURITY: mask as the publisher. This endpoint is unauthenticated, so
+    // without it a masked user could publish a dashboard and read their masked
+    // columns straight back out of a public URL.
     return runSavedQuery(
       this.connections,
       tile.savedQuery.sqlText,
       tile.savedQuery.connectionId,
       Role.VIEWER,
+      d.ownerId,
     );
   }
 }

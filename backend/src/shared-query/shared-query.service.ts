@@ -127,7 +127,14 @@ export class SharedQueryService {
     }
 
     // Always VIEWER role => read-only driver, replica-preferred.
-    const drv = await this.connections.buildDriverForRole(row.connectionId, Role.VIEWER);
+    // SECURITY: apply the SHARER's column masks. Without this a masked viewer
+    // could share `SELECT ssn FROM employees` and then read it back through
+    // this endpoint — which needs no authentication at all — laundering masked
+    // data into a public URL. The share can never expose more than the person
+    // who created it was allowed to see.
+    const drv = await this.connections.buildDriverForRole(row.connectionId, Role.VIEWER, {
+      userId: row.createdById,
+    });
     const started = Date.now();
     try {
       const res = await drv.runRawQuery(row.sqlText);

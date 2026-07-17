@@ -215,15 +215,23 @@ export class DashboardsService {
     if (patch.y !== undefined) data.y = clampInt(patch.y, 0, 10_000);
     if (patch.w !== undefined) data.w = clampInt(patch.w, 1, 12);
     if (patch.h !== undefined) data.h = clampInt(patch.h, 1, 20);
-    return this.prisma.dashboardTile.update({
-      where: { id: tileId },
+    // SECURITY: scope the tile to the dashboard we authorized — updateMany with
+    // both ids means a tileId from someone else's dashboard simply matches
+    // nothing, instead of being written to.
+    const res = await this.prisma.dashboardTile.updateMany({
+      where: { id: tileId, dashboardId: id },
       data,
     });
+    if (res.count === 0) throw new NotFoundException('Tile not found');
+    return this.prisma.dashboardTile.findUnique({ where: { id: tileId } });
   }
 
   async removeTile(userId: string, id: string, tileId: string) {
     await this.assertManage(userId, id);
-    await this.prisma.dashboardTile.delete({ where: { id: tileId } });
+    // SECURITY: as above — without dashboardId this deleted any tile by id,
+    // including another tenant's.
+    const res = await this.prisma.dashboardTile.deleteMany({ where: { id: tileId, dashboardId: id } });
+    if (res.count === 0) throw new NotFoundException('Tile not found');
     return { ok: true as const };
   }
 
@@ -231,10 +239,12 @@ export class DashboardsService {
     await this.assertManage(userId, id);
     // One transaction — either all tile positions update or none, preventing
     // "half drag" corruption if a later update fails.
+    // SECURITY: updateMany + dashboardId so a foreign tile id in the payload
+    // can't be repositioned (it matches nothing rather than writing).
     await this.prisma.$transaction(
       input.tiles.map((t) =>
-        this.prisma.dashboardTile.update({
-          where: { id: t.id },
+        this.prisma.dashboardTile.updateMany({
+          where: { id: t.id, dashboardId: id },
           data: {
             x: clampInt(t.x, 0, 12),
             y: clampInt(t.y, 0, 10_000),

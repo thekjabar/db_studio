@@ -4,6 +4,7 @@ import { Client as PgClient } from 'pg';
 import { Dialect, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
+import { ColumnMasksService } from '../connections/column-masks.service';
 import { ConnectionCredentials } from '../drivers/driver.interface';
 
 /**
@@ -40,6 +41,12 @@ interface CursorSession {
   createdAt: number;
   lastUsedAt: number;
   exhausted: boolean;
+  /**
+   * SECURITY: this service opens its own PgClient rather than going through
+   * buildDriverForRole, so it never inherited the driver-level masking. The
+   * user's masked columns are resolved once at open and applied to every page.
+   */
+  masked: Set<string>;
   /** Serializes fetches so two concurrent FETCHes can't interleave on one client. */
   chain: Promise<unknown>;
 }
@@ -59,6 +66,7 @@ export class CursorService implements OnModuleDestroy {
   constructor(
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
+    private readonly masks: ColumnMasksService,
   ) {
     this.sweeper = setInterval(() => void this.sweep(), SWEEP_MS);
     // Don't keep the process alive just for the sweeper.
@@ -164,6 +172,7 @@ export class CursorService implements OnModuleDestroy {
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       exhausted: false,
+      masked: await this.masks.maskedColumnNames(userId, connectionId),
       chain: Promise.resolve(),
     };
     // Store the pg cursor name on the session via closure in fetch — keep it
@@ -213,6 +222,10 @@ export class CursorService implements OnModuleDestroy {
         session.fields!.forEach((f, i) => (obj[f.name] = arr[i]));
         return obj;
       });
+      // SECURITY: apply this user's column masks. The same SQL via POST /query
+      // is masked; without this, switching to the cursor endpoint returned the
+      // masked columns in the clear.
+      if (session.masked.size > 0) this.masks.applyMasks(rows, session.masked);
 
       session.lastUsedAt = Date.now();
       const done = rows.length < n;

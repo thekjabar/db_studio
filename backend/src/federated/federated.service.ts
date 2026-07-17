@@ -4,6 +4,7 @@ import { Dialect, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { RbacService } from '../rbac/rbac.service';
+import { ColumnMasksService } from '../connections/column-masks.service';
 import { ConnectionCredentials } from '../drivers/driver.interface';
 
 const PURPOSE = (id: string) => `conn:${id}`;
@@ -72,6 +73,7 @@ export class FederatedService {
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
     private readonly rbac: RbacService,
+    private readonly masks: ColumnMasksService,
   ) {}
 
   /**
@@ -161,6 +163,15 @@ export class FederatedService {
           dataType: String(result.columnTypes()[i]),
         }));
         const rows = result.getRowObjects() as Record<string, unknown>[];
+
+        // SECURITY: federated queries build their own engine rather than going
+        // through buildDriverForRole, so they never inherited its masking —
+        // joining two connections was a way to read columns masked on either.
+        // Apply the requesting user's masks from every source involved.
+        for (const s of resolved) {
+          const masked = await this.masks.maskedColumnNames(userId, s.connectionId);
+          if (masked.size > 0) this.masks.applyMasks(rows, masked);
+        }
 
         let truncated = false;
         let finalRows = rows;

@@ -155,6 +155,21 @@ export class RowFiltersService {
     return applyPlaceholders(row.predicate, userId);
   }
 
+  /**
+   * Does this user have ANY row filter on this connection?
+   *
+   * SECURITY: a row filter is only enforceable where WE build the query (the
+   * table browser), because appending a predicate to arbitrary user-supplied
+   * SQL isn't possible. Raw-SQL paths therefore have to fail closed for a
+   * filtered user — otherwise `SELECT * FROM orders` in the SQL editor returns
+   * every row the filter was meant to hide, which made the whole control
+   * decorative.
+   */
+  async hasAnyFor(userId: string, connectionId: string): Promise<boolean> {
+    const n = await this.prisma.rowFilter.count({ where: { connectionId, userId } });
+    return n > 0;
+  }
+
   async list(connectionId: string) {
     const rows = await this.prisma.rowFilter.findMany({
       where: { connectionId },

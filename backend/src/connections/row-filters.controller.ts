@@ -1,6 +1,8 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
 import { IsEmail, IsString, Length, Matches } from 'class-validator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RbacGuard } from '../rbac/rbac.guard';
+import { RequireRole } from '../rbac/rbac.decorator';
 import { CurrentUser, AuthUser } from '../auth/decorators/current-user.decorator';
 import { RowFiltersService } from './row-filters.service';
 
@@ -15,11 +17,11 @@ export class UpsertRowFilterDto {
 }
 
 @Controller('connections/:id/row-filters')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RbacGuard)
 export class RowFiltersController {
   constructor(private readonly svc: RowFiltersService) {}
 
-  @Get()
+  @Get() @RequireRole('OWNER')
   list(@Param('id') id: string) {
     return this.svc.list(id);
   }

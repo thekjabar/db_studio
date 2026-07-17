@@ -22,11 +22,13 @@ export class AuditController {
   @RequireRole('VIEWER')
   async list(
     @Param('id') connectionId: string,
+    @CurrentUser() u: AuthUser,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
   ) {
     return this.audit.listForConnection(
       connectionId,
+      u.id,
       limit ? parseInt(limit, 10) : 100,
       cursor,
     );
@@ -55,6 +57,7 @@ export class AuditController {
   @RequireRole('VIEWER')
   async queryHistory(
     @Param('id') connectionId: string,
+    @CurrentUser() u: AuthUser,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
     @Query('userId') userId?: string,
@@ -62,7 +65,7 @@ export class AuditController {
     @Query('search') search?: string,
     @Query('action') action?: 'QUERY_RUN' | 'SCHEMA_CHANGE',
   ) {
-    return this.audit.listQueryHistory(connectionId, {
+    return this.audit.listQueryHistory(connectionId, u.id, {
       limit: limit ? parseInt(limit, 10) : 50,
       cursor,
       userId: userId || undefined,

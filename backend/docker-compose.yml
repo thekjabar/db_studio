@@ -3,6 +3,10 @@ services:
     image: postgres:17-alpine
     container_name: dbdash-db
     restart: unless-stopped
+    # SECURITY/STABILITY: cap memory so a heavy query or a runaway can't consume
+    # the whole 4GB host and let the kernel OOM-killer take out unrelated apps
+    # (business-os, mrwari, etc.). A limit contains the kill to this cgroup.
+    mem_limit: 768m
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-dbdash}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dbdash}
@@ -20,11 +24,17 @@ services:
     image: redis:7-alpine
     container_name: dbdash-redis
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    mem_limit: 256m
+    # SECURITY: require a password. Redis has no auth by default, and it sits on
+    # the shared docker network reachable via the connection-host SSRF surface —
+    # it was the one unauthenticated service inside the perimeter.
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -36,6 +46,7 @@ services:
       dockerfile: Dockerfile
     container_name: dbdash-api
     restart: unless-stopped
+    mem_limit: 900m
     env_file: .env
     depends_on:
       db:
@@ -46,7 +57,8 @@ services:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: 3000
       DATABASE_URL: postgresql://${POSTGRES_USER:-dbdash}:${POSTGRES_PASSWORD:-dbdash}@db:5432/${POSTGRES_DB:-dbdash}?schema=public
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      # Password embedded so the app authenticates to the now-locked Redis.
+      REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD must be set in .env}@redis:6379
     entrypoint: ["/usr/bin/tini", "--", "sh", "-c", "node_modules/.bin/tsx node_modules/prisma/build/index.js migrate deploy && exec node dist/main.js"]
     ports:
       # SECURITY: bind to loopback only. Published on 0.0.0.0 this answered the
@@ -60,6 +72,7 @@ services:
     image: postgres:17-alpine
     container_name: dbdash-db-backup
     restart: unless-stopped
+    mem_limit: 256m
     depends_on:
       db:
         condition: service_healthy

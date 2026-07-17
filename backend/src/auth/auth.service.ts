@@ -146,7 +146,21 @@ export class AuthService {
     | { userId: string; awaitingApproval: true }
   > {
     const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (existing) throw new ConflictException('Email already registered');
+    if (existing) {
+      // SECURITY: don't confirm whether an email has an account. Login, password
+      // reset and resend-verification are all deliberately generic, but signup
+      // answered "Email already registered" — which turned it into a free
+      // account-existence oracle for the whole user base.
+      //
+      // Instead we mimic the new-signup response exactly and tell the real owner
+      // that someone tried. `userId` is a throwaway value: it's only used by the
+      // client to drive the "resend verification" screen, and resend is itself
+      // generic, so nothing leaks.
+      await this.emailVerification
+        .notifyExistingAccountSignupAttempt(existing.email)
+        .catch(() => null);
+      return { userId: randomBytes(12).toString('hex'), needsVerification: true };
+    }
 
     // Invite-gate: when REQUIRE_INVITE_CODE_ON_SIGNUP is on, the signup DTO
     // must carry a valid code. Consume atomically so parallel signups don't
@@ -314,7 +328,31 @@ export class AuthService {
     if (!rawToken) throw new UnauthorizedException('No refresh token');
     const hash = this.hashRefresh(rawToken);
     const record = await this.prisma.refreshToken.findUnique({ where: { tokenHash: hash } });
-    if (!record || record.revokedAt || record.expiresAt < new Date()) {
+    if (!record) throw new UnauthorizedException('Invalid or expired refresh token');
+
+    // SECURITY: reuse detection. Tokens rotate on every refresh, so a token that
+    // was already rotated away should never be presented again. If it is, either
+    // it leaked and the thief is using it, or it leaked and the victim just
+    // rotated past it — we can't tell which, so we assume compromise and revoke
+    // the user's whole token family. Previously a revoked token merely 401'd,
+    // which let a stolen token run a silent parallel session indefinitely: the
+    // victim only ever saw one odd re-login.
+    if (record.revokedAt) {
+      await this.prisma.refreshToken.updateMany({
+        where: { userId: record.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      await this.audit
+        .log({
+          userId: record.userId,
+          action: 'LOGIN_FAILED',
+          metadata: { reason: 'refresh_token_reuse_detected', revokedAllSessions: true },
+          ...meta,
+        })
+        .catch(() => undefined);
+      throw new UnauthorizedException('Invalid or expired refresh token');
+    }
+    if (record.expiresAt < new Date()) {
       throw new UnauthorizedException('Invalid or expired refresh token');
     }
     const user = await this.prisma.user.findUnique({ where: { id: record.userId } });

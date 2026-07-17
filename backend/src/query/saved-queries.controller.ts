@@ -37,7 +37,10 @@ export class SavedQueriesController {
   list(@Param('id') id: string) { return this.svc.list(id); }
 
   @Get(':queryId') @RequireRole('VIEWER')
-  getOne(@Param('queryId') queryId: string) { return this.svc.get(queryId); }
+  getOne(@Param('id') id: string, @Param('queryId') queryId: string) {
+    // Pass the connection so the saved query can't be read across tenants.
+    return this.svc.get(queryId, id);
+  }
 
   @Post() @RequireRole('EDITOR')
   create(@Param('id') id: string, @Body() dto: SavedQueryDto, @CurrentUser() u: AuthUser) {

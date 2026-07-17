@@ -32,6 +32,28 @@ export class EmailVerificationService {
 
   /** Generate a fresh token, persist its hash, and email the link. Safe to
    *  call repeatedly (old pending tokens are invalidated on each call). */
+  /**
+   * Sent when someone tries to register an email that already has an account.
+   * Signup returns the generic "check your email" response either way (so it
+   * isn't an account-existence oracle); this lets the real owner know, and
+   * gives them a password-reset path in case it was them who forgot.
+   */
+  async notifyExistingAccountSignupAttempt(email: string): Promise<void> {
+    if (!this.email.enabled) return;
+    try {
+      await this.email.send({
+        to: [email],
+        subject: 'Someone tried to sign up with your email',
+        body:
+          `We received a sign-up attempt for Query Schema using this email, but you already have an account.\n\n` +
+          `If this was you, just sign in as usual — or reset your password at ${this.cfg.appBaseUrl}/auth/request-reset .\n\n` +
+          `If it wasn't you, no action is needed: no new account was created and your account is unchanged.`,
+      });
+    } catch (e) {
+      this.log.warn(`existing-account signup notice to ${email} failed: ${(e as Error).message}`);
+    }
+  }
+
   async issueAndSend(userId: string, email: string): Promise<void> {
     // Expire any outstanding tokens first so a user clicking an old link
     // after requesting a new one doesn't hit a stale row.

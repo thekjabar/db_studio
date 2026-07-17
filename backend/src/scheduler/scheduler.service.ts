@@ -4,6 +4,7 @@ import { RbacService } from '../rbac/rbac.service';
 import { Prisma, Role } from '@prisma/client';
 import { QueuesService } from './queues.service';
 import { QuotaService } from '../common/quota.service';
+import { SqlClassifierService } from '../query/sql-classifier.service';
 import type { AlertCondition } from './alert-evaluator';
 
 // Very light cron validation — 5 space-separated fields. bullmq/cron-parser
@@ -44,6 +45,7 @@ export class SchedulerService {
     private readonly rbac: RbacService,
     private readonly queues: QueuesService,
     private readonly quota: QuotaService,
+    private readonly classifier: SqlClassifierService,
   ) {}
 
   private async assertCanManage(userId: string, scheduleId: string) {
@@ -89,12 +91,42 @@ export class SchedulerService {
     return row;
   }
 
+  /**
+   * A scheduled statement runs unattended as OWNER, so a non-owner may not
+   * schedule a destructive/DDL statement on a connection that requires review.
+   * There's no interactive approval step on a cron, so this refuses outright
+   * rather than accepting a review-request id.
+   */
+  private async assertSchedulableSql(userId: string, connectionId: string, sql: string) {
+    const conn = await this.prisma.connection.findUnique({
+      where: { id: connectionId },
+      select: { dialect: true, requireReview: true },
+    });
+    if (!conn?.requireReview) return;
+    const role = await this.rbac.effectiveRole(userId, connectionId);
+    if (role === Role.OWNER) return;
+    const cls = this.classifier.classify(sql, conn.dialect);
+    if (cls.kind === 'DESTRUCTIVE' || cls.kind === 'DDL' || cls.kind === 'UNKNOWN') {
+      throw new ForbiddenException({
+        code: 'REVIEW_REQUIRED',
+        message:
+          'This connection requires approval for destructive statements, so only the connection owner can schedule one.',
+        classification: cls,
+      });
+    }
+  }
+
   async create(userId: string, input: CreateScheduleInput) {
     if (!CRON_RE.test(input.cron)) throw new BadRequestException('Invalid cron expression');
     // Caller must have at least EDITOR rights on the connection — same bar as
     // running any SQL against it.
     await this.rbac.require(userId, input.connectionId, Role.EDITOR);
     await this.quota.assertCanCreateSchedule(userId);
+    // SECURITY: the worker executes this SQL as OWNER on a timer, so scheduling
+    // must face the same approval bar as running it directly. Without this an
+    // EDITOR could cron `DROP TABLE x` and skip the review gate that
+    // /query enforces.
+    await this.assertSchedulableSql(userId, input.connectionId, input.sqlText);
 
     if (input.slackWebhook && !/^https:\/\/hooks\.slack\.com\//.test(input.slackWebhook)) {
       throw new BadRequestException('Slack webhook must be a hooks.slack.com URL');
@@ -120,8 +152,13 @@ export class SchedulerService {
   }
 
   async update(userId: string, id: string, patch: UpdateScheduleInput) {
-    await this.assertCanManage(userId, id);
+    const existing = await this.assertCanManage(userId, id);
     if (patch.cron && !CRON_RE.test(patch.cron)) throw new BadRequestException('Invalid cron expression');
+    // Re-check on edit too — otherwise the gate is trivially skipped by creating
+    // a harmless SELECT schedule and then swapping in the destructive SQL.
+    if (patch.sqlText !== undefined) {
+      await this.assertSchedulableSql(userId, existing.connectionId, patch.sqlText);
+    }
 
     if (patch.slackWebhook && !/^https:\/\/hooks\.slack\.com\//.test(patch.slackWebhook)) {
       throw new BadRequestException('Slack webhook must be a hooks.slack.com URL');

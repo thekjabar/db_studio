@@ -95,12 +95,39 @@ function assertFreeExpr(kind: string, raw: string): string {
   if (raw.length > EXPR_MAX_LEN) {
     throw new BadRequestException(`${kind} too long (max ${EXPR_MAX_LEN})`);
   }
-  // Disallow literal statement terminators at the top level. This is intentionally
-  // lenient — we can't parse SQL, so we just block the most obvious "; --" form.
-  if (/;\s*(--|\/\*)/.test(raw)) {
-    throw new BadRequestException(`${kind} contains disallowed sequence`);
+  // SECURITY: reject ANY statement break, not just the "; --" form.
+  //
+  // This expression is concatenated into DDL and executed over the simple query
+  // protocol, which runs batches — so `1; DROP TABLE users` was a working
+  // stacked-query injection. The old comment argued that an EDITOR "can run
+  // arbitrary SQL via /query anyway", but that stopped being true: /query
+  // enforces the requireReview approval gate for DDL/destructive statements and
+  // this endpoint does not, so this was a way around the approval workflow.
+  //
+  // A semicolon inside a quoted literal (DEFAULT 'a;b') is legitimate, so only
+  // bare ones outside string literals are refused.
+  if (hasBareSemicolon(raw)) {
+    throw new BadRequestException(`${kind} may not contain multiple statements`);
   }
   return raw;
+}
+
+/**
+ * True if `s` contains a `;` outside of a single-quoted literal. Doubled quotes
+ * ('') are the SQL escape for a literal quote and stay inside the string.
+ */
+function hasBareSemicolon(s: string): boolean {
+  let inString = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === "'") {
+      if (inString && s[i + 1] === "'") { i++; continue; } // escaped ''
+      inString = !inString;
+    } else if (c === ';' && !inString) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function assertDefaultExpr(raw: string): string {

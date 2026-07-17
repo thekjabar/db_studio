@@ -20,8 +20,16 @@ export class SavedQueriesService {
     });
   }
 
-  get(id: string) {
-    return this.prisma.savedQuery.findUnique({ where: { id } });
+  /**
+   * SECURITY: `connectionId` is required and enforced. The RBAC guard authorizes
+   * the connection in the URL, but the query id was previously looked up on its
+   * own — so passing another tenant's queryId under a connection you own
+   * returned their SQL. Scoping the lookup makes a foreign id simply not found.
+   */
+  async get(id: string, connectionId: string) {
+    const q = await this.prisma.savedQuery.findFirst({ where: { id, connectionId } });
+    if (!q) throw new NotFoundException('Saved query not found');
+    return q;
   }
 
   create(

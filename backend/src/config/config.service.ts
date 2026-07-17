@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 
+// The committed dev default for OPERATOR_JWT_SECRET. Refused in production (see
+// the constructor) — a deploy running on this value is trivially forgeable.
+const DEV_OPERATOR_SECRET = 'dev-operator-secret-change-me-0000000000000000';
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
@@ -111,7 +115,7 @@ const EnvSchema = z.object({
   OPERATOR_JWT_SECRET: z
     .string()
     .min(32, 'OPERATOR_JWT_SECRET must be >=32 chars')
-    .default('dev-operator-secret-change-me-0000000000000000'),
+    .default(DEV_OPERATOR_SECRET),
   OPERATOR_JWT_TTL: z.string().default('30m'),
   OPERATOR_REFRESH_TTL: z.string().default('1d'),
   // Origins allowed to hit /api/operator — typically the admin.* subdomain.
@@ -189,6 +193,18 @@ export class AppConfigService {
       throw new Error('Invalid environment configuration');
     }
     this.env = parsed.data;
+
+    // SECURITY: OPERATOR_JWT_SECRET has a dev default so `pnpm dev` works with
+    // no setup — but that default is committed to the repo, so a production
+    // deploy that forgets to set it would let anyone forge an operator token
+    // and take the whole admin panel. The comment claimed it was "required in
+    // production"; nothing enforced that. Now it does.
+    if (this.env.NODE_ENV === 'production' && this.env.OPERATOR_JWT_SECRET === DEV_OPERATOR_SECRET) {
+      throw new Error(
+        'OPERATOR_JWT_SECRET is still the built-in development default. Set it to a unique random value in production — ' +
+          'generate one with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64url\'))"',
+      );
+    }
 
     // Decode & validate encryption key: must be exactly 32 bytes.
     const keyBuf = Buffer.from(this.env.ENCRYPTION_KEY, 'base64');

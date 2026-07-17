@@ -20,6 +20,24 @@ export interface AuditInput {
 
 const MAX_SQL = 10_000;
 
+/**
+ * Recursively null any value whose key matches a masked column. Audit metadata
+ * is free-form JSON (before/after row snapshots, export summaries), so we walk
+ * the whole structure rather than assuming a shape.
+ */
+function maskMetadata(value: unknown, masked: Set<string>): unknown {
+  if (masked.size === 0 || value == null) return value;
+  if (Array.isArray(value)) return value.map((v) => maskMetadata(v, masked));
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+    for (const k of Object.keys(out)) {
+      out[k] = masked.has(k) ? null : maskMetadata(out[k], masked);
+    }
+    return out;
+  }
+  return value;
+}
+
 @Injectable()
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
@@ -62,6 +80,8 @@ export class AuditService {
    */
   async listQueryHistory(
     connectionId: string,
+    /** Reader — their column masks are applied to the metadata snapshots. */
+    viewerId: string,
     opts: {
       limit?: number;
       cursor?: string;
@@ -72,6 +92,7 @@ export class AuditService {
     } = {},
   ) {
     const take = Math.min(Math.max(1, opts.limit ?? 50), 200);
+    const masked = await this.maskedColumnsFor(viewerId, connectionId);
     const actions = opts.actions && opts.actions.length > 0
       ? opts.actions
       : (['QUERY_RUN', 'SCHEMA_CHANGE'] as const);
@@ -128,7 +149,7 @@ export class AuditService {
         action: r.action,
         sqlText: r.sqlText,
         affectedRows: r.affectedRows,
-        metadata: r.metadata,
+        metadata: maskMetadata(r.metadata, masked),
         createdAt: r.createdAt,
       })),
       nextCursor: hasMore
@@ -137,8 +158,25 @@ export class AuditService {
     };
   }
 
-  async listForConnection(connectionId: string, limit = 100, cursor?: string) {
+  /** Masked column names for a reader on a connection (empty for owners). */
+  private async maskedColumnsFor(userId: string, connectionId: string): Promise<Set<string>> {
+    const rows = await this.prisma.columnMask.findMany({
+      where: { connectionId, userId },
+      select: { columnName: true },
+    });
+    return new Set(rows.map((r) => r.columnName));
+  }
+
+  /**
+   * SECURITY: audit `metadata` carries before/after row snapshots for row edits,
+   * so it must respect the reader's column masks — otherwise a masked VIEWER
+   * could read masked values straight out of the history. `viewerId` is
+   * required; masks are resolved via prisma rather than ColumnMasksService to
+   * avoid an Audit<->Connections module cycle.
+   */
+  async listForConnection(connectionId: string, viewerId: string, limit = 100, cursor?: string) {
     const take = Math.min(Math.max(1, limit), 500);
+    const masked = await this.maskedColumnsFor(viewerId, connectionId);
 
     // Keyset pagination instead of Prisma's `cursor` (which uses id alone and
     // doesn't match the createdAt ordering, degenerating to a full scan at
@@ -183,7 +221,7 @@ export class AuditService {
         affectedRows: r.affectedRows,
         ip: r.ip,
         userAgent: r.userAgent,
-        metadata: r.metadata,
+        metadata: maskMetadata(r.metadata, masked),
         createdAt: r.createdAt,
       })),
       nextCursor: hasMore

@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import type { IncomingMessage } from 'http';
 import { WebSocketServer, WebSocket, RawData } from 'ws';
 import { AppConfigService } from '../config/config.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { AgentConnection, AgentRegistry } from './agent-registry.service';
 
 interface PairingPayload {
@@ -47,6 +48,7 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
     private readonly jwt: JwtService,
     private readonly cfg: AppConfigService,
     private readonly registry: AgentRegistry,
+    private readonly prisma: PrismaService,
   ) {}
 
   onModuleInit(): void {
@@ -99,6 +101,27 @@ export class AgentGateway implements OnModuleInit, OnModuleDestroy {
       if (!payload.agentId || !payload.sub) throw new Error('token missing agentId');
     } catch (e) {
       this.log.warn(`Agent WS auth failed: ${(e as Error).message}`);
+      this.rejectSocket(ws, 4401, 'unauthorized');
+      return;
+    }
+
+    // SECURITY: the refresh credential is valid for a year, so the JWT alone is
+    // not enough — confirm the agent still exists and still belongs to the user
+    // named in the token. Without this, revoking an agent (deleting the row)
+    // did not actually close the tunnel: the old token kept registering, and a
+    // leaked one stayed usable for up to 365 days.
+    try {
+      const agent = await this.prisma.agent.findUnique({
+        where: { id: payload.agentId },
+        select: { id: true, ownerId: true },
+      });
+      if (!agent || agent.ownerId !== payload.sub) {
+        this.log.warn(`Agent WS rejected: agent ${payload.agentId} revoked or reassigned`);
+        this.rejectSocket(ws, 4401, 'unauthorized');
+        return;
+      }
+    } catch (e) {
+      this.log.warn(`Agent WS revocation check failed: ${(e as Error).message}`);
       this.rejectSocket(ws, 4401, 'unauthorized');
       return;
     }

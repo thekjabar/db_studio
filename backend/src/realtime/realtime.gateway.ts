@@ -11,6 +11,7 @@ import { AppConfigService } from '../config/config.service';
 import { ConnectionsService } from '../connections/connections.service';
 import { RbacService } from '../rbac/rbac.service';
 import { CryptoService } from '../crypto/crypto.service';
+import { ColumnMasksService } from '../connections/column-masks.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConnectionCredentials } from '../drivers/driver.interface';
 import { CdcService } from './cdc.service';
@@ -33,6 +34,25 @@ interface SubState {
  *        (user must install a matching trigger on their DB — docs in README),
  *        OR polls the table for rowcount/max(pk) every 5s as a fallback for other dialects.
  */
+/**
+ * Recursively null every value whose key matches a masked column, at any depth.
+ * Used for realtime payloads: CDC gives clean row objects, but LISTEN/NOTIFY
+ * payloads are shaped by a customer-written trigger, so we cannot assume where
+ * the row sits and must walk the whole structure.
+ */
+function maskDeep<T>(value: T, masked: Set<string>): T {
+  if (masked.size === 0 || value == null) return value;
+  if (Array.isArray(value)) return value.map((v) => maskDeep(v, masked)) as unknown as T;
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = { ...(value as Record<string, unknown>) };
+    for (const k of Object.keys(out)) {
+      out[k] = masked.has(k) ? null : maskDeep(out[k], masked);
+    }
+    return out as unknown as T;
+  }
+  return value;
+}
+
 @WebSocketGateway({ namespace: '/realtime', cors: { origin: true, credentials: true } })
 export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly log = new Logger(RealtimeGateway.name);
@@ -45,6 +65,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     private readonly conns: ConnectionsService,
     private readonly rbac: RbacService,
     private readonly crypto: CryptoService,
+    private readonly masks: ColumnMasksService,
     private readonly prisma: PrismaService,
     private readonly cdc: CdcService,
   ) {}
@@ -86,6 +107,13 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     const key = `${client.id}:${data.connectionId}:${data.schema}.${data.table}`;
     client.join(key);
 
+    // SECURITY: live updates stream real row values, so they must respect this
+    // subscriber's column masks exactly like the grid does. Without this, a
+    // masked user could just watch the table and read masked columns as they
+    // changed. Resolved once per subscription; owners have no masks so this is
+    // empty for them.
+    const masked = await this.masks.maskedColumnNames(client.userId, data.connectionId);
+
     // Preferred path: logical-replication CDC. Sub-second latency with exact
     // before/after row images and no user-installed trigger. Only used when the
     // server has wal_level=logical and we can publish the table; otherwise we
@@ -97,7 +125,13 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
             schema: change.schema,
             table: change.table,
             mode: 'cdc',
-            payload: { op: change.op, new: change.new, old: change.old, lsn: change.lsn },
+            payload: {
+              op: change.op,
+              // Mask the before/after images — these are real row values.
+              new: maskDeep(change.new, masked),
+              old: maskDeep(change.old, masked),
+              lsn: change.lsn,
+            },
           });
         });
         this.subs.set(key, { cdcUnsub: unsub });
@@ -118,7 +152,22 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
         const channel = `dbdash_${data.schema}_${data.table}`.toLowerCase().replace(/[^a-z0-9_]/g, '_');
         await pg.query(`LISTEN ${channel}`);
         pg.on('notification', (msg) => {
-          client.emit('change', { schema: data.schema, table: data.table, payload: msg.payload });
+          // The payload comes from a trigger the customer wrote, so its shape is
+          // arbitrary — parse it and null out anything named like a masked
+          // column, at any depth. If it isn't JSON we can't inspect it, so it's
+          // dropped rather than forwarded blind (fail closed) when masks apply.
+          let payload: unknown = msg.payload;
+          if (masked.size > 0) {
+            try {
+              payload = maskDeep(JSON.parse(msg.payload ?? 'null'), masked);
+            } catch {
+              this.log.warn(
+                `Dropping non-JSON NOTIFY payload on ${key} — cannot apply column masks to it.`,
+              );
+              return;
+            }
+          }
+          client.emit('change', { schema: data.schema, table: data.table, payload });
         });
         this.subs.set(key, { pgClient: pg });
         return { ok: true, mode: 'listen', channel };

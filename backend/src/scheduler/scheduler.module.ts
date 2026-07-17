@@ -5,6 +5,7 @@ import { ConnectionsModule } from '../connections/connections.module';
 import { AppConfigService } from '../config/config.service';
 import { QueuesService } from './queues.service';
 import { EmailService } from './email.service';
+import { SqlClassifierService } from '../query/sql-classifier.service';
 import { SchedulerWorker } from './scheduler.worker';
 import { SchedulerService } from './scheduler.service';
 import { SchedulerController } from './scheduler.controller';
@@ -15,6 +16,7 @@ import { SchedulerController } from './scheduler.controller';
   providers: [
     AppConfigService,
     QueuesService,
+    SqlClassifierService,
     EmailService,
     SchedulerWorker,
     SchedulerService,

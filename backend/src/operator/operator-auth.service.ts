@@ -4,6 +4,8 @@ import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppConfigService } from '../config/config.service';
+import { LoginCooldownService } from '../auth/login-cooldown.service';
+import { OperatorAuditService } from './operator-audit.service';
 
 /**
  * Authentication for the operator panel. Intentionally a separate module
@@ -31,6 +33,8 @@ export class OperatorAuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly cfg: AppConfigService,
+    private readonly cooldown: LoginCooldownService,
+    private readonly audit: OperatorAuditService,
   ) {
     this.bootstrapIfEmpty().catch((e) =>
       this.log.warn(`Operator bootstrap skipped: ${e.message}`),
@@ -97,14 +101,39 @@ export class OperatorAuthService {
   }
 
   async login(email: string, password: string, meta: ReqMeta): Promise<OperatorTokens & { operator: { id: string; email: string; isSuper: boolean; displayName: string | null } }> {
+    // SECURITY: the operator panel is the highest-privilege login on the
+    // instance, yet it had no lockout at all while customer login locks after 3
+    // failures — leaving it the softest target for a password guess. Check
+    // before any argon2 work so a locked account can't burn CPU either.
+    await this.cooldown.assertNotLocked(email);
+
     const op = await this.prisma.operator.findUnique({ where: { email } });
     // Same generic error regardless of cause — don't leak which field was wrong.
-    if (!op) throw new UnauthorizedException('Invalid credentials');
+    if (!op) {
+      await this.cooldown.recordFailure(email);
+      throw new UnauthorizedException('Invalid credentials');
+    }
     if (op.disabledAt) throw new ForbiddenException('Operator account disabled');
     // `.catch(() => false)` so a malformed/corrupt stored hash is treated as a
     // failed login (401) rather than throwing an unhandled 500.
     const ok = await argon2.verify(op.passwordHash, password).catch(() => false);
-    if (!ok) throw new UnauthorizedException('Invalid credentials');
+    if (!ok) {
+      await this.cooldown.recordFailure(email);
+      // Failed operator logins were not recorded anywhere — a password-guessing
+      // run against the admin panel left no trace.
+      await this.audit
+        .log({
+          operatorId: op.id,
+          action: 'OPERATOR_LOGIN_FAILED',
+          targetType: 'Operator',
+          targetId: op.id,
+          reason: 'Invalid password',
+          metadata: { ip: meta.ip ?? null, userAgent: meta.userAgent ?? null },
+        })
+        .catch(() => undefined);
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    await this.cooldown.recordSuccess(email);
     await this.prisma.operator.update({
       where: { id: op.id },
       data: { lastLoginAt: new Date() },

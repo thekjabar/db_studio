@@ -53,11 +53,25 @@ export class MssqlDriver implements IDatabaseDriver {
     return new Promise((resolve, reject) => {
       this.connect().then((conn) => {
         const rows: any[] = [];
-        const req = new Request(sql, (err, rowCount) => {
-          conn.close();
-          if (err) return reject(toDriverHttpError(err));
-          resolve({ rows, rowCount: rowCount ?? 0 });
-        });
+        // SECURITY: SQL Server has no session-level read-only mode, so a
+        // read-only connection runs inside a transaction that is ALWAYS rolled
+        // back. Reads return normally; anything the statement wrote (including
+        // DDL, which is transactional in SQL Server) is discarded.
+        //
+        // The previous implementation issued `SET TRANSACTION ISOLATION LEVEL
+        // READ UNCOMMITTED`, which is an isolation level, NOT a read-only mode
+        // — it permitted every write, so the VIEWER role was unenforced here
+        // while Postgres/MySQL/SQLite enforced it for real.
+        const finish = (err: Error | null | undefined, rowCount?: number) => {
+          const done = () => {
+            conn.close();
+            if (err) return reject(toDriverHttpError(err));
+            resolve({ rows, rowCount: rowCount ?? 0 });
+          };
+          if (this.readOnly) conn.rollbackTransaction(() => done());
+          else done();
+        };
+        const req = new Request(sql, finish);
         for (const p of params) req.addParameter(p.name, p.type, p.value);
         req.on('row', (cols) => {
           const obj: any = {};
@@ -65,7 +79,13 @@ export class MssqlDriver implements IDatabaseDriver {
           rows.push(obj);
         });
         if (this.readOnly) {
-          conn.execSqlBatch(new Request('SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED', () => conn.execSql(req)));
+          conn.beginTransaction((err) => {
+            if (err) {
+              conn.close();
+              return reject(toDriverHttpError(err));
+            }
+            conn.execSql(req);
+          });
         } else {
           conn.execSql(req);
         }

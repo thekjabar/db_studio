@@ -136,6 +136,15 @@ const EnvSchema = z.object({
     .string()
     .default('false')
     .transform((v) => v === 'true'),
+  // Workspace SSO (OIDC). OFF by default: a workspace owner supplies their own
+  // issuer, so an IdP they control must NEVER be trusted to assert an identity
+  // outside domains that workspace has proven it owns. Until domain-ownership
+  // verification exists, keep this disabled — see SsoService.callback, which
+  // additionally refuses to resolve non-members.
+  SSO_ENABLED: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
   // --- Wayl online payments (subscription checkout) ---
   // Merchant token, sent as the `X-WAYL-AUTHENTICATION` header. When unset,
   // online payments are disabled and checkout returns a friendly "not
@@ -291,6 +300,7 @@ export class AppConfigService {
   get operatorBootstrapPassword() { return this.env.OPERATOR_BOOTSTRAP_PASSWORD; }
   get requireInviteCode() { return this.env.REQUIRE_INVITE_CODE_ON_SIGNUP; }
   get requireSignupApproval() { return this.env.REQUIRE_SIGNUP_APPROVAL; }
+  get ssoEnabled() { return this.env.SSO_ENABLED; }
 
   // --- Wayl payments ---
   get waylApiToken() { return this.env.WAYL_API_TOKEN; }

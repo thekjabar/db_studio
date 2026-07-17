@@ -37,7 +37,11 @@ export class MysqlDriver implements IDatabaseDriver {
     }
     try {
       await conn.query(`SET SESSION MAX_EXECUTION_TIME=${Number(this.timeoutMs)}`).catch(() => {});
-      if (this.readOnly) await conn.query('SET SESSION TRANSACTION READ ONLY').catch(() => {});
+      // SECURITY: fail CLOSED. Swallowing this error left the session
+      // read-write while the caller believed it was read-only — a VIEWER would
+      // then have been able to write. A timeout hint failing is cosmetic; the
+      // read-only guarantee is not.
+      if (this.readOnly) await conn.query('SET SESSION TRANSACTION READ ONLY');
       return await fn(conn);
     } catch (err) {
       throw toDriverHttpError(err);

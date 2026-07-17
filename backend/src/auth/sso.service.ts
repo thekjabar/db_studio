@@ -220,10 +220,34 @@ export class SsoService {
       }
     }
 
-    // Find-or-create the user. OIDC emails are considered verified because the
-    // IdP vouches for them (same rationale as Google OAuth flow).
+    // SECURITY: the issuer here is supplied by the workspace owner, so the IdP
+    // is only trusted to speak for people who ALREADY belong to this workspace.
+    // Resolving an arbitrary account by email would let any owner point SSO at
+    // an IdP they run, assert someone else's address, and receive a session for
+    // that account — bypassing password, 2FA, suspension and approval. So an
+    // existing user is accepted only when they are already a member (or the
+    // owner) of this workspace; otherwise SSO may only create a brand-new
+    // account it is provisioning itself.
     let user = await this.prisma.user.findUnique({ where: { email } });
-    if (!user) {
+    if (user) {
+      const belongs =
+        ws.ownerId === user.id ||
+        (await this.prisma.workspaceMember.findUnique({
+          where: { workspaceId_userId: { workspaceId: ws.id, userId: user.id } },
+          select: { id: true },
+        })) !== null;
+      if (!belongs) {
+        throw new UnauthorizedException(
+          'This account is not a member of this workspace. Ask the owner to invite you first.',
+        );
+      }
+      if (!user.emailVerifiedAt) {
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { emailVerifiedAt: new Date() },
+        });
+      }
+    } else {
       if (!ws.sso.autoProvision) {
         throw new UnauthorizedException('No account for this email. Ask your workspace owner to invite you.');
       }
@@ -235,11 +259,15 @@ export class SsoService {
           emailVerifiedAt: new Date(),
         },
       });
-    } else if (!user.emailVerifiedAt) {
-      user = await this.prisma.user.update({
-        where: { id: user.id },
-        data: { emailVerifiedAt: new Date() },
-      });
+    }
+
+    // Never let SSO hand out a session for a suspended/rejected account —
+    // issueSessionForUser skips the checks that login() performs.
+    if (user.suspendedAt) {
+      throw new UnauthorizedException('Account suspended. Contact support to restore access.');
+    }
+    if (user.approvalStatus === 'rejected') {
+      throw new UnauthorizedException('Account is not approved.');
     }
 
     // Ensure workspace membership — SSO implies "you belong here".

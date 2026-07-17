@@ -109,6 +109,20 @@ export class WorkspacesService {
 
   async updateMemberRole(workspaceId: string, updatedBy: string, memberId: string, role: Role) {
     await this.assertRole(workspaceId, updatedBy, Role.OWNER);
+    // SECURITY: `memberId` must belong to THIS workspace. Without this check an
+    // owner of any workspace (everyone owns a personal one) could promote
+    // themselves to OWNER of someone else's workspace by passing that
+    // workspace's memberId — which also grants them every connection in it and
+    // voids column masks / row filters. Mirrors removeMember below.
+    const m = await this.prisma.workspaceMember.findUnique({ where: { id: memberId } });
+    if (!m) throw new NotFoundException();
+    if (m.workspaceId !== workspaceId) throw new ForbiddenException();
+    // The owner's own membership must stay OWNER, so a workspace can't be left
+    // ownerless (or the owner demoted by another owner).
+    const ws = await this.prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (ws?.ownerId === m.userId && role !== Role.OWNER) {
+      throw new BadRequestException('Cannot change the workspace owner\'s role');
+    }
     return this.prisma.workspaceMember.update({ where: { id: memberId }, data: { role } });
   }
 

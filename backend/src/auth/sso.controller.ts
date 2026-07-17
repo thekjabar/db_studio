@@ -11,6 +11,7 @@ import {
   Res,
   UseGuards,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { IsBoolean, IsOptional, IsString, Length } from 'class-validator';
@@ -50,6 +51,18 @@ export class SsoController {
     return this.cfg.frontendOrigins[0] ?? 'http://localhost:5173';
   }
 
+  /**
+   * SECURITY: SSO is disabled unless SSO_ENABLED=true. A workspace owner
+   * supplies their own OIDC issuer, so the IdP is attacker-controlled; until we
+   * verify domain ownership it must not be able to assert identities. Every SSO
+   * route calls this first so the feature is inert while disabled.
+   */
+  private assertSsoEnabled() {
+    if (!this.cfg.ssoEnabled) {
+      throw new NotFoundException('SSO is not enabled on this instance');
+    }
+  }
+
   private async requireWorkspaceOwner(userId: string, workspaceId: string) {
     const ws = await this.prisma.workspace.findUnique({
       where: { id: workspaceId },
@@ -67,6 +80,7 @@ export class SsoController {
     @Param('workspaceId') workspaceId: string,
     @CurrentUser() user: AuthUser,
   ) {
+    this.assertSsoEnabled();
     await this.requireWorkspaceOwner(user.id, workspaceId);
     return this.sso.getConfig(workspaceId);
   }
@@ -78,6 +92,7 @@ export class SsoController {
     @Body() dto: SsoConfigDto,
     @CurrentUser() user: AuthUser,
   ) {
+    this.assertSsoEnabled();
     await this.requireWorkspaceOwner(user.id, workspaceId);
     return this.sso.upsertConfig(workspaceId, dto);
   }
@@ -88,6 +103,7 @@ export class SsoController {
     @Param('workspaceId') workspaceId: string,
     @CurrentUser() user: AuthUser,
   ) {
+    this.assertSsoEnabled();
     await this.requireWorkspaceOwner(user.id, workspaceId);
     return this.sso.disable(workspaceId);
   }
@@ -97,6 +113,7 @@ export class SsoController {
   @Public()
   @Get('auth/sso/:slug')
   async start(@Param('slug') slug: string, @Res() res: Response) {
+    this.assertSsoEnabled();
     const { url, state, nonce } = await this.sso.beginLogin(slug);
     const common = {
       httpOnly: true,
@@ -120,6 +137,7 @@ export class SsoController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    this.assertSsoEnabled();
     const base = this.frontendOrigin();
     const expectedState = (req.cookies ?? {})[STATE_COOKIE_PREFIX + slug] as string | undefined;
     const expectedNonce = (req.cookies ?? {})[NONCE_COOKIE_PREFIX + slug] as string | undefined;
@@ -158,6 +176,9 @@ export class SsoController {
   @Public()
   @Get('auth/sso/:slug/available')
   async available(@Param('slug') slug: string) {
+    // Reports false rather than 404ing — the login page polls this on every
+    // load and should just not offer the SSO button when the feature is off.
+    if (!this.cfg.ssoEnabled) return { available: false };
     const ws = await this.prisma.workspace.findUnique({
       where: { slug },
       include: { sso: { select: { enabled: true } } },

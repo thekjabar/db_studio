@@ -8,7 +8,10 @@ services:
     container_name: dbdash-admin-frontend
     restart: unless-stopped
     ports:
-      - "${ADMIN_FRONTEND_PORT:-8081}:80"
+      # SECURITY: loopback only. This is the operator portal — publishing it on
+      # 0.0.0.0 served it to the whole internet in plaintext, bypassing
+      # Cloudflare and TLS. nginx proxies to 127.0.0.1.
+      - "127.0.0.1:${ADMIN_FRONTEND_PORT:-8081}:80"
     networks: [dbdash]
 
 networks:

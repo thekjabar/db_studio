@@ -49,7 +49,11 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     entrypoint: ["/usr/bin/tini", "--", "sh", "-c", "node_modules/.bin/tsx node_modules/prisma/build/index.js migrate deploy && exec node dist/main.js"]
     ports:
-      - "${API_PORT:-3000}:3000"
+      # SECURITY: bind to loopback only. Published on 0.0.0.0 this answered the
+      # public internet directly over plaintext HTTP, bypassing Cloudflare's
+      # WAF/DDoS protection, TLS, and nginx's request-body limit. nginx proxies
+      # to 127.0.0.1, so it is unaffected.
+      - "127.0.0.1:${API_PORT:-3000}:3000"
     networks: [dbdash]
 
   db-backup:

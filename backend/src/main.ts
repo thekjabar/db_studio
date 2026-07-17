@@ -4,6 +4,7 @@ import 'reflect-metadata';
 // backend/.env so `pnpm start:dev` works the same.
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
@@ -27,13 +28,22 @@ async function bootstrap() {
     Logger.log('Sentry enabled', 'Bootstrap');
   }
 
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ['error', 'warn', 'log'],
     bufferLogs: true,
     // Preserve the exact request bytes on `req.rawBody` so the Wayl webhook can
     // verify its HMAC-SHA256 signature (a re-serialized JSON body would differ).
     rawBody: true,
   });
+
+  // Requests arrive Cloudflare → nginx → here, so the socket peer is always the
+  // Docker bridge gateway. Without this, `req.ip` is that gateway for EVERY
+  // client: rate-limit buckets collapse into one shared bucket (see
+  // AppThrottlerGuard) and every audit-log row records the same useless address.
+  // Safe because the container port is bound to 127.0.0.1 — only nginx can
+  // reach it, so the forwarded chain can't be injected by an internet client
+  // connecting directly.
+  app.set('trust proxy', true);
 
   const config = app.get(AppConfigService);
   // Swap in the JSON logger when the operator has opted in. The ConsoleLogger

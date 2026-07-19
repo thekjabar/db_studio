@@ -61,16 +61,19 @@ const PLATFORMS: Record<PlatformKey, Platform> = {
   },
 };
 
-/** Best-effort OS detection from the browser. We can't tell Intel vs Apple
- *  Silicon apart from JS, so macOS defaults to the arm64 build (all new Macs)
- *  and both mac options stay visible in the list below. */
+/** Best-effort OS detection from the browser, so the visitor's own platform is
+ *  highlighted first. We can't tell Intel vs Apple Silicon apart from JS, so
+ *  macOS defaults to the arm64 build (all new Macs) and both mac options stay
+ *  visible in the list below. When the detected platform isn't shipped yet
+ *  (macOS today), it's shown as a "coming soon" hero rather than silently
+ *  swapping in a different OS. */
 function detectPrimary(): PlatformKey {
   if (typeof navigator === "undefined") return "windows";
-  const ua = `${navigator.userAgent} ${navigator.platform}`.toLowerCase();
+  // Prefer the modern high-entropy hint, fall back to platform/userAgent.
+  const uaData = (navigator as unknown as { userAgentData?: { platform?: string } }).userAgentData;
+  const ua = `${uaData?.platform ?? ""} ${navigator.platform ?? ""} ${navigator.userAgent ?? ""}`.toLowerCase();
   if (ua.includes("win")) return "windows";
-  // macOS builds aren't available yet — Mac visitors get Linux? No: default the
-  // big button to Windows and surface the "macOS coming soon" note. (A Mac user
-  // still sees the disabled mac rows below.)
+  if (ua.includes("mac") || ua.includes("iphone") || ua.includes("ipad") || ua.includes("darwin")) return "macArm";
   if (ua.includes("linux") || ua.includes("android") || ua.includes("x11")) return "linux";
   return "windows";
 }
@@ -135,14 +138,28 @@ export default function DownloadPage() {
         <div className="rounded-lg border border-border bg-card shadow-xl p-6 space-y-6">
           {/* Primary, OS-detected download */}
           <div className="space-y-2">
-            <Button asChild size="lg" className="w-full">
-              <a href={primary.href} download>
-                <Download className="h-4 w-4" />
-                Download for {primary.label}
-              </a>
-            </Button>
+            {primary.available ? (
+              <Button asChild size="lg" className="w-full">
+                <a href={primary.href} download>
+                  <Download className="h-4 w-4" />
+                  Download for {primary.label}
+                </a>
+              </Button>
+            ) : (
+              // Detected platform isn't shipped yet (macOS) — show it as the hero
+              // in a disabled "coming soon" state instead of a dead link.
+              <div className="flex items-center justify-center gap-2.5 rounded-md border border-dashed border-primary/40 bg-primary/5 px-4 py-3 text-sm font-medium">
+                <primary.icon className="h-4 w-4 text-primary" />
+                {primary.label}
+                <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[11px] text-primary">
+                  Coming soon
+                </span>
+              </div>
+            )}
             <p className="text-center text-[11px] text-muted-foreground">
-              Detected your system automatically. Not right? Pick another below.
+              {primary.available
+                ? "Detected your system automatically. Not right? Pick another below."
+                : `We detected ${primary.label} — that build is on the way. Grab another platform below in the meantime.`}
             </p>
           </div>
 

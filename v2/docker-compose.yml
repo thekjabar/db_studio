@@ -2,6 +2,10 @@
 # Joins the existing dbdash network so it can reach the shared Postgres by name.
 services:
   qs-v2-api:
+    # Prebuilt by GitHub Actions (see .github/workflows/v2-build.yml) → GHCR.
+    # `docker compose pull` uses this; the box never compiles Rust. `build` is a
+    # fallback only for machines with adequate RAM.
+    image: ghcr.io/thekjabar/qs-v2-api:latest
     build:
       context: ./backend
       args:
@@ -18,6 +22,7 @@ services:
     mem_limit: 384m
 
   qs-v2-web:
+    image: ghcr.io/thekjabar/qs-v2-web:latest
     build:
       context: ./frontend
     container_name: qs-v2-web

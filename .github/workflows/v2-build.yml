@@ -1,0 +1,60 @@
+name: v2 build
+
+# Builds the Rust API and the Bun/React web image on GitHub's runners (plenty of
+# RAM — the 4 GB prod box must never compile Rust) and pushes them to GHCR.
+# The server then just `docker compose pull && up` — no build on prod.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "v2/**"
+      - ".github/workflows/v2-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: v2/backend
+          push: true
+          build-args: |
+            CARGO_BUILD_JOBS=4
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/qs-v2-api:latest
+            ghcr.io/${{ github.repository_owner }}/qs-v2-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: v2/frontend
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/qs-v2-web:latest
+            ghcr.io/${{ github.repository_owner }}/qs-v2-web:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

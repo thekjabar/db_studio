@@ -1,0 +1,39 @@
+# Query Schema v2 — Rust API + Bun/React static, served under /v2.
+# Joins the existing dbdash network so it can reach the shared Postgres by name.
+services:
+  qs-v2-api:
+    build:
+      context: ./backend
+      args:
+        CARGO_BUILD_JOBS: "1"
+    container_name: qs-v2-api
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      PORT: "3010"
+    expose:
+      - "3010"
+    networks:
+      - dbdash
+    mem_limit: 384m
+
+  qs-v2-web:
+    build:
+      context: ./frontend
+    container_name: qs-v2-web
+    restart: unless-stopped
+    depends_on:
+      - qs-v2-api
+    # Host nginx for queryschema.com proxies /v2/ here (see deploy/nginx-v2.conf).
+    ports:
+      - "127.0.0.1:8090:80"
+    networks:
+      - dbdash
+    mem_limit: 96m
+
+networks:
+  dbdash:
+    # The network the dbdash-* containers already run on. `docker network ls`
+    # to confirm the exact name; override here if different.
+    external: true
+    name: db_studio_default

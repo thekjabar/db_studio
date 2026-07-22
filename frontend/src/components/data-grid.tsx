@@ -304,7 +304,9 @@ export function DataGrid({
 
   const fkEnabled = !!fkMap && !!connectionId && !!schema && !!table;
 
-  const openFkHover = (target: FkTarget, value: unknown, x: number, y: number) => {
+  // Stable callbacks so the memoized rows below don't re-render when unrelated
+  // grid state (fkHover, another row's active cell, …) changes.
+  const openFkHover = React.useCallback((target: FkTarget, value: unknown, x: number, y: number) => {
     if (!fkEnabled || value === null || value === undefined) return;
     if (closeTimer.current) clearTimeout(closeTimer.current); // re-entered — keep open
     const strVal = String(value);
@@ -314,11 +316,11 @@ export function DataGrid({
     hoverTimer.current = setTimeout(() => {
       setFkHover({ key, target, value: strVal, x, y });
     }, 350);
-  };
+  }, [fkEnabled]);
   // Close with a short grace period (unless `immediate`) so the cursor can cross
   // the gap into the card. The card's own onMouseEnter cancels this via
   // cancelFkClose; onMouseLeave from the card closes immediately.
-  const closeFkHover = (immediate = false) => {
+  const closeFkHover = React.useCallback((immediate = false) => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     if (closeTimer.current) clearTimeout(closeTimer.current);
     if (immediate) {
@@ -326,14 +328,14 @@ export function DataGrid({
       return;
     }
     closeTimer.current = setTimeout(() => setFkHover(null), 160);
-  };
-  const cancelFkClose = () => {
+  }, []);
+  const cancelFkClose = React.useCallback(() => {
     if (closeTimer.current) clearTimeout(closeTimer.current);
-  };
+  }, []);
 
   // Navigate to the referenced row. Cancels any pending hover so the peek
   // popover doesn't linger after we jump away.
-  const navigateFk = (target: FkTarget, value: unknown) => {
+  const navigateFk = React.useCallback((target: FkTarget, value: unknown) => {
     if (!onOpenFk || value === null || value === undefined) return;
     closeFkHover(true);
     onOpenFk({
@@ -342,7 +344,12 @@ export function DataGrid({
       refColumn: target.refColumn,
       value,
     });
-  };
+  }, [onOpenFk, closeFkHover]);
+
+  // Row callbacks (stable) — passed to the memoized GridRow.
+  const setActive = React.useCallback((r: number, c: number) => setActiveCell({ r, c }), []);
+  const startEdit = React.useCallback((r: number, c: string) => setEditing({ r, c }), []);
+  const stopEdit = React.useCallback(() => setEditing(null), []);
 
   return (
     <div
@@ -458,135 +465,31 @@ export function DataGrid({
             // any meaningful scroll-through; anything over that, the user
             // should narrow the SELECT. Real virtualization is a larger
             // refactor than this cap's pragmatic trade-off.
-            rows.slice(0, MAX_RENDER_ROWS).map((row, i) => {
-              const isSel = selected?.has(i);
-              return (
-                <tr
-                  key={i}
-                  className={cn(
-                    "group transition-colors",
-                    isSel
-                      ? "bg-primary/15 dark:bg-primary/20"
-                      : "hover:bg-accent/80 dark:hover:bg-accent/40",
-                  )}
-                >
-                  {selectable && (
-                    <td
-                      className={cn(
-                        "sticky left-0 z-5 border-b border-r border-border px-0 py-0 align-middle relative",
-                        isSel
-                          ? "bg-primary/15 dark:bg-primary/20 before:content-[''] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-0.5 before:bg-primary"
-                          : "bg-card group-hover:bg-accent/80 dark:group-hover:bg-accent/40",
-                      )}
-                    >
-                      <div className="relative h-7 w-16">
-                        <div className="absolute inset-y-0 left-3 flex items-center">
-                          <Checkbox
-                            checked={!!isSel}
-                            onCheckedChange={() => onToggleSelect?.(i)}
-                          />
-                        </div>
-                        {onExpandRow && (
-                          <button
-                            type="button"
-                            onClick={() => onExpandRow(i)}
-                            title="Expand row"
-                            aria-label="Expand row"
-                            className="absolute inset-y-0 right-2 flex items-center opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
-                          >
-                            <Maximize2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  )}
-                  {columns.map((col, ci) => {
-                    const isEditing = editing?.r === i && editing.c === col.name;
-                    const isActive = activeCell.r === i && activeCell.c === ci;
-                    const value = row[col.name];
-                    const kind = detectKind(col.type, value);
-                    const w = widths[col.name] ?? DEFAULT_WIDTH;
-                    const fkTarget = fkMap?.[col.name];
-                    const isFk = !!fkTarget && value !== null && value !== undefined && !isEditing;
-                    // FK cells NAVIGATE on click instead of editing — only when a
-                    // handler is wired up. Without it they behave like normal cells.
-                    const fkClickable = isFk && !!onOpenFk;
-                    return (
-                      <td
-                        key={col.name}
-                        onMouseDown={
-                          fkClickable
-                            // Don't let the FK cell steal edit-selection focus;
-                            // still mark it active for keyboard nav.
-                            ? (e) => { e.preventDefault(); setActiveCell({ r: i, c: ci }); }
-                            : () => setActiveCell({ r: i, c: ci })
-                        }
-                        onClick={
-                          fkClickable
-                            ? (e) => {
-                                // Ignore clicks originating on the copy button.
-                                if ((e.target as HTMLElement).closest("[data-copy-btn]")) return;
-                                e.stopPropagation();
-                                navigateFk(fkTarget, value);
-                              }
-                            : undefined
-                        }
-                        onDoubleClick={
-                          fkClickable
-                            ? undefined // FK cells navigate; they aren't edited inline.
-                            : () => {
-                                if (kind === "json" && onEditJsonCell) {
-                                  onEditJsonCell(i, col.name);
-                                } else if (onEditCell) {
-                                  setEditing({ r: i, c: col.name });
-                                }
-                              }
-                        }
-                        onMouseEnter={
-                          isFk
-                            ? (e) => openFkHover(fkTarget, value, e.clientX, e.clientY)
-                            : undefined
-                        }
-                        onMouseLeave={isFk ? () => closeFkHover() : undefined}
-                        title={fkClickable ? `Open ${fkTarget.refTable} row (${fkTarget.refColumn} = ${String(value)})` : undefined}
-                        style={{ width: w, minWidth: w, maxWidth: w }}
-                        className={cn(
-                          "group/cell relative border-b border-r border-border px-3 py-1.5 whitespace-nowrap overflow-hidden",
-                          kind === "number" && "text-right tabular-nums",
-                          fkClickable && "cursor-pointer",
-                          isActive && "ring-1 ring-inset ring-primary bg-primary/5",
-                        )}
-                      >
-                        {isEditing ? (
-                          <InlineEditor
-                            kind={kind}
-                            value={value}
-                            onCommit={(next) => {
-                              if (next !== value) onEditCell?.(i, col.name, next);
-                              setEditing(null);
-                            }}
-                            onCancel={() => setEditing(null)}
-                          />
-                        ) : (
-                          <>
-                            <span className={cn(fkClickable && "underline decoration-dotted decoration-primary/40 underline-offset-2 group-hover/cell:decoration-primary")}>
-                              <Cell kind={kind} value={value} />
-                            </span>
-                            {isFk && (
-                              <Link2
-                                className="pointer-events-none absolute left-0.5 top-1/2 -translate-y-1/2 h-3 w-3 text-primary/50 opacity-0 group-hover/cell:opacity-100 transition-opacity"
-                                aria-hidden
-                              />
-                            )}
-                            {kind !== "null" && <CopyCellButton value={value} kind={kind} />}
-                          </>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
+            rows.slice(0, MAX_RENDER_ROWS).map((row, i) => (
+              <GridRow
+                key={i}
+                i={i}
+                row={row}
+                columns={columns}
+                widths={widths}
+                isSel={!!selected?.has(i)}
+                selectable={selectable}
+                activeCol={activeCell.r === i ? activeCell.c : -1}
+                editingCol={editing?.r === i ? editing.c : null}
+                fkMap={fkMap}
+                onOpenFk={onOpenFk}
+                onEditCell={onEditCell}
+                onEditJsonCell={onEditJsonCell}
+                onExpandRow={onExpandRow}
+                onToggleSelect={onToggleSelect}
+                setActive={setActive}
+                startEdit={startEdit}
+                stopEdit={stopEdit}
+                openFkHover={openFkHover}
+                closeFkHover={closeFkHover}
+                navigateFk={navigateFk}
+              />
+            ))}
         </tbody>
       </table>
 
@@ -607,6 +510,183 @@ export function DataGrid({
     </div>
   );
 }
+
+interface GridRowProps {
+  i: number;
+  row: Record<string, unknown>;
+  columns: DataGridColumn[];
+  widths: Record<string, number>;
+  isSel: boolean;
+  selectable?: boolean;
+  /** Active column index for THIS row, or -1 when the active cell is elsewhere. */
+  activeCol: number;
+  /** Column name being edited in THIS row, or null. */
+  editingCol: string | null;
+  fkMap?: FkMap;
+  onOpenFk?: (ref: OpenFkArg) => void;
+  onEditCell?: (rowIdx: number, column: string, value: unknown) => void;
+  onEditJsonCell?: (rowIdx: number, column: string) => void;
+  onExpandRow?: (rowIdx: number) => void;
+  onToggleSelect?: (idx: number) => void;
+  setActive: (r: number, c: number) => void;
+  startEdit: (r: number, c: string) => void;
+  stopEdit: () => void;
+  openFkHover: (target: FkTarget, value: unknown, x: number, y: number) => void;
+  closeFkHover: (immediate?: boolean) => void;
+  navigateFk: (target: FkTarget, value: unknown) => void;
+}
+
+/**
+ * A single table row. Memoized so grid-wide state changes (FK hover, another
+ * row's active cell, editing elsewhere) don't re-render every row — only the
+ * rows whose own props actually change. This is what keeps clicking/arrow-key
+ * navigation and hovering smooth on wide tables.
+ */
+const GridRow = React.memo(function GridRow({
+  i,
+  row,
+  columns,
+  widths,
+  isSel,
+  selectable,
+  activeCol,
+  editingCol,
+  fkMap,
+  onOpenFk,
+  onEditCell,
+  onEditJsonCell,
+  onExpandRow,
+  onToggleSelect,
+  setActive,
+  startEdit,
+  stopEdit,
+  openFkHover,
+  closeFkHover,
+  navigateFk,
+}: GridRowProps) {
+  return (
+    <tr
+      className={cn(
+        "group transition-colors",
+        isSel
+          ? "bg-primary/15 dark:bg-primary/20"
+          : "hover:bg-accent/80 dark:hover:bg-accent/40",
+      )}
+    >
+      {selectable && (
+        <td
+          className={cn(
+            "sticky left-0 z-5 border-b border-r border-border px-0 py-0 align-middle relative",
+            isSel
+              ? "bg-primary/15 dark:bg-primary/20 before:content-[''] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-0.5 before:bg-primary"
+              : "bg-card group-hover:bg-accent/80 dark:group-hover:bg-accent/40",
+          )}
+        >
+          <div className="relative h-7 w-16">
+            <div className="absolute inset-y-0 left-3 flex items-center">
+              <Checkbox checked={isSel} onCheckedChange={() => onToggleSelect?.(i)} />
+            </div>
+            {onExpandRow && (
+              <button
+                type="button"
+                onClick={() => onExpandRow(i)}
+                title="Expand row"
+                aria-label="Expand row"
+                className="absolute inset-y-0 right-2 flex items-center opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        </td>
+      )}
+      {columns.map((col, ci) => {
+        const isEditing = editingCol === col.name;
+        const isActive = activeCol === ci;
+        const value = row[col.name];
+        const kind = detectKind(col.type, value);
+        const w = widths[col.name] ?? DEFAULT_WIDTH;
+        const fkTarget = fkMap?.[col.name];
+        const isFk = !!fkTarget && value !== null && value !== undefined && !isEditing;
+        // FK cells NAVIGATE on click instead of editing — only when a
+        // handler is wired up. Without it they behave like normal cells.
+        const fkClickable = isFk && !!onOpenFk;
+        return (
+          <td
+            key={col.name}
+            onMouseDown={
+              fkClickable
+                // Don't let the FK cell steal edit-selection focus;
+                // still mark it active for keyboard nav.
+                ? (e) => { e.preventDefault(); setActive(i, ci); }
+                : () => setActive(i, ci)
+            }
+            onClick={
+              fkClickable
+                ? (e) => {
+                    // Ignore clicks originating on the copy button.
+                    if ((e.target as HTMLElement).closest("[data-copy-btn]")) return;
+                    e.stopPropagation();
+                    navigateFk(fkTarget, value);
+                  }
+                : undefined
+            }
+            onDoubleClick={
+              fkClickable
+                ? undefined // FK cells navigate; they aren't edited inline.
+                : () => {
+                    if (kind === "json" && onEditJsonCell) {
+                      onEditJsonCell(i, col.name);
+                    } else if (onEditCell) {
+                      startEdit(i, col.name);
+                    }
+                  }
+            }
+            onMouseEnter={
+              isFk
+                ? (e) => openFkHover(fkTarget, value, e.clientX, e.clientY)
+                : undefined
+            }
+            onMouseLeave={isFk ? () => closeFkHover() : undefined}
+            title={fkClickable ? `Open ${fkTarget.refTable} row (${fkTarget.refColumn} = ${String(value)})` : undefined}
+            style={{ width: w, minWidth: w, maxWidth: w }}
+            className={cn(
+              "group/cell relative border-b border-r border-border px-3 py-1.5 whitespace-nowrap overflow-hidden",
+              kind === "number" && "text-right tabular-nums",
+              fkClickable && "cursor-pointer",
+              isActive && "ring-1 ring-inset ring-primary bg-primary/5",
+            )}
+          >
+            {isEditing ? (
+              <InlineEditor
+                kind={kind}
+                value={value}
+                onCommit={(next) => {
+                  if (next !== value) onEditCell?.(i, col.name, next);
+                  stopEdit();
+                }}
+                onCancel={stopEdit}
+              />
+            ) : (
+              <>
+                <span className={cn(fkClickable && "underline decoration-dotted decoration-primary/40 underline-offset-2 group-hover/cell:decoration-primary")}>
+                  <Cell kind={kind} value={value} />
+                </span>
+                {isFk && (
+                  <Link2
+                    className="pointer-events-none absolute left-0.5 top-1/2 -translate-y-1/2 h-3 w-3 text-primary/50 opacity-0 group-hover/cell:opacity-100 transition-opacity"
+                    aria-hidden
+                  />
+                )}
+                {kind !== "null" && <CopyCellButton value={value} kind={kind} />}
+              </>
+            )}
+          </td>
+        );
+      })}
+    </tr>
+  );
+});
 
 /**
  * Popover card showing the linked (referenced) row for a hovered FK cell.

@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { Outlet, useParams, useLocation } from "react-router-dom";
+import { Loader2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Sidebar } from "./sidebar";
@@ -141,7 +142,15 @@ export function AppShell() {
           bounded flex row height here, so this doesn't break them.
         */}
         <main className="flex-1 min-h-0 overflow-y-auto">
-          <Outlet context={{ schema, setSchema }} />
+          <Suspense
+            fallback={
+              <div className="h-full w-full flex items-center justify-center text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+              </div>
+            }
+          >
+            <Outlet context={{ schema, setSchema }} />
+          </Suspense>
         </main>
       </div>
       </div>

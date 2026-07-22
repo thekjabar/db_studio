@@ -1,59 +1,65 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, lazy, Suspense } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth-store";
 import { applyDensity } from "@/lib/density";
 import { applyServerTheme } from "@/lib/theme-store";
-import LoginPage from "@/routes/login";
-import SignupPage from "@/routes/signup";
-import OAuthCallbackPage from "@/routes/oauth-callback";
-import AgentAuthorizePage from "@/routes/agent-authorize";
-import DownloadPage from "@/routes/download";
-import VerifyEmailPage from "@/routes/verify-email";
-import ForgotPasswordPage from "@/routes/forgot-password";
-import ResetPasswordPage from "@/routes/reset-password";
-import ConnectionsPage from "@/routes/connections";
-import { AppShell } from "@/components/layout/app-shell";
-import TableRoute from "@/routes/connection/table";
-import SqlRoute from "@/routes/connection/sql";
-import QueryBuilderRoute from "@/routes/connection/query-builder";
-import DiffRoute from "@/routes/connection/diff";
-import DictionaryRoute from "@/routes/connection/dictionary";
-import SensitiveScanRoute from "@/routes/connection/sensitive";
-import ErRoute from "@/routes/connection/er";
-import SchemaRoute from "@/routes/connection/schema";
-import AuditRoute from "@/routes/connection/audit";
-import QueryHistoryRoute from "@/routes/connection/query-history";
-import DbHealthRoute from "@/routes/connection/db-health";
-import ReviewRequestsRoute from "@/routes/connection/review-requests";
-import RowFiltersRoute from "@/routes/connection/row-filters";
-import SchemaDocsRoute from "@/routes/connection/schema-docs";
-import AiChatRoute from "@/routes/connection/ai-chat";
-import MigrationBuilderRoute from "@/routes/connection/migration-builder";
-import SavedRoute from "@/routes/connection/saved";
-import PermissionsRoute from "@/routes/connection/permissions";
-import DbUsersRoute from "@/routes/connection/db-users";
-import BackupRoute from "@/routes/connection/backup";
-import SlowQueriesRoute from "@/routes/connection/slow-queries";
-import PlanRegressionsRoute from "@/routes/connection/plan-regressions";
-import MigrationExportRoute from "@/routes/connection/migration-export";
-import WebhooksRoute from "@/routes/connection/webhooks";
-import SchedulesRoute from "@/routes/schedules";
-import FederatedRoute from "@/routes/federated";
-import ApiKeysRoute from "@/routes/api-keys";
-import BillingRoute from "@/routes/billing";
-import WorkspaceSsoRoute from "@/routes/workspace-sso";
-import DashboardsListRoute from "@/routes/dashboards";
-import DashboardDetailRoute from "@/routes/dashboard-detail";
-import PublicDashboardRoute from "@/routes/public-dashboard";
-import PublicSharedQueryRoute from "@/routes/public-shared-query";
-import NotebooksListRoute from "@/routes/notebooks";
-import NotebookDetailRoute from "@/routes/notebook-detail";
-import StatusPage from "@/routes/status";
-import SessionsRoute from "@/routes/sessions";
-import LandingPage from "@/routes/landing";
-import NotFoundPage from "@/routes/not-found";
 import { Loader2 } from "lucide-react";
+
+// Every route is code-split (React.lazy) so the initial bundle stays small —
+// heavy deps (Monaco, xyflow/dagre, recharts) load only when their route is
+// visited, instead of shipping in one ~2 MB main chunk.
+const LoginPage = lazy(() => import("@/routes/login"));
+const SignupPage = lazy(() => import("@/routes/signup"));
+const OAuthCallbackPage = lazy(() => import("@/routes/oauth-callback"));
+const AgentAuthorizePage = lazy(() => import("@/routes/agent-authorize"));
+const DownloadPage = lazy(() => import("@/routes/download"));
+const VerifyEmailPage = lazy(() => import("@/routes/verify-email"));
+const ForgotPasswordPage = lazy(() => import("@/routes/forgot-password"));
+const ResetPasswordPage = lazy(() => import("@/routes/reset-password"));
+const ConnectionsPage = lazy(() => import("@/routes/connections"));
+const AppShell = lazy(() =>
+  import("@/components/layout/app-shell").then((m) => ({ default: m.AppShell })),
+);
+const TableRoute = lazy(() => import("@/routes/connection/table"));
+const SqlRoute = lazy(() => import("@/routes/connection/sql"));
+const QueryBuilderRoute = lazy(() => import("@/routes/connection/query-builder"));
+const DiffRoute = lazy(() => import("@/routes/connection/diff"));
+const DictionaryRoute = lazy(() => import("@/routes/connection/dictionary"));
+const SensitiveScanRoute = lazy(() => import("@/routes/connection/sensitive"));
+const ErRoute = lazy(() => import("@/routes/connection/er"));
+const SchemaRoute = lazy(() => import("@/routes/connection/schema"));
+const AuditRoute = lazy(() => import("@/routes/connection/audit"));
+const QueryHistoryRoute = lazy(() => import("@/routes/connection/query-history"));
+const DbHealthRoute = lazy(() => import("@/routes/connection/db-health"));
+const ReviewRequestsRoute = lazy(() => import("@/routes/connection/review-requests"));
+const RowFiltersRoute = lazy(() => import("@/routes/connection/row-filters"));
+const SchemaDocsRoute = lazy(() => import("@/routes/connection/schema-docs"));
+const AiChatRoute = lazy(() => import("@/routes/connection/ai-chat"));
+const MigrationBuilderRoute = lazy(() => import("@/routes/connection/migration-builder"));
+const SavedRoute = lazy(() => import("@/routes/connection/saved"));
+const PermissionsRoute = lazy(() => import("@/routes/connection/permissions"));
+const DbUsersRoute = lazy(() => import("@/routes/connection/db-users"));
+const BackupRoute = lazy(() => import("@/routes/connection/backup"));
+const SlowQueriesRoute = lazy(() => import("@/routes/connection/slow-queries"));
+const PlanRegressionsRoute = lazy(() => import("@/routes/connection/plan-regressions"));
+const MigrationExportRoute = lazy(() => import("@/routes/connection/migration-export"));
+const WebhooksRoute = lazy(() => import("@/routes/connection/webhooks"));
+const SchedulesRoute = lazy(() => import("@/routes/schedules"));
+const FederatedRoute = lazy(() => import("@/routes/federated"));
+const ApiKeysRoute = lazy(() => import("@/routes/api-keys"));
+const BillingRoute = lazy(() => import("@/routes/billing"));
+const WorkspaceSsoRoute = lazy(() => import("@/routes/workspace-sso"));
+const DashboardsListRoute = lazy(() => import("@/routes/dashboards"));
+const DashboardDetailRoute = lazy(() => import("@/routes/dashboard-detail"));
+const PublicDashboardRoute = lazy(() => import("@/routes/public-dashboard"));
+const PublicSharedQueryRoute = lazy(() => import("@/routes/public-shared-query"));
+const NotebooksListRoute = lazy(() => import("@/routes/notebooks"));
+const NotebookDetailRoute = lazy(() => import("@/routes/notebook-detail"));
+const StatusPage = lazy(() => import("@/routes/status"));
+const SessionsRoute = lazy(() => import("@/routes/sessions"));
+const LandingPage = lazy(() => import("@/routes/landing"));
+const NotFoundPage = lazy(() => import("@/routes/not-found"));
 
 function Protected({ children }: { children: React.ReactNode }) {
   const { accessToken, bootstrapping } = useAuth();
@@ -133,7 +139,14 @@ export default function App() {
   }, [setAccessToken]);
 
   return (
-    <Routes>
+    <Suspense
+      fallback={
+        <div className="h-screen w-screen flex items-center justify-center bg-background text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" />
+        </div>
+      }
+    >
+      <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
       <Route path="/auth/callback" element={<OAuthCallbackPage />} />
@@ -273,6 +286,7 @@ export default function App() {
       </Route>
       <Route path="/" element={<LandingPage />} />
       <Route path="*" element={<NotFoundPage />} />
-    </Routes>
+      </Routes>
+    </Suspense>
   );
 }

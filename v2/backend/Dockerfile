@@ -1,7 +1,7 @@
 # Multi-stage Rust build. Pure-Rust TLS (rustls) → no OpenSSL system deps.
 # Build with low parallelism on RAM-tight hosts:
 #   docker build --build-arg CARGO_BUILD_JOBS=1 -t qs-v2-api .
-FROM rust:1.82-slim-bookworm AS build
+FROM rust:1-slim-bookworm AS build
 WORKDIR /app
 ARG CARGO_BUILD_JOBS=1
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} \
@@ -9,7 +9,7 @@ ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} \
     CARGO_INCREMENTAL=0
 
 # Cache dependencies against a dummy main so source edits don't re-fetch/rebuild crates.
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo 'fn main() { println!("stub"); }' > src/main.rs \
     && cargo build --release || true
 # Real sources.

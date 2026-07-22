@@ -31,7 +31,7 @@ services:
       - qs-v2-api
     # Host nginx for queryschema.com proxies /v2/ here (see deploy/nginx-v2.conf).
     ports:
-      - "127.0.0.1:8090:80"
+      - "127.0.0.1:8095:80"
     networks:
       - dbdash
     mem_limit: 96m

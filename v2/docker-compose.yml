@@ -38,7 +38,6 @@ services:
 
 networks:
   dbdash:
-    # The network the dbdash-* containers already run on. `docker network ls`
-    # to confirm the exact name; override here if different.
+    # The network the dbdash-* containers already run on.
     external: true
-    name: db_studio_default
+    name: dbdash-net

@@ -1,188 +1,292 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { api, getToken, setToken } from "./api";
+import { useEffect, useRef, useState, lazy, Suspense } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth-store";
+import { applyDensity } from "@/lib/density";
+import { applyServerTheme } from "@/lib/theme-store";
+import { Loader2 } from "lucide-react";
 
-type Row = Record<string, unknown>;
+// Every route is code-split (React.lazy) so the initial bundle stays small —
+// heavy deps (Monaco, xyflow/dagre, recharts) load only when their route is
+// visited, instead of shipping in one ~2 MB main chunk.
+const LoginPage = lazy(() => import("@/routes/login"));
+const SignupPage = lazy(() => import("@/routes/signup"));
+const OAuthCallbackPage = lazy(() => import("@/routes/oauth-callback"));
+const AgentAuthorizePage = lazy(() => import("@/routes/agent-authorize"));
+const DownloadPage = lazy(() => import("@/routes/download"));
+const VerifyEmailPage = lazy(() => import("@/routes/verify-email"));
+const ForgotPasswordPage = lazy(() => import("@/routes/forgot-password"));
+const ResetPasswordPage = lazy(() => import("@/routes/reset-password"));
+const ConnectionsPage = lazy(() => import("@/routes/connections"));
+const AppShell = lazy(() =>
+  import("@/components/layout/app-shell").then((m) => ({ default: m.AppShell })),
+);
+const TableRoute = lazy(() => import("@/routes/connection/table"));
+const SqlRoute = lazy(() => import("@/routes/connection/sql"));
+const QueryBuilderRoute = lazy(() => import("@/routes/connection/query-builder"));
+const DiffRoute = lazy(() => import("@/routes/connection/diff"));
+const DictionaryRoute = lazy(() => import("@/routes/connection/dictionary"));
+const SensitiveScanRoute = lazy(() => import("@/routes/connection/sensitive"));
+const ErRoute = lazy(() => import("@/routes/connection/er"));
+const SchemaRoute = lazy(() => import("@/routes/connection/schema"));
+const AuditRoute = lazy(() => import("@/routes/connection/audit"));
+const QueryHistoryRoute = lazy(() => import("@/routes/connection/query-history"));
+const DbHealthRoute = lazy(() => import("@/routes/connection/db-health"));
+const ReviewRequestsRoute = lazy(() => import("@/routes/connection/review-requests"));
+const RowFiltersRoute = lazy(() => import("@/routes/connection/row-filters"));
+const SchemaDocsRoute = lazy(() => import("@/routes/connection/schema-docs"));
+const AiChatRoute = lazy(() => import("@/routes/connection/ai-chat"));
+const MigrationBuilderRoute = lazy(() => import("@/routes/connection/migration-builder"));
+const SavedRoute = lazy(() => import("@/routes/connection/saved"));
+const PermissionsRoute = lazy(() => import("@/routes/connection/permissions"));
+const DbUsersRoute = lazy(() => import("@/routes/connection/db-users"));
+const BackupRoute = lazy(() => import("@/routes/connection/backup"));
+const SlowQueriesRoute = lazy(() => import("@/routes/connection/slow-queries"));
+const PlanRegressionsRoute = lazy(() => import("@/routes/connection/plan-regressions"));
+const MigrationExportRoute = lazy(() => import("@/routes/connection/migration-export"));
+const WebhooksRoute = lazy(() => import("@/routes/connection/webhooks"));
+const SchedulesRoute = lazy(() => import("@/routes/schedules"));
+const FederatedRoute = lazy(() => import("@/routes/federated"));
+const ApiKeysRoute = lazy(() => import("@/routes/api-keys"));
+const BillingRoute = lazy(() => import("@/routes/billing"));
+const WorkspaceSsoRoute = lazy(() => import("@/routes/workspace-sso"));
+const DashboardsListRoute = lazy(() => import("@/routes/dashboards"));
+const DashboardDetailRoute = lazy(() => import("@/routes/dashboard-detail"));
+const PublicDashboardRoute = lazy(() => import("@/routes/public-dashboard"));
+const PublicSharedQueryRoute = lazy(() => import("@/routes/public-shared-query"));
+const NotebooksListRoute = lazy(() => import("@/routes/notebooks"));
+const NotebookDetailRoute = lazy(() => import("@/routes/notebook-detail"));
+const StatusPage = lazy(() => import("@/routes/status"));
+const SessionsRoute = lazy(() => import("@/routes/sessions"));
+const LandingPage = lazy(() => import("@/routes/landing"));
+const NotFoundPage = lazy(() => import("@/routes/not-found"));
+
+function Protected({ children }: { children: React.ReactNode }) {
+  const { accessToken, bootstrapping } = useAuth();
+  const loc = useLocation();
+  // Still restoring the session from the refresh cookie — don't bounce to
+  // /login yet, just show a spinner on THIS protected route. Public pages
+  // (landing/login/etc.) never hit this and render instantly.
+  if (bootstrapping && !accessToken) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-background text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+    );
+  }
+  if (!accessToken) return <Navigate to="/login" replace state={{ from: loc }} />;
+  return <>{children}</>;
+}
+
+// Don't fire more than once per this window when the tab regains focus.
+const FOCUS_REFRESH_MIN_INTERVAL_MS = 5 * 60_000;
 
 export default function App() {
-  const [authed, setAuthed] = useState<boolean>(!!getToken());
-  const [me, setMe] = useState<any>(null);
+  const { accessToken, setAccessToken, setUser, setBootstrapping } = useAuth();
+  const didBootstrap = useRef(false);
+  const lastFocusRefresh = useRef(0);
 
+  // Try to silently refresh on first load so an existing cookie restores session.
+  // Guard against StrictMode's double-invoke — the refresh token rotates on
+  // every call, so a second call would use an already-revoked token and 401.
   useEffect(() => {
-    if (!authed) return;
-    api.me().then((r) => setMe(r.body)).catch(() => { setToken(null); setAuthed(false); });
-  }, [authed]);
-
-  if (!authed) return <Login onDone={() => setAuthed(true)} />;
-  return <Workbench me={me} onLogout={() => { setToken(null); setAuthed(false); setMe(null); }} />;
-}
-
-function Login({ onDone }: { onDone: () => void }) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setErr(""); setBusy(true);
-    try {
-      const { body } = await api.login(email, password);
-      setToken((body as any).accessToken);
-      onDone();
-    } catch (e: any) {
-      setErr(e.message || "Login failed");
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <div className="center">
-      <form className="card login" onSubmit={submit}>
-        <div className="brand">Query Schema <span className="v2">v2</span></div>
-        <div className="sub">Rust + React (Bun) benchmark build</div>
-        <input placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
-        <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        {err && <div className="err">{err}</div>}
-        <button disabled={busy}>{busy ? "…" : "Sign in"}</button>
-        <div className="hint">Same account as v1 — argon2 verified in Rust.</div>
-      </form>
-    </div>
-  );
-}
-
-function Workbench({ me, onLogout }: { me: any; onLogout: () => void }) {
-  const [schemas, setSchemas] = useState<string[]>([]);
-  const [schema, setSchema] = useState<string>("public");
-  const [tables, setTables] = useState<string[]>([]);
-  const [table, setTable] = useState<string>("");
-  const [view, setView] = useState<"browse" | "sql">("browse");
-  const [rows, setRows] = useState<Row[]>([]);
-  const [cols, setCols] = useState<string[]>([]);
-  const [timing, setTiming] = useState<{ tookMs?: number; clientMs?: number; rowCount?: number; total?: number | null }>({});
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
-  const [sql, setSql] = useState("SELECT * FROM \"User\" LIMIT 100;");
-
-  useEffect(() => {
-    api.schemas().then((r) => {
-      const s = r.body.schemas;
-      setSchemas(s);
-      if (!s.includes("public") && s[0]) setSchema(s[0]);
-    }).catch((e) => setErr(e.message));
+    if (didBootstrap.current) return;
+    didBootstrap.current = true;
+    (async () => {
+      if (accessToken) {
+        setBootstrapping(false);
+        return;
+      }
+      try {
+        const r = await api.refresh();
+        if (r?.accessToken) {
+          setAccessToken(r.accessToken);
+          lastFocusRefresh.current = Date.now();
+          const user = await api.me();
+          setUser(user);
+          if (user.density) applyDensity(user.density);
+          applyServerTheme(user.theme);
+        }
+      } catch {
+        // no session
+      } finally {
+        setBootstrapping(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Silent refresh when the tab regains focus after being backgrounded for a
+  // while. Prevents users from coming back to a logged-out state when their
+  // access token has expired mid-background. Throttled so flipping tabs rapidly
+  // doesn't rotate the refresh token constantly.
   useEffect(() => {
-    if (!schema) return;
-    api.tables(schema).then((r) => setTables(r.body.tables)).catch((e) => setErr(e.message));
-  }, [schema]);
-
-  const openTable = useCallback(async (t: string) => {
-    setTable(t); setView("browse"); setLoading(true); setErr("");
-    try {
-      const r = await api.rows(schema, t, 100, 0);
-      const data = r.body.rows || [];
-      setRows(data);
-      setCols(data[0] ? Object.keys(data[0]) : []);
-      setTiming({ tookMs: r.body.tookMs, clientMs: r.clientMs, rowCount: r.body.rowCount, total: r.body.total });
-    } catch (e: any) { setErr(e.message); setRows([]); setCols([]); }
-    finally { setLoading(false); }
-  }, [schema]);
-
-  const runSql = useCallback(async () => {
-    setLoading(true); setErr(""); setView("sql");
-    try {
-      const r = await api.run(sql);
-      const data = r.body.rows || [];
-      setRows(data);
-      setCols(r.body.columns?.length ? r.body.columns : data[0] ? Object.keys(data[0]) : []);
-      setTiming({ tookMs: r.body.tookMs, clientMs: r.clientMs, rowCount: r.body.rowCount });
-    } catch (e: any) { setErr(e.message); setRows([]); setCols([]); }
-    finally { setLoading(false); }
-  }, [sql]);
+    const onVisible = async () => {
+      if (document.visibilityState !== "visible") return;
+      if (!useAuth.getState().accessToken) return; // not logged in, nothing to refresh
+      const now = Date.now();
+      if (now - lastFocusRefresh.current < FOCUS_REFRESH_MIN_INTERVAL_MS) return;
+      lastFocusRefresh.current = now;
+      try {
+        const r = await api.refresh();
+        if (r?.accessToken) setAccessToken(r.accessToken);
+      } catch {
+        // Backend rejected the cookie — axios interceptor will have cleared state.
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [setAccessToken]);
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <div className="brand">Query Schema <span className="v2">v2</span> <span className="badge">Rust</span></div>
-        <div className="spacer" />
-        <div className="who">{me?.email}</div>
-        <button className="ghost" onClick={onLogout}>Sign out</button>
-      </header>
-      <div className="body">
-        <aside className="side">
-          <label className="lbl">Schema</label>
-          <select value={schema} onChange={(e) => setSchema(e.target.value)}>
-            {schemas.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-          <label className="lbl">Tables ({tables.length})</label>
-          <div className="tablelist">
-            {tables.map((t) => (
-              <button key={t} className={t === table ? "on" : ""} onClick={() => openTable(t)}>{t}</button>
-            ))}
-          </div>
-          <div className="sqlbtn">
-            <button className={view === "sql" ? "on" : ""} onClick={() => setView("sql")}>SQL runner</button>
-          </div>
-        </aside>
-        <main className="main">
-          {view === "sql" && (
-            <div className="sqlpane">
-              <textarea value={sql} onChange={(e) => setSql(e.target.value)} spellCheck={false} />
-              <div className="sqlbar">
-                <button onClick={runSql} disabled={loading}>{loading ? "Running…" : "Run"}</button>
-                <Timing timing={timing} />
-              </div>
-            </div>
-          )}
-          {view === "browse" && (
-            <div className="browsebar">
-              <div className="title">{table ? `${schema}.${table}` : "Pick a table"}</div>
-              <Timing timing={timing} />
-            </div>
-          )}
-          {err && <div className="err main-err">{err}</div>}
-          <Grid cols={cols} rows={rows} loading={loading} />
-        </main>
-      </div>
-    </div>
+    <Suspense
+      fallback={
+        <div className="h-screen w-screen flex items-center justify-center bg-background text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" />
+        </div>
+      }
+    >
+      <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/signup" element={<SignupPage />} />
+      <Route path="/auth/callback" element={<OAuthCallbackPage />} />
+      <Route path="/agent/authorize" element={<AgentAuthorizePage />} />
+      {/* Public agent download page — no auth required */}
+      <Route path="/download" element={<DownloadPage />} />
+      <Route path="/auth/verify" element={<VerifyEmailPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/auth/reset" element={<ResetPasswordPage />} />
+      <Route
+        path="/connections"
+        element={
+          <Protected>
+            <ConnectionsPage />
+          </Protected>
+        }
+      />
+      <Route
+        path="/schedules"
+        element={
+          <Protected>
+            <SchedulesRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/federated"
+        element={
+          <Protected>
+            <FederatedRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/api-keys"
+        element={
+          <Protected>
+            <ApiKeysRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/billing"
+        element={
+          <Protected>
+            <BillingRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/workspaces/:id/sso"
+        element={
+          <Protected>
+            <WorkspaceSsoRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/dashboards"
+        element={
+          <Protected>
+            <DashboardsListRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/dashboards/:id"
+        element={
+          <Protected>
+            <DashboardDetailRoute />
+          </Protected>
+        }
+      />
+      {/* Public share URL — no auth required */}
+      <Route path="/d/:token" element={<PublicDashboardRoute />} />
+      <Route path="/q/:token" element={<PublicSharedQueryRoute />} />
+      <Route path="/status" element={<StatusPage />} />
+      <Route
+        path="/sessions"
+        element={
+          <Protected>
+            <SessionsRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/notebooks"
+        element={
+          <Protected>
+            <NotebooksListRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/notebooks/:id"
+        element={
+          <Protected>
+            <NotebookDetailRoute />
+          </Protected>
+        }
+      />
+      <Route
+        path="/c/:id"
+        element={
+          <Protected>
+            <AppShell />
+          </Protected>
+        }
+      >
+        <Route index element={<Navigate to="sql" replace />} />
+        <Route path="t/:schema/:table" element={<TableRoute />} />
+        <Route path="t/:schema" element={<TableRoute />} />
+        <Route path="sql" element={<SqlRoute />} />
+        <Route path="builder" element={<QueryBuilderRoute />} />
+        <Route path="diff" element={<DiffRoute />} />
+        <Route path="dictionary" element={<DictionaryRoute />} />
+        <Route path="sensitive" element={<SensitiveScanRoute />} />
+        <Route path="er" element={<ErRoute />} />
+        <Route path="schema" element={<SchemaRoute />} />
+        <Route path="audit" element={<AuditRoute />} />
+        <Route path="query-history" element={<QueryHistoryRoute />} />
+        <Route path="db-health" element={<DbHealthRoute />} />
+        <Route path="reviews" element={<ReviewRequestsRoute />} />
+        <Route path="row-filters" element={<RowFiltersRoute />} />
+        <Route path="docs" element={<SchemaDocsRoute />} />
+        <Route path="ai" element={<AiChatRoute />} />
+        <Route path="migrate" element={<MigrationBuilderRoute />} />
+        <Route path="saved" element={<SavedRoute />} />
+        <Route path="permissions" element={<PermissionsRoute />} />
+        <Route path="db-users" element={<DbUsersRoute />} />
+        <Route path="backup" element={<BackupRoute />} />
+        <Route path="slow-queries" element={<SlowQueriesRoute />} />
+        <Route path="plan-regressions" element={<PlanRegressionsRoute />} />
+        <Route path="migration-export" element={<MigrationExportRoute />} />
+        <Route path="webhooks" element={<WebhooksRoute />} />
+        <Route path="*" element={<NotFoundPage />} />
+      </Route>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+    </Suspense>
   );
-}
-
-function Timing({ timing }: { timing: { tookMs?: number; clientMs?: number; rowCount?: number; total?: number | null } }) {
-  if (timing.tookMs == null) return null;
-  return (
-    <div className="timing">
-      <span className="metric"><b>{timing.tookMs.toFixed(1)}</b> ms server</span>
-      <span className="metric"><b>{timing.clientMs?.toFixed(0)}</b> ms round-trip</span>
-      <span className="metric">{timing.rowCount ?? 0} rows{timing.total != null ? ` / ${timing.total}` : ""}</span>
-    </div>
-  );
-}
-
-function Grid({ cols, rows, loading }: { cols: string[]; rows: Row[]; loading: boolean }) {
-  // Cap DOM rows — the benchmark is the backend; the grid just displays.
-  const shown = useMemo(() => rows.slice(0, 500), [rows]);
-  if (loading) return <div className="empty">Loading…</div>;
-  if (!rows.length) return <div className="empty">No rows</div>;
-  return (
-    <div className="gridwrap">
-      <table className="grid">
-        <thead>
-          <tr>{cols.map((c) => <th key={c}>{c}</th>)}</tr>
-        </thead>
-        <tbody>
-          {shown.map((r, i) => (
-            <tr key={i}>
-              {cols.map((c) => <td key={c}>{fmt(r[c])}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function fmt(v: unknown): string {
-  if (v === null || v === undefined) return "";
-  if (typeof v === "object") { try { return JSON.stringify(v); } catch { return String(v); } }
-  return String(v);
 }

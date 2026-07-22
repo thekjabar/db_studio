@@ -1,0 +1,20 @@
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+    container_name: dbdash-frontend
+    restart: unless-stopped
+    ports:
+      # SECURITY: loopback only — nginx terminates TLS and proxies to
+      # 127.0.0.1. Publishing on 0.0.0.0 served the SPA in plaintext and
+      # bypassed Cloudflare.
+      - "127.0.0.1:${FRONTEND_PORT:-8080}:80"
+    networks: [dbdash]
+
+networks:
+  dbdash:
+    name: dbdash-net
+    external: true

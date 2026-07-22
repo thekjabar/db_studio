@@ -1,0 +1,1014 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Editor from "@monaco-editor/react";
+import { toast } from "sonner";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  FileJson,
+  FileSpreadsheet,
+  FileText,
+  Filter,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Share2,
+  Sparkles,
+  Table2,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { DataGrid, type FkMap } from "@/components/data-grid";
+import { Popover } from "@/components/ui/popover";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  exportCsv as dlCsv,
+  exportJson as dlJson,
+  exportExcel as dlExcel,
+  toMarkdownTable,
+  toInsertStatements,
+  toJson,
+  copyToClipboard,
+} from "@/lib/result-export";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { api, extractErrorMessage, type ColumnInfo } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { RowDrawer } from "@/components/row-drawer";
+import { JsonFieldEditor } from "@/components/json-field-editor";
+import { BulkEditDialog } from "@/components/bulk-edit-dialog";
+import { CsvImportDialog } from "@/components/csv-import-dialog";
+import { useTableSubscription } from "@/lib/realtime";
+import { useTheme } from "@/lib/theme-store";
+import { useModal } from "@/components/modal-provider";
+
+const PAGE_SIZES = [100, 500, 1000] as const;
+type PageSize = (typeof PAGE_SIZES)[number];
+
+type FilterRow = { column: string; op: string; value: string };
+type SortRow = { column: string; direction: "asc" | "desc" };
+
+const FILTER_OPS: { op: string; label: string }[] = [
+  { op: "=", label: "[ = ]  equals" },
+  { op: "!=", label: "[ <> ]  not equal" },
+  { op: ">", label: "[ > ]  greater than" },
+  { op: "<", label: "[ < ]  less than" },
+  { op: ">=", label: "[ >= ]  greater than or equal" },
+  { op: "<=", label: "[ <= ]  less than or equal" },
+  { op: "like", label: "[ ~~ ]  like operator" },
+  { op: "ilike", label: "[ ~~* ]  ilike operator" },
+  { op: "in", label: "[ in ]  one of a list of values" },
+  { op: "is null", label: "[ is null ]" },
+  { op: "is not null", label: "[ is not null ]" },
+];
+
+// Turn a raw user string into the correctly-typed value for the filter.
+function coerceFilterValue(raw: string, op: string): unknown {
+  if (op === "is null" || op === "is not null") return null;
+  if (op === "in") {
+    return raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  if (raw === "") return null;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  if (raw === "null") return null;
+  if (/^-?\d+(?:\.\d+)?$/.test(raw)) return Number(raw);
+  return raw;
+}
+
+export default function TableRoute() {
+  const { id, schema, table } = useParams<{ id: string; schema: string; table: string }>();
+  const qc = useQueryClient();
+  const modal = useModal();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Initial state hydrated from URL so links are shareable.
+  const [page, setPage] = useState(() => {
+    const p = Number(searchParams.get("page"));
+    return Number.isFinite(p) && p >= 0 ? p : 0;
+  });
+  const [pageSize, setPageSize] = useState<PageSize>(() => {
+    const n = Number(searchParams.get("size"));
+    return (PAGE_SIZES as readonly number[]).includes(n) ? (n as PageSize) : 100;
+  });
+  const [filters, setFilters] = useState<FilterRow[]>(() => {
+    const raw = searchParams.get("f");
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [sorts, setSorts] = useState<SortRow[]>(() => {
+    const raw = searchParams.get("s");
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  // Push state to URL as a shareable link. Keep query-string compact.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    if (page > 0) next.set("page", String(page)); else next.delete("page");
+    if (pageSize !== 100) next.set("size", String(pageSize)); else next.delete("size");
+    if (filters.length) next.set("f", JSON.stringify(filters)); else next.delete("f");
+    if (sorts.length) next.set("s", JSON.stringify(sorts)); else next.delete("s");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, pageSize, filters, sorts]);
+
+  // Parse a `?f` / `?s`-style JSON-array param, tolerating garbage.
+  const parseJsonArrayParam = <T,>(raw: string | null): T[] => {
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as T[]) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  // When the table (or schema/connection) changes, RE-HYDRATE filters/sorts from
+  // the destination URL rather than blindly clearing them. A filter built for one
+  // table's columns is invalid on another, so we don't carry the old state over —
+  // but an FK "open" navigation lands here with a fresh `?f` filter already in the
+  // URL (e.g. `id = 42`), and that must apply, not get wiped. Reading the URL does
+  // both: normal table switches have no `f` (→ empty), FK jumps have the filter.
+  // Skip the first render so URL-shared filters still hydrate on load.
+  const tableKey = `${id}/${schema}/${table}`;
+  const prevTableKey = useRef(tableKey);
+  useEffect(() => {
+    if (prevTableKey.current === tableKey) return; // same table (incl. first mount)
+    prevTableKey.current = tableKey;
+    setFilters(parseJsonArrayParam<FilterRow>(searchParams.get("f")));
+    setSorts(parseJsonArrayParam<SortRow>(searchParams.get("s")));
+    setPage(0);
+    setSelected(new Set());
+    setFilterOpen(false);
+    setSortOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tableKey]);
+
+  // Same-table FK jump: the route params don't change (so the table-change
+  // effect above is skipped), but the `?f` param does. This effect owns a ref of
+  // the last `?f` STRING it observed and only reacts when that string actually
+  // changes — so it fires exactly once per real URL transition. It then compares
+  // the new `?f` against the current filters; if they already agree (our own
+  // state→URL write is what moved the URL) it does nothing, avoiding a clobber.
+  // Only a genuine external change (an FK "open" pointing back into this table)
+  // both changes the string AND disagrees with `filters`, triggering re-hydrate.
+  const lastSeenF = useRef<string>(searchParams.get("f") ?? "");
+  useEffect(() => {
+    const raw = searchParams.get("f") ?? "";
+    if (raw === lastSeenF.current) return; // `?f` string unchanged since last run
+    lastSeenF.current = raw;
+    const current = filters.length ? JSON.stringify(filters) : "";
+    if (raw === current) return; // URL now matches our state — nothing to apply
+    setFilters(parseJsonArrayParam<FilterRow>(raw || null));
+    setPage(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  const filterBtnRef = useRef<HTMLButtonElement | null>(null);
+  const sortBtnRef = useRef<HTMLButtonElement | null>(null);
+  const pageSizeBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
+  const [pageSizeOpen, setPageSizeOpen] = useState(false);
+
+  // Drafts — edits don't commit until "Apply" is clicked.
+  const [filterDraft, setFilterDraft] = useState<FilterRow[]>([]);
+  const [sortDraft, setSortDraft] = useState<SortRow[]>([]);
+
+  // Row drawer: -1 = closed, null = inserting new, number = editing that row idx.
+  const [drawerRow, setDrawerRow] = useState<number | null | -1>(-1);
+  // JSON cell editor: { rowIdx, column } when open.
+  const [jsonCell, setJsonCell] = useState<{ r: number; c: string } | null>(null);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [generateCount, setGenerateCount] = useState("25");
+
+  const ready = !!id && !!schema && !!table;
+
+  // Live-update: when the backend sees a change for this (schema.table), refetch.
+  // Also clear the selection: it's keyed by ROW INDEX, and a refetch can reorder
+  // or shrink `rows` so those indices point at different rows (or none). Keeping a
+  // stale selection is what produced malformed delete/edit payloads
+  // ("pks must be a non-empty array of objects"). Dropping it is safe — the user
+  // re-selects against the fresh rows.
+  useTableSubscription(
+    { connectionId: id, schema, table, enabled: ready },
+    () => {
+      qc.invalidateQueries({ queryKey: ["data", id, schema, table] });
+      setSelected((s) => (s.size ? new Set() : s));
+    },
+  );
+
+  const colsQ = useQuery({
+    queryKey: ["columns", id, schema, table],
+    queryFn: () => api.getTableColumns(id!, table!, schema!),
+    enabled: ready,
+  });
+
+  // Connection metadata — used to hide write actions (like "Generate data") on a
+  // read-only connection. The backend enforces this too; this just avoids
+  // showing a button that would 400.
+  const connQ = useQuery({
+    queryKey: ["connection", id],
+    queryFn: () => api.getConnection(id!),
+    enabled: !!id,
+    staleTime: 5 * 60_000,
+  });
+  const isReadOnly = !!connQ.data?.readOnly;
+
+  // Foreign keys for the whole schema (cached), reduced to a map for the
+  // CURRENT table's columns so the grid can show a hover popover of the
+  // referenced row. Kept schema-scoped so navigating between tables reuses it.
+  const fksQ = useQuery({
+    queryKey: ["fks", id, schema],
+    queryFn: () => api.getForeignKeys(id!, schema!),
+    enabled: ready,
+    staleTime: 5 * 60_000,
+  });
+
+  const fkMap = useMemo<FkMap>(() => {
+    const m: FkMap = {};
+    for (const fk of fksQ.data ?? []) {
+      if (fk.sourceSchema === schema && fk.sourceTable === table) {
+        m[fk.sourceColumn] = {
+          refSchema: fk.refSchema,
+          refTable: fk.refTable,
+          refColumn: fk.refColumn,
+        };
+      }
+    }
+    return m;
+  }, [fksQ.data, schema, table]);
+
+  const appliedFilters = useMemo(
+    () =>
+      filters
+        .filter((f) => f.column && f.op)
+        .map((f) => ({ column: f.column, op: f.op, value: coerceFilterValue(f.value, f.op) })),
+    [filters],
+  );
+
+  const dataQ = useQuery({
+    queryKey: ["data", id, schema, table, page, pageSize, appliedFilters, sorts],
+    queryFn: () =>
+      api.getTableData(id!, table!, {
+        schema: schema!,
+        limit: pageSize,
+        offset: page * pageSize,
+        filters: appliedFilters,
+        orderBy: sorts,
+      }),
+    enabled: ready,
+  });
+
+  const updateRow = useMutation({
+    mutationFn: (vars: { pk: Record<string, unknown>; set: Record<string, unknown> }) =>
+      api.updateRow(id!, table!, { schema: schema!, pk: vars.pk, set: vars.set }),
+    onSuccess: () => {
+      toast.success("Row updated");
+      qc.invalidateQueries({ queryKey: ["data", id, schema, table] });
+    },
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
+  const deleteRows = useMutation({
+    mutationFn: (pks: Record<string, unknown>[]) =>
+      api.bulkDeleteRows(id!, table!, { schema: schema!, pks }),
+    onSuccess: (r) => {
+      toast.success(`Deleted ${r.affectedRows} row${r.affectedRows === 1 ? "" : "s"}`);
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ["data", id, schema, table] });
+    },
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
+  const generate = useMutation({
+    mutationFn: (count: number) => api.generateSampleData(id!, table!, schema!, count),
+    onSuccess: (r) => {
+      if (r.inserted > 0) {
+        toast.success(`Inserted ${r.inserted} row${r.inserted === 1 ? "" : "s"}`);
+      }
+      if (r.errors?.length) {
+        // Some rows failed (FK / unique / constraint). Surface the first reason.
+        toast.error(
+          r.inserted > 0
+            ? `${r.inserted} inserted; some rows failed: ${r.errors[0]}`
+            : `Generation failed: ${r.errors[0]}`,
+        );
+      }
+      setGenerateOpen(false);
+      qc.invalidateQueries({ queryKey: ["data", id, schema, table] });
+    },
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
+  const submitGenerate = () => {
+    const n = Math.max(1, Math.min(1000, Number(generateCount) || 0));
+    if (!n) {
+      toast.error("Enter a row count between 1 and 1000");
+      return;
+    }
+    generate.mutate(n);
+  };
+
+  const columns = useMemo(() => {
+    const cols = colsQ.data ?? [];
+    return cols.map((c) => ({ name: c.name, type: c.dataType, pk: c.isPrimaryKey }));
+  }, [colsQ.data]);
+
+  const pkCols = useMemo(() => (colsQ.data ?? []).filter((c) => c.isPrimaryKey).map((c) => c.name), [colsQ.data]);
+
+  // `total` may be null when the backend skipped COUNT for perf (large filtered set).
+  const total = dataQ.data?.total ?? null;
+  const totalIsEstimate = !!dataQ.data?.totalIsEstimate;
+  const rows = dataQ.data?.rows ?? [];
+  // If we don't know the total, cap pagination at the current page + (current fills? one more : self).
+  const maxPage =
+    total == null
+      ? rows.length === pageSize
+        ? page + 1
+        : page
+      : Math.max(0, Math.ceil(total / pageSize) - 1);
+
+  const openFilter = () => {
+    setFilterDraft(filters.length ? filters : [{ column: columns[0]?.name ?? "", op: "=", value: "" }]);
+    setFilterOpen(true);
+  };
+  const openSort = () => {
+    setSortDraft(sorts.length ? sorts : [{ column: columns[0]?.name ?? "", direction: "asc" }]);
+    setSortOpen(true);
+  };
+  const applyFilters = () => {
+    setFilters(filterDraft.filter((f) => f.column && f.op));
+    setPage(0);
+    setFilterOpen(false);
+  };
+  const applySorts = () => {
+    setSorts(sortDraft.filter((s) => s.column));
+    setPage(0);
+    setSortOpen(false);
+  };
+
+  // Export helpers reuse the shared result-export lib (same as the SQL editor),
+  // so the table Data view offers CSV / JSON / Excel downloads and SQL-INSERT /
+  // Markdown / JSON copy — not just CSV.
+  const exportCols = () => columns.map((c) => c.name);
+  const exportBase = () => table ?? "table";
+  // Export the SELECTED rows when any are selected; otherwise all loaded rows.
+  // `selected` holds row indices into the current page's `rows`.
+  const exportRows = () =>
+    selected.size > 0
+      ? [...selected].sort((a, b) => a - b).map((i) => rows[i]).filter(Boolean)
+      : rows;
+  const copyExport = async (text: string, label: string) => {
+    const ok = await copyToClipboard(text);
+    toast[ok ? "success" : "error"](ok ? `Copied ${label} to clipboard` : `Could not copy ${label}`);
+  };
+
+  // Clicking an FK cell (or its peek popover's "Open") jumps to the referenced
+  // row: navigate to that table's route filtered to `refColumn = value`. The
+  // filter is encoded exactly like this route hydrates it from `?f` (a JSON
+  // array of {column, op, value}). Navigating to the SAME table still updates —
+  // react-router pushes a new URL, and the `f`-driven state re-hydrates.
+  const onOpenFk = (ref: {
+    refSchema: string;
+    refTable: string;
+    refColumn: string;
+    value: unknown;
+  }) => {
+    // Encode the filter with a STRING value, matching FilterRow's shape so it
+    // hydrates and runs through coerceFilterValue exactly like a typed filter.
+    const filter: FilterRow[] = [
+      { column: ref.refColumn, op: "=", value: String(ref.value) },
+    ];
+    const path = `/c/${id}/t/${encodeURIComponent(ref.refSchema)}/${encodeURIComponent(ref.refTable)}`;
+    navigate(`${path}?f=${encodeURIComponent(JSON.stringify(filter))}`);
+  };
+
+  const onEditCell = (rowIdx: number, column: string, value: unknown) => {
+    if (pkCols.length === 0) {
+      toast.error("Cannot edit: no primary key");
+      return;
+    }
+    const row = rows[rowIdx];
+    const pk: Record<string, unknown> = {};
+    for (const c of pkCols) pk[c] = row[c];
+    updateRow.mutate({ pk, set: { [column]: value } });
+  };
+
+  // Turn a set of selected row indices into PK objects, dropping any that no
+  // longer resolve to a real row with all PK columns present (e.g. after a
+  // Realtime refresh replaced `rows` under a stale selection). Guarantees every
+  // returned object is a complete, non-empty PK — never `{}` or `{ id: undefined }`.
+  const buildPks = (sel: Set<number>): Record<string, unknown>[] => {
+    const out: Record<string, unknown>[] = [];
+    sel.forEach((i) => {
+      const r = rows[i];
+      if (!r) return;
+      const pk: Record<string, unknown> = {};
+      let complete = true;
+      for (const c of pkCols) {
+        const v = r[c];
+        if (v === undefined || v === null) { complete = false; break; }
+        pk[c] = v;
+      }
+      if (complete && Object.keys(pk).length > 0) out.push(pk);
+    });
+    return out;
+  };
+
+  const deleteSelected = async () => {
+    if (pkCols.length === 0) {
+      toast.error("Cannot delete: no primary key");
+      return;
+    }
+    // Build one PK object per selected row. `selected` holds row INDICES, and a
+    // Realtime refresh can replace/shrink `rows` between selecting and deleting —
+    // leaving stale indices whose row is gone (rows[i] === undefined) or whose PK
+    // column is null. Skip any such entry so we never send an empty/partial PK
+    // (which the API rejects with "pks must be a non-empty array of objects").
+    const pks = buildPks(selected);
+    if (pks.length === 0) {
+      toast.error("Nothing to delete — the selection is out of date. Refresh and select the rows again.");
+      setSelected(new Set());
+      return;
+    }
+    const ok = await modal.confirm({
+      title: `Delete ${pks.length} row(s)?`,
+      description: "This permanently removes the selected rows.",
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (ok) deleteRows.mutate(pks);
+  };
+
+  if (!ready) return <EmptyState />;
+
+  return (
+    <div className="h-full flex flex-col">
+      <Tabs defaultValue="data" className="flex flex-col h-full">
+        <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-border flex-wrap">
+          <TabsList>
+            <TabsTrigger value="data">Data</TabsTrigger>
+            <TabsTrigger value="definition">Definition</TabsTrigger>
+          </TabsList>
+          <div className="flex items-center gap-1 flex-wrap justify-end">
+            <Button ref={filterBtnRef} size="sm" variant="ghost" onClick={openFilter}>
+              <Filter className="h-3.5 w-3.5" /> Filter
+              {filters.length > 0 && (
+                <Badge className="ml-1 h-4 px-1 text-[10px]">{filters.length}</Badge>
+              )}
+            </Button>
+            <Button ref={sortBtnRef} size="sm" variant="ghost" onClick={openSort}>
+              <ArrowUpDown className="h-3.5 w-3.5" /> Sort
+              {sorts.length > 0 && (
+                <Badge className="ml-1 h-4 px-1 text-[10px]">{sorts.length}</Badge>
+              )}
+            </Button>
+            <Button size="sm" onClick={() => setDrawerRow(null)}>
+              <Plus className="h-3.5 w-3.5" /> Insert
+            </Button>
+            {!isReadOnly && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setGenerateCount("25");
+                  setGenerateOpen(true);
+                }}
+                title="Insert realistic fake rows into this table"
+              >
+                <Sparkles className="h-3.5 w-3.5" /> Generate data
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                dataQ.refetch();
+                colsQ.refetch();
+                toast.success("Refreshed");
+              }}
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", dataQ.isFetching && "animate-spin")} /> Refresh
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                navigator.clipboard.writeText(window.location.href).then(
+                  () => toast.success("Link copied"),
+                  () => toast.error("Copy failed"),
+                );
+              }}
+              title="Copy shareable link"
+            >
+              <Share2 className="h-3.5 w-3.5" /> Share
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="ghost" disabled={!rows.length}>
+                  <Download className="h-3.5 w-3.5" />
+                  {selected.size > 0 ? `Export ${selected.size}` : "Export"}
+                  <ChevronDown className="h-3 w-3 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {selected.size > 0 && (
+                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                    Exporting {selected.size} selected row{selected.size === 1 ? "" : "s"}
+                  </div>
+                )}
+                <DropdownMenuItem onClick={() => dlCsv(exportCols(), exportRows(), exportBase())}>
+                  <Download className="h-3.5 w-3.5" /> Download CSV
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => dlJson(exportCols(), exportRows(), exportBase())}>
+                  <FileJson className="h-3.5 w-3.5" /> Download JSON
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => dlExcel(exportCols(), exportRows(), exportBase())}>
+                  <FileSpreadsheet className="h-3.5 w-3.5" /> Download Excel
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => copyExport(toInsertStatements(exportCols(), exportRows(), exportBase()), "INSERT statements")}>
+                  <Table2 className="h-3.5 w-3.5" /> Copy as SQL INSERTs
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => copyExport(toJson(exportCols(), exportRows()), "JSON")}>
+                  <FileJson className="h-3.5 w-3.5" /> Copy as JSON
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => copyExport(toMarkdownTable(exportCols(), exportRows()), "Markdown")}>
+                  <FileText className="h-3.5 w-3.5" /> Copy as Markdown
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Button size="sm" variant="ghost" onClick={() => setCsvImportOpen(true)}>
+              <Upload className="h-3.5 w-3.5" /> Import
+            </Button>
+            {selected.size > 0 && (
+              <>
+                <Button size="sm" variant="outline" onClick={() => setBulkEditOpen(true)}>
+                  Edit {selected.size}
+                </Button>
+                <Button size="sm" variant="destructive" onClick={deleteSelected}>
+                  <Trash2 className="h-3.5 w-3.5" /> Delete {selected.size}
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+
+        <TabsContent value="data" className="flex-1 flex flex-col min-h-0 mt-0">
+          <div className="flex-1 min-h-0 relative">
+            <DataGrid
+              columns={columns}
+              rows={rows}
+              loading={dataQ.isLoading || colsQ.isLoading}
+              connectionId={id!}
+              schema={schema!}
+              table={table!}
+              fkMap={fkMap}
+              onOpenFk={onOpenFk}
+              selectable
+              selected={selected}
+              onToggleSelect={(i) => {
+                const s = new Set(selected);
+                s.has(i) ? s.delete(i) : s.add(i);
+                setSelected(s);
+              }}
+              onToggleSelectAll={(all) => setSelected(all ? new Set(rows.map((_, i) => i)) : new Set())}
+              onEditCell={onEditCell}
+              onEditJsonCell={(r, c) => setJsonCell({ r, c })}
+              onExpandRow={(i) => setDrawerRow(i)}
+              widthStorageKey={ready ? `${id}.${schema}.${table}` : undefined}
+            />
+          </div>
+          <div className="flex items-center justify-between px-4 py-2 border-t border-border text-xs text-muted-foreground font-mono">
+            <div className="flex items-center gap-2">
+              <Button size="icon" variant="ghost" className="h-7 w-7" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <span>Page</span>
+              <Input
+                inputMode="numeric"
+                value={page + 1}
+                onChange={(e) => {
+                  const v = e.target.value.replace(/\D/g, "");
+                  const n = Number(v);
+                  if (Number.isFinite(n)) setPage(Math.max(0, Math.min(maxPage, n - 1)));
+                }}
+                className="h-7 w-14 text-center font-mono text-xs"
+              />
+              <span>of {maxPage + 1}</span>
+              <Button size="icon" variant="ghost" className="h-7 w-7" disabled={page >= maxPage} onClick={() => setPage((p) => p + 1)}>
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                ref={pageSizeBtnRef}
+                size="sm"
+                variant="outline"
+                className="h-7"
+                onClick={() => setPageSizeOpen((v) => !v)}
+              >
+                {pageSize} rows
+              </Button>
+              <span>
+                {total == null
+                  ? "many records"
+                  : totalIsEstimate
+                    ? `~${total.toLocaleString()} records (estimate)`
+                    : `${total.toLocaleString()} records`}
+              </span>
+            </div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="definition" className="flex-1 overflow-auto mt-0 p-4 space-y-4">
+          <DefinitionPane id={id!} columns={colsQ.data ?? []} table={table} schema={schema} loading={colsQ.isLoading} />
+        </TabsContent>
+      </Tabs>
+
+      <Popover open={filterOpen} onOpenChange={setFilterOpen} anchorRef={filterBtnRef} align="end" className="w-140">
+        <div className="space-y-2">
+          {filterDraft.length === 0 && (
+            <div className="text-xs text-muted-foreground px-2 py-3">No filters applied. Add one below.</div>
+          )}
+          {filterDraft.map((f, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Select
+                value={f.column}
+                onValueChange={(v) =>
+                  setFilterDraft((xs) => xs.map((x, j) => (j === i ? { ...x, column: v } : x)))
+                }
+              >
+                <SelectTrigger className="h-8 w-40 text-xs">
+                  <SelectValue placeholder="Column" />
+                </SelectTrigger>
+                <SelectContent className="max-h-64">
+                  {(colsQ.data ?? []).map((c) => (
+                    <SelectItem key={c.name} value={c.name}>
+                      <span className="font-mono">{c.name}</span>
+                      <span className="ml-2 text-muted-foreground text-[10px]">{c.dataType}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={f.op}
+                onValueChange={(v) => setFilterDraft((xs) => xs.map((x, j) => (j === i ? { ...x, op: v } : x)))}
+              >
+                <SelectTrigger className="h-8 w-24 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {FILTER_OPS.map((o) => (
+                    <SelectItem key={o.op} value={o.op}>
+                      <span className="font-mono text-xs">{o.label}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                value={f.value}
+                onChange={(e) =>
+                  setFilterDraft((xs) => xs.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))
+                }
+                disabled={f.op === "is null" || f.op === "is not null"}
+                placeholder={f.op === "in" ? "a, b, c" : "Enter a value"}
+                className="h-8 text-xs font-mono flex-1"
+              />
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                onClick={() => setFilterDraft((xs) => xs.filter((_, j) => j !== i))}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+          <div className="flex items-center justify-between pt-2 border-t border-border">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                setFilterDraft((xs) => [
+                  ...xs,
+                  { column: colsQ.data?.[0]?.name ?? "", op: "=", value: "" },
+                ])
+              }
+            >
+              <Plus className="h-3.5 w-3.5" /> Add filter
+            </Button>
+            <Button size="sm" onClick={applyFilters}>Apply filter</Button>
+          </div>
+        </div>
+      </Popover>
+
+      <Popover open={sortOpen} onOpenChange={setSortOpen} anchorRef={sortBtnRef} align="end" className="w-110">
+        <div className="space-y-2">
+          {sortDraft.length === 0 && (
+            <div className="text-xs text-muted-foreground px-2 py-3">No sorts applied. Add one below.</div>
+          )}
+          {sortDraft.map((s, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Select
+                value={s.column}
+                onValueChange={(v) =>
+                  setSortDraft((xs) => xs.map((x, j) => (j === i ? { ...x, column: v } : x)))
+                }
+              >
+                <SelectTrigger className="h-8 flex-1 text-xs">
+                  <SelectValue placeholder="Column" />
+                </SelectTrigger>
+                <SelectContent className="max-h-64">
+                  {(colsQ.data ?? []).map((c) => (
+                    <SelectItem key={c.name} value={c.name}>
+                      <span className="font-mono">{c.name}</span>
+                      <span className="ml-2 text-muted-foreground text-[10px]">{c.dataType}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8"
+                onClick={() =>
+                  setSortDraft((xs) =>
+                    xs.map((x, j) => (j === i ? { ...x, direction: x.direction === "asc" ? "desc" : "asc" } : x)),
+                  )
+                }
+              >
+                {s.direction === "asc" ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
+                {s.direction.toUpperCase()}
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                onClick={() => setSortDraft((xs) => xs.filter((_, j) => j !== i))}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+          <div className="flex items-center justify-between pt-2 border-t border-border">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                setSortDraft((xs) => [
+                  ...xs,
+                  { column: colsQ.data?.[0]?.name ?? "", direction: "asc" },
+                ])
+              }
+            >
+              <Plus className="h-3.5 w-3.5" /> Add sort
+            </Button>
+            <Button size="sm" onClick={applySorts}>Apply sort</Button>
+          </div>
+        </div>
+      </Popover>
+
+      <Popover open={pageSizeOpen} onOpenChange={setPageSizeOpen} anchorRef={pageSizeBtnRef} align="center" side="top" className="w-40 p-1">
+        <div className="flex flex-col">
+          {PAGE_SIZES.map((n) => (
+            <button
+              key={n}
+              onClick={() => {
+                setPageSize(n);
+                setPage(0);
+                setPageSizeOpen(false);
+              }}
+              className={`px-3 py-1.5 text-left text-xs rounded hover:bg-accent ${
+                pageSize === n ? "font-semibold" : ""
+              }`}
+            >
+              {n} rows
+            </button>
+          ))}
+        </div>
+      </Popover>
+
+      {drawerRow !== -1 && (
+        <RowDrawer
+          connectionId={id!}
+          schema={schema!}
+          table={table!}
+          columns={colsQ.data ?? []}
+          row={drawerRow === null ? null : rows[drawerRow] ?? null}
+          onClose={() => setDrawerRow(-1)}
+          onSaved={() => {
+            dataQ.refetch();
+          }}
+        />
+      )}
+
+      {jsonCell && (
+        <JsonFieldEditor
+          open
+          fieldName={jsonCell.c}
+          value={rows[jsonCell.r]?.[jsonCell.c] ?? null}
+          onClose={() => setJsonCell(null)}
+          onSave={async (next) => {
+            onEditCell(jsonCell.r, jsonCell.c, next);
+          }}
+        />
+      )}
+
+      {ready && (
+        <BulkEditDialog
+          open={bulkEditOpen}
+          onOpenChange={setBulkEditOpen}
+          connectionId={id!}
+          schema={schema!}
+          table={table!}
+          columns={colsQ.data ?? []}
+          pks={buildPks(selected)}
+          onApplied={() => {
+            setSelected(new Set());
+            qc.invalidateQueries({ queryKey: ["data", id, schema, table] });
+          }}
+        />
+      )}
+
+      {ready && (
+        <CsvImportDialog
+          open={csvImportOpen}
+          onOpenChange={setCsvImportOpen}
+          connectionId={id!}
+          schema={schema!}
+          table={table!}
+          tableColumns={colsQ.data ?? []}
+          onCommitted={() => qc.invalidateQueries({ queryKey: ["data", id, schema, table] })}
+        />
+      )}
+
+      <Dialog open={generateOpen} onOpenChange={(o) => !generate.isPending && setGenerateOpen(o)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Generate sample data</DialogTitle>
+            <DialogDescription>
+              Insert realistic fake rows into <span className="font-mono">{table}</span>. Auto-generated
+              columns (identity, serial, default primary keys) are filled by the database.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <label className="text-xs text-muted-foreground">Number of rows (1–1000)</label>
+            <Input
+              autoFocus
+              inputMode="numeric"
+              value={generateCount}
+              onChange={(e) => setGenerateCount(e.target.value.replace(/\D/g, "").slice(0, 4))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !generate.isPending) submitGenerate();
+              }}
+              className="h-9 font-mono"
+              placeholder="25"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setGenerateOpen(false)} disabled={generate.isPending}>
+              Cancel
+            </Button>
+            <Button onClick={submitGenerate} disabled={generate.isPending}>
+              {generate.isPending ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Generating…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-3.5 w-3.5" /> Generate
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function DefinitionPane({ id, columns, table, schema, loading }: { id: string; columns: ColumnInfo[]; table: string; schema: string; loading?: boolean }) {
+  const isDark = useTheme((s) => s.theme === "dark");
+  const defQ = useQuery({
+    queryKey: ["definition", id, schema, table],
+    queryFn: () => api.getTableDefinition(id, table, schema),
+    enabled: !!id && !!table && !!schema,
+  });
+
+  const ddl = defQ.data?.sql ?? "";
+
+  if (loading || defQ.isLoading) return <div className="text-sm text-muted-foreground">Loading...</div>;
+  if (columns.length === 0) return <div className="text-sm text-muted-foreground">No column data</div>;
+
+  return (
+    <>
+      <div>
+        <h3 className="text-sm font-semibold mb-2">Columns</h3>
+        <div className="rounded-md border border-border overflow-hidden">
+          <table className="w-full text-xs font-mono">
+            <thead className="bg-muted">
+              <tr>
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Name</th>
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Type</th>
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Nullable</th>
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Default</th>
+                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Key</th>
+              </tr>
+            </thead>
+            <tbody>
+              {columns.map((c) => (
+                <tr key={c.name} className="border-t border-border">
+                  <td className="px-3 py-2">{c.name}</td>
+                  <td className="px-3 py-2 text-primary">{c.dataType}</td>
+                  <td className="px-3 py-2">{c.nullable ? "YES" : "NO"}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{c.defaultValue ?? ""}</td>
+                  <td className="px-3 py-2 flex gap-1">
+                    {c.isPrimaryKey && <Badge>PK</Badge>}
+                    {c.isUnique && <Badge variant="info">UQ</Badge>}
+                    {c.fk && <Badge variant="warning">FK → {c.fk.table}.{c.fk.column}</Badge>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold mb-2">CREATE TABLE</h3>
+        <div className="rounded-md border border-border overflow-hidden">
+          <Editor
+            height={`${Math.max(ddl.split("\n").length, 1) * 19 + 16}px`}
+            defaultLanguage="sql"
+            theme={isDark ? "vs-dark" : "vs"}
+            value={ddl}
+            options={{
+              readOnly: true,
+              minimap: { enabled: false },
+              fontSize: 12,
+              fontFamily: "JetBrains Mono, monospace",
+              scrollBeyondLastLine: false,
+              scrollbar: { vertical: "hidden", handleMouseWheel: false, alwaysConsumeMouseWheel: false },
+            }}
+          />
+        </div>
+      </div>
+    </>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="h-full flex items-center justify-center text-sm text-muted-foreground">
+      Select a table from the sidebar to view its data.
+    </div>
+  );
+}

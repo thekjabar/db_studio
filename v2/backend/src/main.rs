@@ -18,7 +18,8 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use axum::extract::FromRequestParts;
+use axum::body::{to_bytes, Body};
+use axum::extract::{FromRequestParts, Request};
 use axum::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use base64::Engine;
@@ -27,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use serde_json::{json, Value};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
-use sqlx::{Connection, PgConnection, PgPool, Row};
+use sqlx::{Column, Connection, Executor, PgConnection, PgPool, Row, TypeInfo};
 use tower_http::cors::CorsLayer;
 
 // ---------------------------------------------------------------------------
@@ -44,8 +45,10 @@ struct AppState {
     max_rows: i64,
     /// Present when ENCRYPTION_KEY is set — enables decrypting v1 connection
     /// credentials to reach target databases. None = app-DB-only mode.
-    #[allow(dead_code)]
     crypto: Option<crypto::Crypto>,
+    /// HTTP client + origin for the strangler proxy to the v1 Node API.
+    http: reqwest::Client,
+    v1_origin: String,
 }
 
 #[tokio::main]
@@ -87,25 +90,22 @@ async fn main() -> anyhow::Result<()> {
     if crypto.is_some() {
         tracing::info!("ENCRYPTION_KEY loaded — target-database connections enabled");
     }
-    let state = AppState { pool, jwt_secret, jwt_ttl, max_rows, crypto };
+    let v1_origin = std::env::var("V1_ORIGIN").unwrap_or_else(|_| "http://dbdash-api:3000".into());
+    let http = reqwest::Client::builder()
+        .build()
+        .expect("reqwest client");
+    let state = AppState { pool, jwt_secret, jwt_ttl, max_rows, crypto, http, v1_origin };
 
     let app = Router::new()
         .route("/health", get(|| async { Json(json!({ "ok": true, "service": "queryschema-v2" })) }))
         .route("/api/health/db", get(health_db))
-        .route("/api/auth/login", post(login))
-        .route("/api/auth/me", get(me))
-        .route("/api/connections", get(list_connections))
-        .route("/api/introspect/schemas", get(list_schemas))
-        .route("/api/introspect/:schema/tables", get(list_tables))
-        .route("/api/introspect/:schema/:table/columns", get(list_columns))
-        .route("/api/table/:schema/:table/rows", get(table_rows))
-        .route("/api/query/run", post(run_query))
-        // Target databases (decrypt v1 creds → connect → run against them)
-        .route("/api/connections/:id/introspect/schemas", get(conn_schemas))
-        .route("/api/connections/:id/introspect/:schema/tables", get(conn_tables))
-        .route("/api/connections/:id/introspect/:schema/:table/columns", get(conn_columns))
-        .route("/api/connections/:id/table/:schema/:table/rows", get(conn_table_rows))
-        .route("/api/connections/:id/query", post(conn_query))
+        // --- Rust hot path: v1's EXACT paths, so the perf-critical calls run
+        //     in Rust. Everything else falls through to the v1 proxy below. ---
+        .route("/api/connections/:id/schemas", get(v1_schemas))
+        .route("/api/connections/:id/tables", get(v1_tables))
+        .route("/api/connections/:id/query", post(v1_query))
+        // --- Strangler proxy: every other endpoint → v1 Node API ---
+        .fallback(proxy)
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -661,8 +661,13 @@ async fn connect_target(state: &AppState, id: &str, user_id: &str) -> ApiResult<
         .as_ref()
         .ok_or_else(|| ApiError::internal("ENCRYPTION_KEY not configured — target connections disabled"))?;
     let row = sqlx::query(
-        r#"SELECT "credentialsCt", "dialect"::text AS dialect
-           FROM "Connection" WHERE "id" = $1 AND "ownerId" = $2 LIMIT 1"#,
+        r#"SELECT c."credentialsCt", c."dialect"::text AS dialect
+           FROM "Connection" c
+           WHERE c."id" = $1 AND (
+             c."ownerId" = $2
+             OR EXISTS (SELECT 1 FROM "ConnectionMember" m
+                        WHERE m."connectionId" = c."id" AND m."userId" = $2)
+           ) LIMIT 1"#,
     )
     .bind(id)
     .bind(user_id)
@@ -728,6 +733,149 @@ async fn conn_table_rows(State(state): State<AppState>, user: AuthUser, Path((id
 async fn conn_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Json(body): Json<RunBody>) -> ApiResult<Json<Value>> {
     let mut c = connect_target(&state, &id, &user.id).await?;
     run_on(&mut c, &body.sql, state.max_rows).await.map(Json)
+}
+
+// ---------------------------------------------------------------------------
+// v1-shaped hot path — these match the frontend's exact endpoints/shapes, so
+// the perf-critical calls run in Rust instead of proxying to Node.
+// ---------------------------------------------------------------------------
+
+async fn v1_schemas(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    Ok(Json(json!(core_schemas(&mut c).await?)))
+}
+
+async fn v1_tables(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let rows = sqlx::query(
+        "SELECT table_schema, table_name, table_type FROM information_schema.tables \
+         WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_schema NOT LIKE 'pg_%' \
+         ORDER BY table_schema, table_name",
+    )
+    .fetch_all(&mut c)
+    .await?;
+    let tables: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let tt: String = r.get("table_type");
+            json!({
+                "name": r.get::<String, _>("table_name"),
+                "schema": r.get::<String, _>("table_schema"),
+                "type": if tt == "VIEW" { "view" } else { "table" },
+            })
+        })
+        .collect();
+    Ok(Json(json!(tables)))
+}
+
+#[derive(Deserialize)]
+struct V1QueryBody {
+    sql: String,
+    #[serde(rename = "maxRows")]
+    max_rows: Option<i64>,
+}
+
+async fn v1_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Json(body): Json<V1QueryBody>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let sql = body.sql.trim().trim_end_matches(';').trim().to_string();
+    if sql.is_empty() {
+        return Err(ApiError::bad("Empty SQL"));
+    }
+    let max = body.max_rows.unwrap_or(state.max_rows).clamp(1, 100_000);
+    let command = sql.split_whitespace().next().unwrap_or("").to_uppercase();
+    let start = Instant::now();
+
+    if is_select(&sql) {
+        // Column names + types via describe (works even for zero-row results).
+        let fields: Vec<Value> = match (&mut c).describe(sql.as_str()).await {
+            Ok(d) => d
+                .columns()
+                .iter()
+                .map(|col| json!({ "name": col.name(), "dataType": col.type_info().name() }))
+                .collect(),
+            Err(_) => vec![],
+        };
+        let wrapped = format!(
+            "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM (SELECT * FROM ({sql}) _q LIMIT {max}) t",
+        );
+        let rows_json: Value = sqlx::query_scalar(&wrapped).fetch_one(&mut c).await?;
+        let dur = ms(start);
+        let row_count = rows_json.as_array().map(|a| a.len()).unwrap_or(0);
+        let fields = if fields.is_empty() {
+            derive_columns(&rows_json).into_iter().map(|n| json!({ "name": n })).collect()
+        } else {
+            fields
+        };
+        Ok(Json(json!({
+            "rows": rows_json,
+            "rowCount": row_count,
+            "fields": fields,
+            "command": command,
+            "durationMs": dur,
+            "truncated": row_count as i64 >= max,
+            "appliedLimit": max,
+        })))
+    } else {
+        let affected = sqlx::query(&sql).execute(&mut c).await?.rows_affected();
+        Ok(Json(json!({
+            "rows": [],
+            "rowCount": affected,
+            "fields": [],
+            "command": command,
+            "durationMs": ms(start),
+        })))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Strangler proxy — forward any unported endpoint to the v1 Node API.
+// ---------------------------------------------------------------------------
+
+async fn proxy(State(state): State<AppState>, req: Request) -> Response {
+    let (parts, body) = req.into_parts();
+    let bytes = match to_bytes(body, 26_214_400).await {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "body too large").into_response(),
+    };
+    let path = parts.uri.path();
+    let query = parts.uri.query().map(|q| format!("?{q}")).unwrap_or_default();
+    let url = format!("{}{}{}", state.v1_origin, path, query);
+    let method = reqwest::Method::from_bytes(parts.method.as_str().as_bytes()).unwrap_or(reqwest::Method::GET);
+
+    let mut rb = state.http.request(method, &url).body(bytes.to_vec());
+    for (k, v) in parts.headers.iter() {
+        if k == axum::http::header::HOST {
+            continue;
+        }
+        rb = rb.header(k.as_str(), v.as_bytes());
+    }
+    let resp = match rb.send().await {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("v1 proxy error: {e}")).into_response(),
+    };
+
+    let status = resp.status();
+    let headers = resp.headers().clone();
+    let body_bytes = resp.bytes().await.unwrap_or_default();
+    let mut builder = Response::builder().status(status.as_u16());
+    for (k, v) in headers.iter() {
+        let name = k.as_str();
+        if name.eq_ignore_ascii_case("set-cookie") {
+            // v1 scopes the refresh cookie to /api; the browser is at /v2/api.
+            let cookie = String::from_utf8_lossy(v.as_bytes()).replace("Path=/api", "Path=/v2/api");
+            builder = builder.header("set-cookie", cookie);
+        } else if name.eq_ignore_ascii_case("transfer-encoding")
+            || name.eq_ignore_ascii_case("content-length")
+            || name.eq_ignore_ascii_case("connection")
+        {
+            // hop-by-hop / recomputed by axum
+        } else {
+            builder = builder.header(name, v.as_bytes());
+        }
+    }
+    builder
+        .body(Body::from(body_bytes))
+        .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
 }
 
 /// Column names from the first row's keys (order preserved by serde_json's

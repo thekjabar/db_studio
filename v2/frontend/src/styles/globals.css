@@ -1,0 +1,411 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --color-brand: #3ECF8E;
+  --color-brand-dim: #2BA572;
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /* Soft slate-ish light theme — not pure white. The page sits 2 steps darker
+     than cards so panels read as distinct surfaces on a quiet background. */
+  --background: 220 16% 95%;
+  --foreground: 222 25% 14%;
+  --muted: 220 14% 90%;
+  --muted-foreground: 222 12% 35%;
+  --border: 220 13% 80%;
+  --input: 220 13% 78%;
+  --card: 220 20% 98%;
+  --card-foreground: 222 25% 14%;
+  --popover: 220 20% 98%;
+  --popover-foreground: 222 25% 14%;
+  --primary: 152 61% 42%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 14% 90%;
+  --secondary-foreground: 222 25% 14%;
+  --accent: 220 14% 88%;
+  --accent-foreground: 222 25% 14%;
+  --destructive: 0 72% 48%;
+  --destructive-foreground: 0 0% 100%;
+  --ring: 152 61% 42%;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: 220 13% 7%;
+  --foreground: 220 10% 92%;
+  --muted: 220 13% 11%;
+  --muted-foreground: 220 8% 55%;
+  --border: 220 13% 15%;
+  --input: 220 13% 14%;
+  --card: 220 13% 9%;
+  --card-foreground: 220 10% 92%;
+  --popover: 220 13% 9%;
+  --popover-foreground: 220 10% 92%;
+  --primary: 152 61% 52%;
+  --primary-foreground: 220 13% 7%;
+  --secondary: 220 13% 13%;
+  --secondary-foreground: 220 10% 92%;
+  --accent: 220 13% 14%;
+  --accent-foreground: 220 10% 92%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --ring: 152 61% 52%;
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-ring: hsl(var(--ring));
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+/* Tailwind v4 removed the default `cursor: pointer` on <button>. Put it back
+   for all interactive elements so hover feels right app-wide. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+summary,
+a[href],
+label[for] {
+  cursor: pointer;
+}
+:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+/* Density scale — applied as [data-density] on <html>. Everything using
+   rem-based sizing (Tailwind spacing, text, heights) reflows from here. */
+html[data-density="small"]  { font-size: 16px; }
+html[data-density="medium"] { font-size: 18px; }
+html[data-density="large"]  { font-size: 20px; }
+
+body {
+  font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); }
+
+/* Resizable column helper */
+.resize-x-col {
+  resize: horizontal;
+  overflow: hidden;
+  min-width: 80px;
+  max-width: 600px;
+}
+
+/* React Flow dark mode tweaks */
+.dark .react-flow__node {
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--border));
+}
+/* Keep node cards visually above edges so lines don't appear to cut through. */
+.react-flow__node { z-index: 10 !important; }
+.react-flow__edge { z-index: 0 !important; }
+.react-flow__edge.selected { z-index: 5 !important; }
+.dark .react-flow__controls-button {
+  background: hsl(var(--card));
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+}
+.dark .react-flow__minimap {
+  background: hsl(var(--card));
+}
+.dark .react-flow__background {
+  background: hsl(var(--background));
+}
+
+.gradient-bg {
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(62, 207, 142, 0.15), transparent 70%),
+    radial-gradient(ellipse 60% 40% at 80% 90%, rgba(62, 207, 142, 0.08), transparent 60%),
+    hsl(var(--background));
+}
+
+/* Landing hero demo helpers. */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes packetFlow {
+  from { transform: translateX(0); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  to   { transform: translateX(var(--packet-distance, 300px)); opacity: 0; }
+}
+
+/* Pulse around the hero card whenever the act changes. Starts bright,
+   fades to nothing over 1.2s. React re-triggers it via `key={act}`. */
+@keyframes heroActGlow {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Slow ambient orb drift — subtle parallax behind the hero. */
+@keyframes heroOrbDrift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25%      { transform: translate(20px, -15px) scale(1.05); }
+  50%      { transform: translate(-10px, 20px) scale(0.95); }
+  75%      { transform: translate(15px, 10px) scale(1.02); }
+}
+
+/* Feature-chip drift: slow sideways float with a tiny bob. Offsets per
+   chip via animation-delay so the motion never syncs up. */
+@keyframes heroChipDrift {
+  0%   { transform: translateX(0) translateY(0); opacity: 0.65; }
+  50%  { transform: translateX(30px) translateY(-6px); opacity: 0.9; }
+  100% { transform: translateX(0) translateY(0); opacity: 0.65; }
+}
+
+/* Landing page backdrop — dot grid drift + light rays sweeping. These run
+   forever so we keep them cheap: only CSS, no JS, only `background-position`
+   and `transform` / `opacity` which the compositor can handle. */
+@keyframes landingGridDrift {
+  0%   { background-position: 0 0; }
+  100% { background-position: 280px 280px; }
+}
+
+@keyframes landingRaySweep {
+  0%   { transform: translateX(-40%) rotate(-8deg); opacity: 0; }
+  10%  { opacity: 1; }
+  50%  { opacity: 0.9; }
+  90%  { opacity: 1; }
+  100% { transform: translateX(40%) rotate(-8deg); opacity: 0; }
+}
+
+/* Marquee: infinite horizontal scroll for the integration logos strip.
+   We translate by -50% because the content is duplicated and we want a
+   seamless wrap. */
+@keyframes landingMarquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+/* Light-streak pulse: a line sweeps along an SVG path. Used in the
+   how-it-works connector diagram so the "flow" between steps is visible. */
+@keyframes landingStreakFlow {
+  0%   { stroke-dashoffset: 200; opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+
+/* SQL editor toolbar's scrollable zone: keep it scrollable (trackpad swipe,
+   shift+wheel, keyboard arrows) but hide the scrollbar visually. Firefox
+   uses `scrollbar-width: none`; WebKit uses the pseudo-element. */
+.sql-toolbar-scroll {
+  scrollbar-width: none;
+}
+.sql-toolbar-scroll::-webkit-scrollbar {
+  display: none;
+  height: 0;
+  width: 0;
+}
+
+/* Feature-card hover gradient border. A conic gradient sits behind each
+   card (via ::before) and only shows on hover. The 1px of padding on the
+   outer div lets it peek through exactly at the border ring. */
+.feature-card-gradient::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--angle, 0deg),
+    transparent 0deg,
+    rgba(62, 207, 142, 0.55) 30deg,
+    transparent 60deg,
+    transparent 360deg
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  animation: featureCardSpin 4s linear infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+.feature-card-gradient > * {
+  position: relative;
+  z-index: 1;
+}
+.feature-card-gradient:hover::before {
+  opacity: 1;
+}
+@keyframes featureCardSpin {
+  to { --angle: 360deg; }
+}
+/* Register so --angle animates. */
+@property --angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+/* Animated gradient text — used on the hero headline accent word. The
+   background sweeps horizontally and is clipped to the text. */
+@keyframes landingGradientText {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+.landing-gradient-text {
+  background-image: linear-gradient(
+    100deg,
+    hsl(152 65% 45%),
+    hsl(152 80% 60%),
+    hsl(172 70% 55%),
+    hsl(152 65% 45%)
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: landingGradientText 6s ease-in-out infinite;
+}
+
+/* Soft float for the hero badge / accent chips. */
+@keyframes landingFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+.landing-float {
+  animation: landingFloat 4s ease-in-out infinite;
+}
+
+/* ============================================================
+   Premium hero redesign — backdrop, entrance, and interaction motion.
+   ============================================================ */
+
+/* Animated multi-stop mesh gradient that slowly drifts behind the hero. */
+@keyframes heroMeshDrift {
+  0%   { transform: translate3d(0,0,0) scale(1); }
+  50%  { transform: translate3d(2%, -2%, 0) scale(1.05); }
+  100% { transform: translate3d(0,0,0) scale(1); }
+}
+.hero-mesh {
+  background:
+    radial-gradient(50% 55% at 20% 0%, hsl(152 75% 45% / 0.45), transparent 60%),
+    radial-gradient(45% 50% at 80% 5%, hsl(172 75% 50% / 0.38), transparent 60%),
+    radial-gradient(55% 60% at 70% 60%, hsl(152 70% 42% / 0.30), transparent 65%),
+    radial-gradient(40% 45% at 25% 55%, hsl(190 75% 50% / 0.25), transparent 60%);
+  filter: blur(30px);
+  animation: heroMeshDrift 18s ease-in-out infinite;
+}
+
+/* Slowly drifting conic glow ring. */
+@keyframes heroConicSpin { to { transform: rotate(360deg); } }
+.hero-conic {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    hsl(152 70% 50% / 0.10) 60deg,
+    transparent 140deg,
+    hsl(172 70% 55% / 0.10) 240deg,
+    transparent 320deg
+  );
+  animation: heroConicSpin 30s linear infinite;
+}
+
+/* Fine grid that fades toward the edges — adds depth without noise. */
+.hero-grid {
+  background-image:
+    linear-gradient(to right, hsl(152 45% 55% / 0.10) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(152 45% 55% / 0.10) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(ellipse 75% 70% at 50% 35%, black 20%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse 75% 70% at 50% 35%, black 20%, transparent 80%);
+}
+
+/* Staggered entrance — plays once on load (not scroll). Use with inline
+   animation-delay for a cascade. */
+@keyframes heroRise {
+  from { opacity: 0; transform: translate3d(0, 18px, 0); filter: blur(6px); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); filter: blur(0); }
+}
+.hero-rise {
+  opacity: 0;
+  animation: heroRise 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Sheen sweep across the primary CTA on hover. */
+.cta-sheen { position: relative; overflow: hidden; }
+.cta-sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 30%, hsl(0 0% 100% / 0.35) 50%, transparent 70%);
+  transform: translateX(-120%);
+  transition: transform 0.6s ease;
+}
+.cta-sheen:hover::after { transform: translateX(120%); }
+
+/* Soft pulsing glow ring for the CTA. */
+@keyframes ctaGlow {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(152 61% 50% / 0.0), 0 10px 30px -10px hsl(152 61% 45% / 0.5); }
+  50%      { box-shadow: 0 0 0 6px hsl(152 61% 50% / 0.10), 0 14px 40px -8px hsl(152 61% 45% / 0.6); }
+}
+.cta-glow { animation: ctaGlow 3s ease-in-out infinite; }
+
+/* Blinking caret for the hero mock's SQL editor. */
+@keyframes heroCaretBlink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.hero-caret { animation: heroCaretBlink 1.1s steps(1) infinite; }
+
+/* Floating product window — gentle bob + the tilt is applied inline via JS. */
+@keyframes heroWindowFloat {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-8px); }
+}
+.hero-window-float { animation: heroWindowFloat 6s ease-in-out infinite; }
+
+/* Respect reduced-motion for all the landing animations above. Apply
+   globally so any new keyframe we add is covered without ceremony. */
+@media (prefers-reduced-motion: reduce) {
+  .landing-backdrop *,
+  .landing-animations * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* When someone asks for less motion, freeze the demo to final frame. */
+@media (prefers-reduced-motion: reduce) {
+  .landing-hero-respect-rm * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

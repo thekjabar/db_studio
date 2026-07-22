@@ -6,3 +6,9 @@ backend/check.log
 frontend/node_modules/
 frontend/dist/
 frontend/package-lock.json
+
+frontend/buildlog.txt
+frontend/bun.lock
+frontend/bun.lockb
+frontend/.env.local
+frontend/tsconfig.tsbuildinfo

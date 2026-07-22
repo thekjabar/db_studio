@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.gitignore
+.vscode
+.idea
+*.log
+.DS_Store
+# Keep local-dev env files out of the Docker build context so they can't
+# override .env (Vite precedence rules vary across modes).
+.env.local
+.env.*.local
+# Rust/Tauri build artefacts — not needed for the web image.
+src-tauri/target

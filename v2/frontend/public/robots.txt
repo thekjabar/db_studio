@@ -1,0 +1,5 @@
+# Query Schema — allow all search engines to crawl everything.
+User-agent: *
+Allow: /
+
+Sitemap: https://queryschema.com/sitemap.xml

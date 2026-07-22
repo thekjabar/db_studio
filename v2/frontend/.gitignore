@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.local
+*.log
+.vite
+.DS_Store
+
+# Compiled TS output should never be committed alongside source
+src/**/*.js

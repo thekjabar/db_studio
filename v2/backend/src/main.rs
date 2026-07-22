@@ -26,8 +26,8 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use serde_json::{json, Value};
-use sqlx::postgres::{PgPoolOptions, PgRow};
-use sqlx::{PgPool, Row};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
+use sqlx::{Connection, PgConnection, PgPool, Row};
 use tower_http::cors::CorsLayer;
 
 // ---------------------------------------------------------------------------
@@ -100,6 +100,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/introspect/:schema/:table/columns", get(list_columns))
         .route("/api/table/:schema/:table/rows", get(table_rows))
         .route("/api/query/run", post(run_query))
+        // Target databases (decrypt v1 creds → connect → run against them)
+        .route("/api/connections/:id/introspect/schemas", get(conn_schemas))
+        .route("/api/connections/:id/introspect/:schema/tables", get(conn_tables))
+        .route("/api/connections/:id/introspect/:schema/:table/columns", get(conn_columns))
+        .route("/api/connections/:id/table/:schema/:table/rows", get(conn_table_rows))
+        .route("/api/connections/:id/query", post(conn_query))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -519,6 +525,209 @@ async fn run_query(
             "tookMs": ms(start),
         })))
     }
+}
+
+// ---------------------------------------------------------------------------
+// Executor-generic core queries — run against the app pool OR a live target
+// connection, so introspection/rows/SQL is written once and reused for both.
+// ---------------------------------------------------------------------------
+
+type Pg = sqlx::Postgres;
+
+const COLUMNS_SQL: &str = r#"SELECT c.column_name, c.data_type, c.is_nullable,
+        COALESCE(pk.is_pk, false) AS is_pk
+   FROM information_schema.columns c
+   LEFT JOIN (
+     SELECT kcu.column_name, true AS is_pk
+     FROM information_schema.table_constraints tc
+     JOIN information_schema.key_column_usage kcu
+       ON kcu.constraint_name = tc.constraint_name
+      AND kcu.table_schema = tc.table_schema
+     WHERE tc.constraint_type = 'PRIMARY KEY'
+       AND tc.table_schema = $1 AND tc.table_name = $2
+   ) pk ON pk.column_name = c.column_name
+   WHERE c.table_schema = $1 AND c.table_name = $2
+   ORDER BY c.ordinal_position"#;
+
+async fn core_schemas<'e, E: sqlx::Executor<'e, Database = Pg>>(exec: E) -> Result<Vec<String>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT schema_name FROM information_schema.schemata \
+         WHERE schema_name NOT IN ('pg_catalog','information_schema') \
+           AND schema_name NOT LIKE 'pg_%' ORDER BY schema_name",
+    )
+    .fetch_all(exec)
+    .await?;
+    Ok(rows.iter().map(|r| r.get::<String, _>("schema_name")).collect())
+}
+
+async fn core_tables<'e, E: sqlx::Executor<'e, Database = Pg>>(exec: E, schema: &str) -> Result<Vec<String>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT table_name FROM information_schema.tables \
+         WHERE table_schema = $1 AND table_type = 'BASE TABLE' ORDER BY table_name",
+    )
+    .bind(schema)
+    .fetch_all(exec)
+    .await?;
+    Ok(rows.iter().map(|r| r.get::<String, _>("table_name")).collect())
+}
+
+async fn core_columns<'e, E: sqlx::Executor<'e, Database = Pg>>(exec: E, schema: &str, table: &str) -> Result<Vec<Value>, sqlx::Error> {
+    let rows = sqlx::query(COLUMNS_SQL).bind(schema).bind(table).fetch_all(exec).await?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            json!({
+                "name": r.try_get::<String, _>("column_name").unwrap_or_default(),
+                "type": r.try_get::<String, _>("data_type").unwrap_or_default(),
+                "nullable": r.try_get::<String, _>("is_nullable").map(|s| s == "YES").unwrap_or(true),
+                "isPrimaryKey": r.try_get::<bool, _>("is_pk").unwrap_or(false),
+            })
+        })
+        .collect())
+}
+
+async fn core_table_exists<'e, E: sqlx::Executor<'e, Database = Pg>>(exec: E, schema: &str, table: &str) -> Result<bool, sqlx::Error> {
+    let exists: Option<bool> = sqlx::query_scalar(
+        "SELECT true FROM information_schema.tables WHERE table_schema = $1 AND table_name = $2 LIMIT 1",
+    )
+    .bind(schema)
+    .bind(table)
+    .fetch_optional(exec)
+    .await?;
+    Ok(exists.unwrap_or(false))
+}
+
+async fn core_rows_json<'e, E: sqlx::Executor<'e, Database = Pg>>(exec: E, qschema: &str, qtable: &str, limit: i64, offset: i64) -> Result<Value, sqlx::Error> {
+    sqlx::query_scalar(&format!(
+        "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) \
+         FROM (SELECT * FROM {qschema}.{qtable} LIMIT {limit} OFFSET {offset}) t",
+    ))
+    .fetch_one(exec)
+    .await
+}
+
+async fn core_count<'e, E: sqlx::Executor<'e, Database = Pg>>(exec: E, qschema: &str, qtable: &str) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(&format!("SELECT count(*) FROM {qschema}.{qtable}")).fetch_one(exec).await
+}
+
+async fn core_select_json<'e, E: sqlx::Executor<'e, Database = Pg>>(exec: E, sql: &str, max: i64) -> Result<Value, sqlx::Error> {
+    sqlx::query_scalar(&format!(
+        "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM (SELECT * FROM ({sql}) _q LIMIT {max}) t",
+    ))
+    .fetch_one(exec)
+    .await
+}
+
+async fn core_exec<'e, E: sqlx::Executor<'e, Database = Pg>>(exec: E, sql: &str) -> Result<u64, sqlx::Error> {
+    Ok(sqlx::query(sql).execute(exec).await?.rows_affected())
+}
+
+fn is_select(sql: &str) -> bool {
+    let l = sql.to_lowercase();
+    l.starts_with("select") || l.starts_with("with") || l.starts_with("table")
+}
+
+fn rows_response(rows_json: Value, total: Option<i64>, limit: i64, offset: i64, took: f64) -> Value {
+    let row_count = rows_json.as_array().map(|a| a.len()).unwrap_or(0);
+    json!({ "rows": rows_json, "rowCount": row_count, "total": total, "limit": limit, "offset": offset, "tookMs": took })
+}
+
+/// Run arbitrary SQL over any executor (app pool or target connection), timed.
+async fn run_on<'e, E: sqlx::Executor<'e, Database = Pg>>(exec: E, sql: &str, max: i64) -> ApiResult<Value> {
+    let sql = sql.trim().trim_end_matches(';').trim();
+    if sql.is_empty() {
+        return Err(ApiError::bad("Empty SQL"));
+    }
+    let start = Instant::now();
+    if is_select(sql) {
+        let rows_json = core_select_json(exec, sql, max).await?;
+        let took = ms(start);
+        let columns = derive_columns(&rows_json);
+        let row_count = rows_json.as_array().map(|a| a.len()).unwrap_or(0);
+        Ok(json!({ "columns": columns, "rows": rows_json, "rowCount": row_count, "tookMs": took }))
+    } else {
+        let affected = core_exec(exec, sql).await?;
+        Ok(json!({ "columns": [], "rows": [], "rowsAffected": affected, "tookMs": ms(start) }))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Target-database handlers — decrypt v1 credentials, connect, run against it.
+// ---------------------------------------------------------------------------
+
+async fn connect_target(state: &AppState, id: &str, user_id: &str) -> ApiResult<PgConnection> {
+    let crypto = state
+        .crypto
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("ENCRYPTION_KEY not configured — target connections disabled"))?;
+    let row = sqlx::query(
+        r#"SELECT "credentialsCt", "dialect"::text AS dialect
+           FROM "Connection" WHERE "id" = $1 AND "ownerId" = $2 LIMIT 1"#,
+    )
+    .bind(id)
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::bad("Connection not found"))?;
+
+    let dialect: String = row.try_get("dialect").unwrap_or_default();
+    if !dialect.to_lowercase().contains("postgres") {
+        return Err(ApiError::bad(format!("v2 supports Postgres targets only so far (got {dialect})")));
+    }
+    let ct: String = row.try_get("credentialsCt").map_err(|e| ApiError::internal(e.to_string()))?;
+    let json = crypto
+        .decrypt(&ct, &crypto::Crypto::conn_purpose(id))
+        .map_err(|e| ApiError::bad(format!("credential decrypt failed: {e}")))?;
+    let creds: crypto::ConnectionCredentials =
+        serde_json::from_str(&json).map_err(|e| ApiError::internal(format!("bad credentials json: {e}")))?;
+
+    // No TLS backend compiled yet → Disable only. TLS target support is a
+    // planned follow-up (adds sqlx `tls-rustls`).
+    let opts = PgConnectOptions::new()
+        .host(&creds.host)
+        .port(creds.port)
+        .username(&creds.user)
+        .password(&creds.password)
+        .database(&creds.database)
+        .ssl_mode(PgSslMode::Disable);
+    PgConnection::connect_with(&opts)
+        .await
+        .map_err(|e| ApiError::bad(format!("connect to target failed: {e}")))
+}
+
+async fn conn_schemas(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    Ok(Json(json!({ "schemas": core_schemas(&mut c).await? })))
+}
+
+async fn conn_tables(State(state): State<AppState>, user: AuthUser, Path((id, schema)): Path<(String, String)>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    Ok(Json(json!({ "tables": core_tables(&mut c, &schema).await? })))
+}
+
+async fn conn_columns(State(state): State<AppState>, user: AuthUser, Path((id, schema, table)): Path<(String, String, String)>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    Ok(Json(json!({ "columns": core_columns(&mut c, &schema, &table).await? })))
+}
+
+async fn conn_table_rows(State(state): State<AppState>, user: AuthUser, Path((id, schema, table)): Path<(String, String, String)>, Query(params): Query<RowsParams>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    if !core_table_exists(&mut c, &schema, &table).await? {
+        return Err(ApiError::bad(format!("Unknown table {schema}.{table}")));
+    }
+    let limit = params.limit.unwrap_or(100).clamp(1, state.max_rows);
+    let offset = params.offset.unwrap_or(0).max(0);
+    let (qs, qt) = (quote_ident(&schema), quote_ident(&table));
+    let start = Instant::now();
+    let rows_json = core_rows_json(&mut c, &qs, &qt, limit, offset).await?;
+    let took = ms(start);
+    let total = core_count(&mut c, &qs, &qt).await.ok();
+    Ok(Json(rows_response(rows_json, total, limit, offset, took)))
+}
+
+async fn conn_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Json(body): Json<RunBody>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    run_on(&mut c, &body.sql, state.max_rows).await.map(Json)
 }
 
 /// Column names from the first row's keys (order preserved by serde_json's

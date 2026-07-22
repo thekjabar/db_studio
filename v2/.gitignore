@@ -1,0 +1,9 @@
+# Rust
+backend/target/
+backend/check.log
+backend/Cargo.lock
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/package-lock.json

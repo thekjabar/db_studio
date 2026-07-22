@@ -7,6 +7,8 @@
 //! Everything uses the sqlx *runtime* query API (no `query!` macro), so the
 //! binary compiles without a database connection at build time.
 
+mod crypto;
+
 use std::time::Instant;
 
 use axum::{
@@ -18,8 +20,11 @@ use axum::{
 };
 use axum::extract::FromRequestParts;
 use axum::async_trait;
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+use base64::Engine;
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use serde_json::{json, Value};
 use sqlx::postgres::{PgPoolOptions, PgRow};
 use sqlx::{PgPool, Row};
@@ -37,6 +42,10 @@ struct AppState {
     jwt_ttl: i64,
     /// Hard cap on rows returned by row/query endpoints.
     max_rows: i64,
+    /// Present when ENCRYPTION_KEY is set — enables decrypting v1 connection
+    /// credentials to reach target databases. None = app-DB-only mode.
+    #[allow(dead_code)]
+    crypto: Option<crypto::Crypto>,
 }
 
 #[tokio::main]
@@ -74,7 +83,11 @@ async fn main() -> anyhow::Result<()> {
         .connect(&database_url)
         .await?;
 
-    let state = AppState { pool, jwt_secret, jwt_ttl, max_rows };
+    let crypto = crypto::Crypto::from_env().ok();
+    if crypto.is_some() {
+        tracing::info!("ENCRYPTION_KEY loaded — target-database connections enabled");
+    }
+    let state = AppState { pool, jwt_secret, jwt_ttl, max_rows, crypto };
 
     let app = Router::new()
         .route("/health", get(|| async { Json(json!({ "ok": true, "service": "queryschema-v2" })) }))
@@ -143,6 +156,49 @@ struct Claims {
     exp: i64,
 }
 
+type HmacSha256 = Hmac<Sha256>;
+
+fn jwt_sign(input: &str, secret: &str) -> String {
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac accepts any key length");
+    mac.update(input.as_bytes());
+    B64.encode(mac.finalize().into_bytes())
+}
+
+fn jwt_encode(claims: &Claims, secret: &str) -> anyhow::Result<String> {
+    let header = B64.encode(br#"{"alg":"HS256","typ":"JWT"}"#);
+    let payload = B64.encode(serde_json::to_vec(claims)?);
+    let signing_input = format!("{header}.{payload}");
+    let sig = jwt_sign(&signing_input, secret);
+    Ok(format!("{signing_input}.{sig}"))
+}
+
+fn jwt_decode(token: &str, secret: &str) -> anyhow::Result<Claims> {
+    let mut parts = token.splitn(3, '.');
+    let h = parts.next().ok_or_else(|| anyhow::anyhow!("bad token"))?;
+    let p = parts.next().ok_or_else(|| anyhow::anyhow!("bad token"))?;
+    let s = parts.next().ok_or_else(|| anyhow::anyhow!("bad token"))?;
+    let expected = jwt_sign(&format!("{h}.{p}"), secret);
+    if !ct_eq(expected.as_bytes(), s.as_bytes()) {
+        anyhow::bail!("bad signature");
+    }
+    let claims: Claims = serde_json::from_slice(&B64.decode(p)?)?;
+    if claims.exp < chrono::Utc::now().timestamp() {
+        anyhow::bail!("token expired");
+    }
+    Ok(claims)
+}
+
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// Authenticated-user extractor: pulls the Bearer token and verifies the JWT.
 struct AuthUser {
     id: String,
@@ -161,13 +217,9 @@ impl FromRequestParts<AppState> for AuthUser {
         let token = header
             .strip_prefix("Bearer ")
             .ok_or_else(|| ApiError::unauthorized("Malformed Authorization header"))?;
-        let data = decode::<Claims>(
-            token,
-            &DecodingKey::from_secret(state.jwt_secret.as_bytes()),
-            &Validation::default(),
-        )
-        .map_err(|_| ApiError::unauthorized("Invalid or expired token"))?;
-        Ok(AuthUser { id: data.claims.sub })
+        let claims = jwt_decode(token, &state.jwt_secret)
+            .map_err(|_| ApiError::unauthorized("Invalid or expired token"))?;
+        Ok(AuthUser { id: claims.sub })
     }
 }
 
@@ -197,12 +249,8 @@ async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> Ap
 
     let now = chrono::Utc::now().timestamp();
     let claims = Claims { sub: id.clone(), exp: now + state.jwt_ttl };
-    let token = encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(state.jwt_secret.as_bytes()),
-    )
-    .map_err(|e| ApiError::internal(e.to_string()))?;
+    let token = jwt_encode(&claims, &state.jwt_secret)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
 
     let display: Option<String> = row.try_get("displayName").ok().flatten();
     let is_admin: bool = row.try_get("isAdmin").unwrap_or(false);

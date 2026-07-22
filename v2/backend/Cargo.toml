@@ -12,8 +12,10 @@ axum = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 # Runtime query API only (no `query!` macro) so this compiles without a live DB.
+# No TLS backend → no `ring`/C-compiler dependency (app DB is reached over the
+# docker network without TLS; target-DB TLS can be added later behind a feature).
 sqlx = { version = "0.7", default-features = false, features = [
-  "runtime-tokio-rustls",
+  "runtime-tokio",
   "postgres",
   "json",
   "chrono",
@@ -21,9 +23,16 @@ sqlx = { version = "0.7", default-features = false, features = [
 serde = { version = "1", features = ["derive"] }
 # preserve_order keeps JSON object key order = the SQL column order from to_jsonb.
 serde_json = { version = "1", features = ["preserve_order"] }
-jsonwebtoken = "9"
+# Pure-Rust HS256 JWT (avoids jsonwebtoken → ring → C compiler).
+hmac = "0.12"
+sha2 = "0.10"
 argon2 = "0.5"
+# Replicates v1's envelope encryption (crypto.service.ts + local-key.provider.ts)
+# so v2 can decrypt stored connection credentials and reach the target databases.
+aes-gcm = "0.10"
+base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

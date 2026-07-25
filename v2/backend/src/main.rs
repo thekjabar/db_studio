@@ -112,6 +112,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/connections/:id/schemas", get(v1_schemas))
         .route("/api/connections/:id/tables", get(v1_tables))
         .route("/api/connections/:id/tables/:name/columns", get(v1_conn_columns))
+        .route(
+            "/api/connections/:id/tables/:name/rows",
+            post(row_insert).patch(row_update).delete(row_delete),
+        )
         .route("/api/connections/:id/query", post(v1_query))
         .route("/api/connections/:id/saved-queries", get(sq_list).post(sq_create))
         .route(
@@ -990,6 +994,94 @@ async fn v1_connection_test(State(state): State<AppState>, user: AuthUser, Path(
         },
         Err(e) => Ok(Json(json!({ "ok": false, "error": e.message }))),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Row editing — insert/update/delete on /connections/:id/tables/:name/rows.
+// Uses jsonb_populate_record so arbitrary column types map correctly and
+// unspecified columns keep their defaults on insert.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct RowInsert {
+    values: Value,
+}
+#[derive(Deserialize)]
+struct RowUpdate {
+    pk: Value,
+    values: Value,
+}
+#[derive(Deserialize)]
+struct RowDelete {
+    pk: Value,
+}
+
+fn json_keys(v: &Value) -> Vec<String> {
+    v.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default()
+}
+
+async fn row_insert(State(state): State<AppState>, user: AuthUser, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<RowInsert>) -> ApiResult<Json<Value>> {
+    require_write(&state.pool, &id, &user.id).await?;
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let schema = q.schema.unwrap_or_else(|| "public".into());
+    if !core_table_exists(&mut c, &schema, &table).await? {
+        return Err(ApiError::bad(format!("Unknown table {schema}.{table}")));
+    }
+    let keys = json_keys(&body.values);
+    if keys.is_empty() {
+        return Err(ApiError::bad("No values provided"));
+    }
+    let (qs, qt) = (quote_ident(&schema), quote_ident(&table));
+    let cols = keys.iter().map(|k| quote_ident(k)).collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "WITH ins AS (INSERT INTO {qs}.{qt} ({cols}) SELECT {cols} FROM jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) RETURNING *) SELECT to_jsonb(ins) FROM ins",
+    );
+    let row: Value = sqlx::query_scalar(&sql).bind(&body.values).fetch_one(&mut c).await?;
+    Ok(Json(row))
+}
+
+async fn row_update(State(state): State<AppState>, user: AuthUser, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<RowUpdate>) -> ApiResult<Json<Value>> {
+    require_write(&state.pool, &id, &user.id).await?;
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let schema = q.schema.unwrap_or_else(|| "public".into());
+    if !core_table_exists(&mut c, &schema, &table).await? {
+        return Err(ApiError::bad(format!("Unknown table {schema}.{table}")));
+    }
+    let vkeys = json_keys(&body.values);
+    let pkeys = json_keys(&body.pk);
+    if vkeys.is_empty() || pkeys.is_empty() {
+        return Err(ApiError::bad("values and pk are required"));
+    }
+    let (qs, qt) = (quote_ident(&schema), quote_ident(&table));
+    let set = vkeys.iter().map(|k| { let q = quote_ident(k); format!("{q} = v.{q}") }).collect::<Vec<_>>().join(", ");
+    let whr = pkeys.iter().map(|k| { let q = quote_ident(k); format!("o.{q} = k.{q}") }).collect::<Vec<_>>().join(" AND ");
+    let sql = format!(
+        "WITH upd AS (UPDATE {qs}.{qt} AS o SET {set} \
+         FROM jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) v, jsonb_populate_record(NULL::{qs}.{qt}, $2::jsonb) k \
+         WHERE {whr} RETURNING o.*) SELECT to_jsonb(upd) FROM upd",
+    );
+    let row: Option<Value> = sqlx::query_scalar(&sql).bind(&body.values).bind(&body.pk).fetch_optional(&mut c).await?;
+    Ok(Json(row.unwrap_or(Value::Null)))
+}
+
+async fn row_delete(State(state): State<AppState>, user: AuthUser, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<RowDelete>) -> ApiResult<Json<Value>> {
+    require_write(&state.pool, &id, &user.id).await?;
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let schema = q.schema.unwrap_or_else(|| "public".into());
+    if !core_table_exists(&mut c, &schema, &table).await? {
+        return Err(ApiError::bad(format!("Unknown table {schema}.{table}")));
+    }
+    let pkeys = json_keys(&body.pk);
+    if pkeys.is_empty() {
+        return Err(ApiError::bad("pk is required"));
+    }
+    let (qs, qt) = (quote_ident(&schema), quote_ident(&table));
+    let whr = pkeys.iter().map(|k| { let q = quote_ident(k); format!("o.{q} = k.{q}") }).collect::<Vec<_>>().join(" AND ");
+    let sql = format!(
+        "DELETE FROM {qs}.{qt} AS o USING jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) k WHERE {whr}",
+    );
+    let n = sqlx::query(&sql).bind(&body.pk).execute(&mut c).await?.rows_affected();
+    Ok(Json(json!({ "deleted": n })))
 }
 
 // ---------------------------------------------------------------------------

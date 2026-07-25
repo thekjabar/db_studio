@@ -112,6 +112,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/connections/:id/schemas", get(v1_schemas))
         .route("/api/connections/:id/tables", get(v1_tables))
         .route("/api/connections/:id/tables/:name/columns", get(v1_conn_columns))
+        .route("/api/connections/:id/tables/:name/definition", get(v1_definition))
+        .route("/api/connections/:id/er", get(v1_er))
+        .route("/api/connections/:id/functions", get(v1_functions))
+        .route("/api/connections/:id/triggers", get(v1_triggers))
+        .route("/api/connections/:id/indexes", get(v1_indexes))
         .route(
             "/api/connections/:id/tables/:name/rows",
             post(row_insert).patch(row_update).delete(row_delete),
@@ -1148,6 +1153,230 @@ async fn row_bulk_update(State(state): State<AppState>, user: AuthUser, Path((id
     );
     let n = sqlx::query(&sql).bind(&body.values).bind(Value::Array(body.pks)).execute(&mut c).await?.rows_affected();
     Ok(Json(json!({ "affectedRows": n })))
+}
+
+// ---------------------------------------------------------------------------
+// Read-only introspection: definition (DDL), ER, functions, triggers, indexes.
+// No per-user masking/filtering — identical output for every reader.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SchemaTableQ {
+    schema: Option<String>,
+    table: Option<String>,
+}
+
+async fn v1_definition(State(state): State<AppState>, user: AuthUser, Path((id, name)): Path<(String, String)>, Query(q): Query<SchemaQ>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let schema = q.schema.unwrap_or_else(|| "public".into());
+
+    let cols = sqlx::query(
+        "SELECT a.attname::text AS name, pg_catalog.format_type(a.atttypid, a.atttypmod) AS type, \
+                NOT a.attnotnull AS nullable, pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) AS default_expr \
+           FROM pg_attribute a \
+           JOIN pg_class c ON c.oid = a.attrelid \
+           JOIN pg_namespace n ON n.oid = c.relnamespace \
+           LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
+          WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped \
+          ORDER BY a.attnum",
+    ).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+    if cols.is_empty() {
+        return Err(ApiError::bad(format!("Unknown table {schema}.{name}")));
+    }
+    let cons = sqlx::query(
+        "SELECT con.conname::text AS name, pg_catalog.pg_get_constraintdef(con.oid, true) AS def \
+           FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid \
+           JOIN pg_namespace n ON n.oid = c.relnamespace \
+          WHERE n.nspname = $1 AND c.relname = $2 ORDER BY con.contype DESC, con.conname",
+    ).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+    let tablespace: String = sqlx::query_scalar(
+        "SELECT COALESCE(t.spcname, 'pg_default')::text FROM pg_class c \
+           JOIN pg_namespace n ON n.oid = c.relnamespace \
+           LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace \
+          WHERE n.nspname = $1 AND c.relname = $2",
+    ).bind(&schema).bind(&name).fetch_optional(&mut c).await?.unwrap_or_else(|| "pg_default".into());
+    let idx = sqlx::query(
+        "SELECT i.relname::text AS name, pg_catalog.pg_get_indexdef(ix.indexrelid, 0, true) AS def, \
+                (con.conname IS NOT NULL) AS is_constraint \
+           FROM pg_index ix JOIN pg_class c ON c.oid = ix.indrelid \
+           JOIN pg_class i ON i.oid = ix.indexrelid \
+           JOIN pg_namespace n ON n.oid = c.relnamespace \
+           LEFT JOIN pg_constraint con ON con.conindid = ix.indexrelid \
+          WHERE n.nspname = $1 AND c.relname = $2 ORDER BY i.relname",
+    ).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+    let trig = sqlx::query(
+        "SELECT pg_catalog.pg_get_triggerdef(tg.oid, true) AS def \
+           FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid \
+           JOIN pg_namespace n ON n.oid = c.relnamespace \
+          WHERE n.nspname = $1 AND c.relname = $2 AND NOT tg.tgisinternal ORDER BY tg.tgname",
+    ).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+
+    let qualified = format!("{}.{}", quote_ident(&schema), quote_ident(&name));
+    let mut body: Vec<String> = Vec::new();
+    for r in &cols {
+        let cn: String = r.try_get("name").unwrap_or_default();
+        let ty: String = r.try_get("type").unwrap_or_default();
+        let nullable: bool = r.try_get("nullable").unwrap_or(true);
+        let def: Option<String> = r.try_get("default_expr").ok().flatten();
+        let mut s = format!("  {} {}", quote_ident(&cn), ty);
+        s.push_str(if nullable { " NULL" } else { " NOT NULL" });
+        if let Some(d) = def { s.push_str(&format!(" DEFAULT {d}")); }
+        body.push(s);
+    }
+    for r in &cons {
+        let cn: String = r.try_get("name").unwrap_or_default();
+        let def: String = r.try_get("def").unwrap_or_default();
+        body.push(format!("  CONSTRAINT {} {}", quote_ident(&cn), def));
+    }
+    let mut out = format!("CREATE TABLE {qualified} (\n{}\n) TABLESPACE {tablespace};", body.join(",\n"));
+    let idx_defs: Vec<String> = idx
+        .iter()
+        .filter(|r| !r.try_get::<bool, _>("is_constraint").unwrap_or(false))
+        .map(|r| format!("{};", r.try_get::<String, _>("def").unwrap_or_default()))
+        .collect();
+    if !idx_defs.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&idx_defs.join("\n\n"));
+    }
+    let trig_defs: Vec<String> = trig.iter().map(|r| format!("{};", r.try_get::<String, _>("def").unwrap_or_default())).collect();
+    if !trig_defs.is_empty() {
+        out.push_str("\n\n");
+        out.push_str(&trig_defs.join("\n\n"));
+    }
+    Ok(Json(json!({ "sql": out })))
+}
+
+async fn v1_er(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Query(q): Query<SchemaQ>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let schema = q.schema;
+    let cols = sqlx::query(
+        "SELECT n.nspname::text AS schema, cls.relname::text AS tbl, a.attname::text AS name, \
+                format_type(a.atttypid, a.atttypmod) AS data_type, NOT a.attnotnull AS nullable, \
+                COALESCE(pk.is_pk, false) AS is_pk \
+           FROM pg_class cls JOIN pg_namespace n ON n.oid = cls.relnamespace \
+           JOIN pg_attribute a ON a.attrelid = cls.oid AND a.attnum > 0 AND NOT a.attisdropped \
+           LEFT JOIN LATERAL (SELECT true AS is_pk FROM pg_index i WHERE i.indrelid = cls.oid \
+                 AND i.indisprimary AND a.attnum = ANY(i.indkey) LIMIT 1) pk ON true \
+          WHERE cls.relkind IN ('r','v','m','p') AND n.nspname NOT IN ('pg_catalog','information_schema') \
+            AND ($1::text IS NULL OR n.nspname = $1) \
+          ORDER BY n.nspname, cls.relname, a.attnum",
+    ).bind(&schema).fetch_all(&mut c).await?;
+
+    let mut order: Vec<String> = Vec::new();
+    let mut nodes: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
+    for r in &cols {
+        let sch: String = r.try_get("schema").unwrap_or_default();
+        let tbl: String = r.try_get("tbl").unwrap_or_default();
+        let key = format!("{sch}.{tbl}");
+        let col = json!({
+            "name": r.try_get::<String, _>("name").unwrap_or_default(),
+            "type": r.try_get::<String, _>("data_type").unwrap_or_default(),
+            "pk": r.try_get::<bool, _>("is_pk").unwrap_or(false),
+            "nullable": r.try_get::<bool, _>("nullable").unwrap_or(true),
+        });
+        let entry = nodes.entry(key.clone()).or_insert_with(|| {
+            order.push(key.clone());
+            json!({ "id": key, "schema": sch, "name": tbl, "columns": [] })
+        });
+        entry["columns"].as_array_mut().unwrap().push(col);
+    }
+    let node_list: Vec<Value> = order.into_iter().filter_map(|k| nodes.remove(&k)).collect();
+
+    let fks = sqlx::query(
+        "SELECT con.conname::text AS name, n.nspname::text AS schema, cls.relname::text AS tbl, \
+           (SELECT array_agg(att.attname::text ORDER BY ord.pos) FROM unnest(con.conkey) WITH ORDINALITY AS ord(col,pos) \
+              JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = ord.col)::text[] AS columns, \
+           rn.nspname::text AS ref_schema, rcls.relname::text AS ref_table, \
+           (SELECT array_agg(att.attname::text ORDER BY ord.pos) FROM unnest(con.confkey) WITH ORDINALITY AS ord(col,pos) \
+              JOIN pg_attribute att ON att.attrelid = con.confrelid AND att.attnum = ord.col)::text[] AS ref_columns \
+           FROM pg_constraint con JOIN pg_class cls ON cls.oid = con.conrelid \
+           JOIN pg_namespace n ON n.oid = cls.relnamespace \
+           JOIN pg_class rcls ON rcls.oid = con.confrelid JOIN pg_namespace rn ON rn.oid = rcls.relnamespace \
+          WHERE con.contype = 'f' AND n.nspname NOT IN ('pg_catalog','information_schema') \
+            AND ($1::text IS NULL OR n.nspname = $1)",
+    ).bind(&schema).fetch_all(&mut c).await?;
+    let edges: Vec<Value> = fks
+        .iter()
+        .map(|r| {
+            let sch: String = r.try_get("schema").unwrap_or_default();
+            let tbl: String = r.try_get("tbl").unwrap_or_default();
+            let rsch: String = r.try_get("ref_schema").unwrap_or_default();
+            let rtbl: String = r.try_get("ref_table").unwrap_or_default();
+            json!({
+                "id": r.try_get::<String, _>("name").unwrap_or_default(),
+                "source": format!("{sch}.{tbl}"),
+                "target": format!("{rsch}.{rtbl}"),
+                "columns": r.try_get::<Vec<String>, _>("columns").unwrap_or_default(),
+                "refColumns": r.try_get::<Vec<String>, _>("ref_columns").unwrap_or_default(),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "nodes": node_list, "edges": edges })))
+}
+
+async fn v1_functions(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Query(q): Query<SchemaQ>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let rows = sqlx::query(
+        "SELECT n.nspname::text AS schema, p.proname::text AS name, l.lanname::text AS language, \
+                pg_get_function_result(p.oid) AS ret, pg_get_function_arguments(p.oid) AS args \
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang \
+          WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND ($1::text IS NULL OR n.nspname = $1) \
+          ORDER BY n.nspname, p.proname",
+    ).bind(&q.schema).fetch_all(&mut c).await?;
+    let out: Vec<Value> = rows.iter().map(|r| json!({
+        "schema": r.try_get::<String, _>("schema").unwrap_or_default(),
+        "name": r.try_get::<String, _>("name").unwrap_or_default(),
+        "language": r.try_get::<String, _>("language").unwrap_or_default(),
+        "returnType": r.try_get::<Option<String>, _>("ret").ok().flatten(),
+        "arguments": r.try_get::<Option<String>, _>("args").ok().flatten(),
+    })).collect();
+    Ok(Json(json!(out)))
+}
+
+async fn v1_triggers(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Query(q): Query<SchemaQ>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let rows = sqlx::query(
+        "SELECT trigger_schema::text AS schema, event_object_table::text AS \"table\", trigger_name::text AS name, \
+                action_timing::text AS timing, event_manipulation::text AS event, action_statement::text AS statement \
+           FROM information_schema.triggers WHERE ($1::text IS NULL OR trigger_schema = $1) \
+          ORDER BY trigger_schema, event_object_table, trigger_name",
+    ).bind(&q.schema).fetch_all(&mut c).await?;
+    let out: Vec<Value> = rows.iter().map(|r| json!({
+        "schema": r.try_get::<String, _>("schema").unwrap_or_default(),
+        "table": r.try_get::<String, _>("table").unwrap_or_default(),
+        "name": r.try_get::<String, _>("name").unwrap_or_default(),
+        "timing": r.try_get::<Option<String>, _>("timing").ok().flatten(),
+        "event": r.try_get::<Option<String>, _>("event").ok().flatten(),
+        "statement": r.try_get::<Option<String>, _>("statement").ok().flatten(),
+    })).collect();
+    Ok(Json(json!(out)))
+}
+
+async fn v1_indexes(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Query(q): Query<SchemaTableQ>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let rows = sqlx::query(
+        "SELECT n.nspname::text AS schema, c.relname::text AS tbl, i.relname::text AS name, \
+                ix.indisunique AS is_unique, ix.indisprimary AS is_primary, am.amname::text AS method, \
+                array_agg(a.attname::text ORDER BY k.ordinality)::text[] AS columns \
+           FROM pg_index ix JOIN pg_class c ON c.oid = ix.indrelid JOIN pg_class i ON i.oid = ix.indexrelid \
+           JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_am am ON am.oid = i.relam \
+           JOIN unnest(ix.indkey) WITH ORDINALITY k(attnum, ordinality) ON true \
+           JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum \
+          WHERE n.nspname NOT IN ('pg_catalog','information_schema') \
+            AND ($1::text IS NULL OR n.nspname = $1) AND ($2::text IS NULL OR c.relname = $2) \
+          GROUP BY n.nspname, c.relname, i.relname, ix.indisunique, ix.indisprimary, am.amname \
+          ORDER BY n.nspname, c.relname, i.relname",
+    ).bind(&q.schema).bind(&q.table).fetch_all(&mut c).await?;
+    let out: Vec<Value> = rows.iter().map(|r| json!({
+        "name": r.try_get::<String, _>("name").unwrap_or_default(),
+        "schema": r.try_get::<String, _>("schema").unwrap_or_default(),
+        "table": r.try_get::<String, _>("tbl").unwrap_or_default(),
+        "columns": r.try_get::<Vec<String>, _>("columns").unwrap_or_default(),
+        "isUnique": r.try_get::<bool, _>("is_unique").unwrap_or(false),
+        "isPrimary": r.try_get::<bool, _>("is_primary").unwrap_or(false),
+        "method": r.try_get::<String, _>("method").unwrap_or_default(),
+    })).collect();
+    Ok(Json(json!(out)))
 }
 
 // ---------------------------------------------------------------------------

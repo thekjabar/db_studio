@@ -104,10 +104,14 @@ async fn main() -> anyhow::Result<()> {
         //     in Rust. Everything else falls through to the v1 proxy below. ---
         .route("/api/users/me", get(v1_me).patch(v1_update_me))
         .route("/api/workspaces", get(v1_workspaces_list))
-        .route("/api/connections", get(v1_connections_list).post(v1_connection_create))
+        // Create/update carry v1-only business logic (SSRF host guard,
+        // assertOwnedAgent, viaAgent/agentId persistence) — proxy them to v1 so
+        // agent connections are validated + stored exactly as in v1. Reads +
+        // delete stay in Rust.
+        .route("/api/connections", get(v1_connections_list).post(proxy))
         .route(
             "/api/connections/:id",
-            get(v1_connection_get).patch(v1_connection_update).delete(v1_connection_delete),
+            get(v1_connection_get).patch(proxy).delete(v1_connection_delete),
         )
         .route("/api/connections/:id/test", post(v1_connection_test))
         .route("/api/connections/:id/schemas", get(v1_schemas))

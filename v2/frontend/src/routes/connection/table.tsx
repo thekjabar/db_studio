@@ -93,7 +93,9 @@ const FILTER_OPS: { op: string; label: string }[] = [
 ];
 
 /** Column picker with a search box — tables can have dozens of columns, so a
- *  plain <select> is hard to scan. Filters the list as you type. */
+ *  plain <select> is hard to scan. Built as a custom combobox (not a Radix
+ *  Select) so the search input keeps focus while typing — Radix Select steals
+ *  focus back to an item on every filter change. */
 function SearchableColumnSelect({
   columns,
   value,
@@ -105,7 +107,10 @@ function SearchableColumnSelect({
   onChange: (v: string) => void;
   triggerClassName?: string;
 }) {
+  const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const selected = columns.find((c) => c.name === value);
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s) return columns;
@@ -113,35 +118,73 @@ function SearchableColumnSelect({
       (c) => c.name.toLowerCase().includes(s) || (c.dataType ?? "").toLowerCase().includes(s),
     );
   }, [columns, q]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQ("");
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
   return (
-    <Select value={value} onValueChange={onChange} onOpenChange={(o) => !o && setQ("")}>
-      <SelectTrigger className={triggerClassName}>
-        <SelectValue placeholder="Column" />
-      </SelectTrigger>
-      <SelectContent className="max-h-72">
-        <div className="sticky top-0 z-10 -mx-1 -mt-1 mb-1 border-b border-border bg-popover px-1 py-1">
-          <Input
-            autoFocus
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            // Stop Radix Select's type-ahead from hijacking our keystrokes.
-            onKeyDown={(e) => e.stopPropagation()}
-            placeholder="Search column…"
-            className="h-7 text-xs"
-          />
-        </div>
-        {filtered.length === 0 ? (
-          <div className="px-2 py-3 text-xs text-muted-foreground">No matching column</div>
-        ) : (
-          filtered.map((c) => (
-            <SelectItem key={c.name} value={c.name}>
-              <span className="font-mono">{c.name}</span>
-              <span className="ml-2 text-muted-foreground text-[10px]">{c.dataType}</span>
-            </SelectItem>
-          ))
+    <div ref={boxRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          "flex items-center justify-between gap-1 rounded-md border border-input bg-background px-2 shadow-sm focus:outline-none focus:ring-2 focus:ring-ring",
+          triggerClassName,
         )}
-      </SelectContent>
-    </Select>
+      >
+        <span className="truncate font-mono">{selected?.name ?? "Column"}</span>
+        <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 min-w-full w-56 overflow-hidden rounded-md border border-border bg-popover shadow-md">
+          <div className="border-b border-border p-1">
+            <input
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") { setOpen(false); setQ(""); }
+              }}
+              placeholder="Search column…"
+              className="h-7 w-full rounded bg-transparent px-2 text-xs outline-none"
+            />
+          </div>
+          <div className="max-h-56 overflow-auto py-1">
+            {filtered.length === 0 ? (
+              <div className="px-2 py-2 text-xs text-muted-foreground">No matching column</div>
+            ) : (
+              filtered.map((c) => (
+                <button
+                  key={c.name}
+                  type="button"
+                  onClick={() => {
+                    onChange(c.name);
+                    setOpen(false);
+                    setQ("");
+                  }}
+                  className={cn(
+                    "flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-accent",
+                    c.name === value && "bg-accent/60",
+                  )}
+                >
+                  <span className="font-mono">{c.name}</span>
+                  <span className="text-[10px] text-muted-foreground">{c.dataType}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

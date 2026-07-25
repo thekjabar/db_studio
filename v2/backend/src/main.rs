@@ -103,8 +103,12 @@ async fn main() -> anyhow::Result<()> {
         //     in Rust. Everything else falls through to the v1 proxy below. ---
         .route("/api/users/me", get(v1_me).patch(v1_update_me))
         .route("/api/workspaces", get(v1_workspaces_list))
-        .route("/api/connections", get(v1_connections_list))
-        .route("/api/connections/:id", get(v1_connection_get))
+        .route("/api/connections", get(v1_connections_list).post(v1_connection_create))
+        .route(
+            "/api/connections/:id",
+            get(v1_connection_get).patch(v1_connection_update).delete(v1_connection_delete),
+        )
+        .route("/api/connections/:id/test", post(v1_connection_test))
         .route("/api/connections/:id/schemas", get(v1_schemas))
         .route("/api/connections/:id/tables", get(v1_tables))
         .route("/api/connections/:id/tables/:name/columns", get(v1_conn_columns))
@@ -839,6 +843,153 @@ async fn v1_connection_get(State(state): State<AppState>, user: AuthUser, Path(i
     .await?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Connection not found"))?;
     Ok(Json(conn_dto(&row, crypto)))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CredsIn {
+    host: String,
+    port: u16,
+    #[serde(alias = "username")]
+    user: String,
+    password: String,
+    database: String,
+    #[serde(default)]
+    ssl_mode: Option<String>,
+}
+impl CredsIn {
+    fn to_json(&self) -> Value {
+        json!({ "host": self.host, "port": self.port, "user": self.user, "password": self.password, "database": self.database, "sslMode": self.ssl_mode })
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateConnBody {
+    name: String,
+    dialect: String,
+    credentials: CredsIn,
+    #[serde(default)]
+    read_only: Option<bool>,
+    #[serde(default)]
+    statement_timeout_ms: Option<i32>,
+    #[serde(default)]
+    workspace_id: Option<String>,
+    #[serde(default)]
+    via_agent: Option<bool>,
+    #[serde(default)]
+    agent_id: Option<String>,
+}
+
+async fn conn_row_dto(state: &AppState, id: &str, crypto: &crypto::Crypto) -> ApiResult<Json<Value>> {
+    let row = sqlx::query(&format!(r#"SELECT {CONN_COLS} FROM "Connection" c WHERE c."id" = $1 LIMIT 1"#))
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await?;
+    Ok(Json(conn_dto(&row, crypto)))
+}
+
+async fn v1_connection_create(State(state): State<AppState>, user: AuthUser, Json(body): Json<CreateConnBody>) -> ApiResult<Json<Value>> {
+    let crypto = state.crypto.as_ref().ok_or_else(|| ApiError::internal("ENCRYPTION_KEY not configured"))?;
+    let id = gen_id();
+    let workspace_id: Option<String> = match body.workspace_id {
+        Some(w) => {
+            let ok: Option<bool> = sqlx::query_scalar(r#"SELECT true FROM "WorkspaceMember" WHERE "workspaceId" = $1 AND "userId" = $2 LIMIT 1"#)
+                .bind(&w).bind(&user.id).fetch_optional(&state.pool).await?;
+            if ok.is_none() {
+                return Err(ApiError::bad("You are not a member of that workspace"));
+            }
+            Some(w)
+        }
+        None => sqlx::query_scalar::<_, String>(r#"SELECT "id" FROM "Workspace" WHERE "ownerId" = $1 AND "isPersonal" = true LIMIT 1"#)
+            .bind(&user.id).fetch_optional(&state.pool).await?,
+    };
+    let ct = crypto
+        .encrypt(&body.credentials.to_json().to_string(), &crypto::Crypto::conn_purpose(&id))
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    sqlx::query(
+        r#"INSERT INTO "Connection"
+             ("id","name","dialect","credentialsCt","readOnly","statementTimeoutMs","ownerId","workspaceId","viaAgent","agentId","requireReview","createdAt","updatedAt")
+           VALUES ($1,$2,$3::"Dialect",$4,$5,$6,$7,$8,$9,$10,false,now(),now())"#,
+    )
+    .bind(&id)
+    .bind(&body.name)
+    .bind(&body.dialect)
+    .bind(&ct)
+    .bind(body.read_only.unwrap_or(false))
+    .bind(body.statement_timeout_ms.unwrap_or(30000))
+    .bind(&user.id)
+    .bind(&workspace_id)
+    .bind(body.via_agent.unwrap_or(false))
+    .bind(&body.agent_id)
+    .execute(&state.pool)
+    .await?;
+    conn_row_dto(&state, &id, crypto).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateConnBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    credentials: Option<CredsIn>,
+    #[serde(default)]
+    read_only: Option<bool>,
+    #[serde(default)]
+    statement_timeout_ms: Option<i32>,
+}
+
+async fn v1_connection_update(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Json(body): Json<UpdateConnBody>) -> ApiResult<Json<Value>> {
+    require_write(&state.pool, &id, &user.id).await?;
+    let crypto = state.crypto.as_ref().ok_or_else(|| ApiError::internal("ENCRYPTION_KEY not configured"))?;
+    let ct: Option<String> = match &body.credentials {
+        Some(cr) => Some(
+            crypto
+                .encrypt(&cr.to_json().to_string(), &crypto::Crypto::conn_purpose(&id))
+                .map_err(|e| ApiError::internal(e.to_string()))?,
+        ),
+        None => None,
+    };
+    sqlx::query(
+        r#"UPDATE "Connection" SET
+             "name" = COALESCE($1, "name"),
+             "readOnly" = COALESCE($2, "readOnly"),
+             "statementTimeoutMs" = COALESCE($3, "statementTimeoutMs"),
+             "credentialsCt" = COALESCE($4, "credentialsCt"),
+             "updatedAt" = now()
+           WHERE "id" = $5"#,
+    )
+    .bind(&body.name)
+    .bind(body.read_only)
+    .bind(body.statement_timeout_ms)
+    .bind(&ct)
+    .bind(&id)
+    .execute(&state.pool)
+    .await?;
+    conn_row_dto(&state, &id, crypto).await
+}
+
+async fn v1_connection_delete(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<StatusCode> {
+    if conn_role(&state.pool, &id, &user.id).await?.as_deref() != Some("OWNER") {
+        return Err(ApiError::new(StatusCode::FORBIDDEN, "Only the owner can delete a connection"));
+    }
+    sqlx::query(r#"DELETE FROM "Connection" WHERE "id" = $1 AND "ownerId" = $2"#)
+        .bind(&id)
+        .bind(&user.id)
+        .execute(&state.pool)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn v1_connection_test(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    match connect_target(&state, &id, &user.id).await {
+        Ok(mut c) => match sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&mut c).await {
+            Ok(_) => Ok(Json(json!({ "ok": true }))),
+            Err(e) => Ok(Json(json!({ "ok": false, "error": e.to_string() }))),
+        },
+        Err(e) => Ok(Json(json!({ "ok": false, "error": e.message }))),
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::Engine;
+use rand::RngCore;
 
 const V2_PREFIX: &str = "v2:";
 
@@ -37,6 +38,20 @@ impl Crypto {
     /// AAD purpose used for a connection's credentials blob.
     pub fn conn_purpose(id: &str) -> String {
         format!("conn:{id}")
+    }
+
+    /// Encrypt in the v2 envelope format (v1's reader decrypts it too):
+    /// `v2:local:{wrappedDek}:{payload}`.
+    pub fn encrypt(&self, plaintext: &str, purpose: &str) -> anyhow::Result<String> {
+        let mut dek = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut dek);
+        let payload = gcm_encrypt(&dek, plaintext.as_bytes(), purpose.as_bytes())?;
+        let wrapped = gcm_encrypt(&self.master, &dek, b"")?;
+        Ok(format!(
+            "v2:local:{}:{}",
+            base64::engine::general_purpose::STANDARD.encode(&wrapped),
+            base64::engine::general_purpose::STANDARD.encode(&payload),
+        ))
     }
 
     pub fn decrypt(&self, blob: &str, purpose: &str) -> anyhow::Result<String> {
@@ -76,6 +91,24 @@ impl Crypto {
 
 fn b64(s: &str) -> anyhow::Result<Vec<u8>> {
     Ok(base64::engine::general_purpose::STANDARD.decode(s)?)
+}
+
+/// Encrypt to Node's `iv(12) | tag(16) | ciphertext` layout.
+fn gcm_encrypt(key: &[u8], plaintext: &[u8], aad: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let mut iv = [0u8; 12];
+    rand::rngs::OsRng.fill_bytes(&mut iv);
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let nonce = Nonce::from_slice(&iv);
+    let ct_tag = cipher
+        .encrypt(nonce, Payload { msg: plaintext, aad })
+        .map_err(|_| anyhow::anyhow!("encryption failed"))?;
+    // aes-gcm returns ciphertext||tag; split and re-order to iv|tag|ct.
+    let (ct, tag) = ct_tag.split_at(ct_tag.len() - 16);
+    let mut out = Vec::with_capacity(12 + 16 + ct.len());
+    out.extend_from_slice(&iv);
+    out.extend_from_slice(tag);
+    out.extend_from_slice(ct);
+    Ok(out)
 }
 
 /// `buf` is Node's layout: iv(12) | tag(16) | ciphertext. The `aes-gcm` crate

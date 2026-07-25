@@ -1,10 +1,13 @@
 import { io, Socket } from "socket.io-client";
 import { useEffect, useState } from "react";
-import { API_URL } from "./api";
+import { BACKEND_ORIGIN } from "./api";
 import { useAuth } from "./auth-store";
 
-// Strip the `/api` suffix — socket.io lives at the root of the backend.
-const WS_ORIGIN = API_URL.replace(/\/api\/?$/, "");
+// socket.io lives at the root of the backend host (api.queryschema.com), not
+// under /v2/api. Using the relative /v2 origin made socket.io connect to the
+// current page with a bogus /v2/realtime namespace on an unrouted /socket.io/
+// path — permanently "offline". BACKEND_ORIGIN is the absolute backend origin.
+const WS_ORIGIN = BACKEND_ORIGIN;
 
 let socket: Socket | null = null;
 let socketToken: string | null = null;

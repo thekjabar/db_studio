@@ -9,22 +9,24 @@ export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/ap
  *  the root (downloads, health, the agent WS server). */
 export const API_ORIGIN = API_URL.replace(/\/api\/?$/, "");
 
-/** Absolute origin the local agent talks to (WS `/agent-ws` + `/downloads`).
- *  The agent gateway + binaries live on the v1 backend, so under /v2 — where
- *  `API_ORIGIN` is the relative `/v2` and can't yield a host — this must be set
- *  explicitly (`VITE_AGENT_ORIGIN=https://api.queryschema.com`). For v1 it's
- *  unset and falls back to `API_ORIGIN`, which already is that absolute origin. */
-export const AGENT_ORIGIN = import.meta.env.VITE_AGENT_ORIGIN || API_ORIGIN;
+/** Absolute origin of the backend's root-level services — the socket.io realtime
+ *  gateway (`/realtime`), the agent tunnel (`/agent-ws`), and the agent binary
+ *  `/downloads`. These live on the v1 backend host (api.queryschema.com), NOT
+ *  under `/v2/api` (which only proxies REST `/api/*`). Under /v2 `API_ORIGIN` is
+ *  the relative `/v2` and can't yield a host, so this must be set explicitly
+ *  (`VITE_BACKEND_ORIGIN=https://api.queryschema.com`). For v1 it's unset and
+ *  falls back to `API_ORIGIN`, which already is that absolute origin. */
+export const BACKEND_ORIGIN = import.meta.env.VITE_BACKEND_ORIGIN || API_ORIGIN;
 
 /** Per-platform links to the local agent binaries. Built elsewhere and served
- *  by nginx from the agent origin; we only wire the download hrefs. */
+ *  by nginx from the backend origin; we only wire the download hrefs. */
 export const AGENT_DOWNLOADS = {
   // `-v6` = WebView2 windowed app, fully rebranded "Query Schema" + embedded
   // taskbar icon and file-properties metadata. Versioned URL busts caches.
-  windows: `${AGENT_ORIGIN}/downloads/agent-windows-amd64-v6.exe`,
-  macIntel: `${AGENT_ORIGIN}/downloads/agent-macos-amd64`,
-  macArm: `${AGENT_ORIGIN}/downloads/agent-macos-arm64`,
-  linux: `${AGENT_ORIGIN}/downloads/agent-linux-amd64-v3`,
+  windows: `${BACKEND_ORIGIN}/downloads/agent-windows-amd64-v6.exe`,
+  macIntel: `${BACKEND_ORIGIN}/downloads/agent-macos-amd64`,
+  macArm: `${BACKEND_ORIGIN}/downloads/agent-macos-arm64`,
+  linux: `${BACKEND_ORIGIN}/downloads/agent-linux-amd64-v3`,
 } as const;
 
 /** Back-compat alias — the original single Windows download link. Points at the
@@ -36,7 +38,7 @@ export const AGENT_DOWNLOAD_URL = AGENT_DOWNLOADS.windows;
  *  from AGENT_TUNNEL_PROTOCOL.md. */
 export const AGENT_SERVER_HOST = (() => {
   try {
-    return new URL(AGENT_ORIGIN).host || "api.queryschema.com";
+    return new URL(BACKEND_ORIGIN).host || "api.queryschema.com";
   } catch {
     return "api.queryschema.com";
   }

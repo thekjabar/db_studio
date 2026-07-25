@@ -20,6 +20,7 @@ use axum::{
 };
 use axum::body::{to_bytes, Body};
 use axum::extract::{FromRequestParts, Request};
+use axum::middleware::{self, Next};
 use axum::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use base64::Engine;
@@ -133,6 +134,8 @@ async fn main() -> anyhow::Result<()> {
         )
         // --- Strangler proxy: every other endpoint → v1 Node API ---
         .fallback(proxy)
+        // Agent-backed connections bypass Rust entirely (tunnel lives in v1).
+        .layer(middleware::from_fn_with_state(state.clone(), agent_guard))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -1871,6 +1874,42 @@ async fn v1_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<
 // ---------------------------------------------------------------------------
 // Strangler proxy — forward any unported endpoint to the v1 Node API.
 // ---------------------------------------------------------------------------
+
+/// Pull the `{id}` out of `/api/connections/{id}[/...]`, else `None`.
+fn conn_id_from_path(path: &str) -> Option<&str> {
+    let mut it = path.split('/').filter(|s| !s.is_empty());
+    match (it.next(), it.next(), it.next()) {
+        (Some("api"), Some("connections"), Some(id)) => Some(id),
+        _ => None,
+    }
+}
+
+/// Is this connection reached through the owner's local tunnel agent?
+async fn via_agent(pool: &PgPool, id: &str) -> bool {
+    sqlx::query_scalar::<_, bool>(r#"SELECT "viaAgent" FROM "Connection" WHERE "id" = $1"#)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false)
+}
+
+/// Agent-backed connections MUST be served by v1 — the tunnel (local TCP proxy
+/// fed by the agent WS) lives only in the Node backend. Rust's `connect_target`
+/// dials the stored host/port directly, which for a firewalled DB behind an
+/// agent can never work. So for any `/api/connections/{id}/*` where the
+/// connection is `viaAgent`, short-circuit to the v1 proxy instead of routing
+/// to the Rust handler.
+async fn agent_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
+    let id = conn_id_from_path(req.uri().path()).map(|s| s.to_string());
+    if let Some(id) = id {
+        if via_agent(&state.pool, &id).await {
+            return proxy(State(state), req).await;
+        }
+    }
+    next.run(req).await
+}
 
 async fn proxy(State(state): State<AppState>, req: Request) -> Response {
     let (parts, body) = req.into_parts();

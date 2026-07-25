@@ -107,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/connections/:id", get(v1_connection_get))
         .route("/api/connections/:id/schemas", get(v1_schemas))
         .route("/api/connections/:id/tables", get(v1_tables))
+        .route("/api/connections/:id/tables/:name/columns", get(v1_conn_columns))
         .route("/api/connections/:id/query", post(v1_query))
         .route("/api/connections/:id/saved-queries", get(sq_list).post(sq_create))
         .route(
@@ -1091,6 +1092,81 @@ async fn v1_tables(State(state): State<AppState>, user: AuthUser, Path(id): Path
         })
         .collect();
     Ok(Json(json!(tables)))
+}
+
+#[derive(Deserialize)]
+struct SchemaQ {
+    schema: Option<String>,
+}
+
+const COLUMN_INFO_SQL: &str = r#"
+SELECT
+  c.column_name,
+  c.data_type,
+  c.is_nullable,
+  c.column_default,
+  c.character_maximum_length::int AS char_max_length,
+  c.numeric_precision::int AS numeric_precision,
+  c.numeric_scale::int AS numeric_scale,
+  (c.is_identity = 'YES' OR c.column_default LIKE 'nextval%') AS is_identity,
+  COALESCE(pk.p, false) AS is_pk,
+  COALESCE(uq.u, false) AS is_unique,
+  col_description((quote_ident(c.table_schema) || '.' || quote_ident(c.table_name))::regclass, c.ordinal_position::int) AS comment,
+  fk.ref_schema, fk.ref_table, fk.ref_column
+FROM information_schema.columns c
+LEFT JOIN (
+  SELECT kcu.column_name, true AS p FROM information_schema.table_constraints tc
+  JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
+  WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = $1 AND tc.table_name = $2
+) pk ON pk.column_name = c.column_name
+LEFT JOIN (
+  SELECT kcu.column_name, true AS u FROM information_schema.table_constraints tc
+  JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
+  WHERE tc.constraint_type = 'UNIQUE' AND tc.table_schema = $1 AND tc.table_name = $2
+) uq ON uq.column_name = c.column_name
+LEFT JOIN (
+  SELECT kcu.column_name, ccu.table_schema AS ref_schema, ccu.table_name AS ref_table, ccu.column_name AS ref_column
+  FROM information_schema.table_constraints tc
+  JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
+  JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name
+  WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = $1 AND tc.table_name = $2
+) fk ON fk.column_name = c.column_name
+WHERE c.table_schema = $1 AND c.table_name = $2
+ORDER BY c.ordinal_position
+"#;
+
+async fn v1_conn_columns(State(state): State<AppState>, user: AuthUser, Path((id, name)): Path<(String, String)>, Query(q): Query<SchemaQ>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let schema = q.schema.unwrap_or_else(|| "public".into());
+    let rows = sqlx::query(COLUMN_INFO_SQL).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+    let cols: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let ref_table: Option<String> = r.try_get("ref_table").ok().flatten();
+            let fk = ref_table.map(|t| {
+                json!({
+                    "table": t,
+                    "column": r.try_get::<Option<String>, _>("ref_column").ok().flatten().unwrap_or_default(),
+                    "schema": r.try_get::<Option<String>, _>("ref_schema").ok().flatten(),
+                })
+            });
+            json!({
+                "name": r.try_get::<String, _>("column_name").unwrap_or_default(),
+                "dataType": r.try_get::<String, _>("data_type").unwrap_or_default(),
+                "nullable": r.try_get::<String, _>("is_nullable").map(|s| s == "YES").unwrap_or(true),
+                "defaultValue": r.try_get::<Option<String>, _>("column_default").ok().flatten(),
+                "isPrimaryKey": r.try_get::<bool, _>("is_pk").unwrap_or(false),
+                "isUnique": r.try_get::<bool, _>("is_unique").unwrap_or(false),
+                "isIdentity": r.try_get::<bool, _>("is_identity").unwrap_or(false),
+                "comment": r.try_get::<Option<String>, _>("comment").ok().flatten(),
+                "charMaxLength": r.try_get::<Option<i32>, _>("char_max_length").ok().flatten(),
+                "numericPrecision": r.try_get::<Option<i32>, _>("numeric_precision").ok().flatten(),
+                "numericScale": r.try_get::<Option<i32>, _>("numeric_scale").ok().flatten(),
+                "fk": fk,
+            })
+        })
+        .collect();
+    Ok(Json(json!(cols)))
 }
 
 #[derive(Deserialize)]

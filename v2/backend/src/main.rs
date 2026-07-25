@@ -117,6 +117,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/connections/:id/schemas", get(v1_schemas))
         .route("/api/connections/:id/tables", get(v1_tables))
         .route("/api/connections/:id/tables/:name/columns", get(v1_conn_columns))
+        .route("/api/connections/:id/tables/:name/data", get(v1_table_data))
+        .route("/api/connections/:id/tables/:name/lookup", get(v1_lookup))
         .route("/api/connections/:id/tables/:name/definition", get(v1_definition))
         .route("/api/snippets", get(snippet_list).post(snippet_create))
         .route("/api/snippets/:id", patch(snippet_update).delete(snippet_delete))
@@ -1782,12 +1784,10 @@ WHERE c.table_schema = $1 AND c.table_name = $2
 ORDER BY c.ordinal_position
 "#;
 
-async fn v1_conn_columns(State(state): State<AppState>, user: AuthUser, Path((id, name)): Path<(String, String)>, Query(q): Query<SchemaQ>) -> ApiResult<Json<Value>> {
-    let mut c = connect_target(&state, &id, &user.id).await?;
-    let schema = q.schema.unwrap_or_else(|| "public".into());
-    let rows = sqlx::query(COLUMN_INFO_SQL).bind(&schema).bind(&name).fetch_all(&mut c).await?;
-    let cols: Vec<Value> = rows
-        .iter()
+/// Serialize COLUMN_INFO_SQL rows into v1's ColumnMeta shape (shared by the
+/// columns endpoint and the `/data` response's `columns` field).
+fn column_infos(rows: &[PgRow]) -> Vec<Value> {
+    rows.iter()
         .map(|r| {
             let ref_table: Option<String> = r.try_get("ref_table").ok().flatten();
             let fk = ref_table.map(|t| {
@@ -1812,8 +1812,223 @@ async fn v1_conn_columns(State(state): State<AppState>, user: AuthUser, Path((id
                 "fk": fk,
             })
         })
-        .collect();
-    Ok(Json(json!(cols)))
+        .collect()
+}
+
+async fn v1_conn_columns(State(state): State<AppState>, user: AuthUser, Path((id, name)): Path<(String, String)>, Query(q): Query<SchemaQ>) -> ApiResult<Json<Value>> {
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let schema = q.schema.unwrap_or_else(|| "public".into());
+    let rows = sqlx::query(COLUMN_INFO_SQL).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+    Ok(Json(json!(column_infos(&rows))))
+}
+
+// ---------------------------------------------------------------------------
+// Table data — the grid's paginated/filtered/sorted rows. The connection OWNER
+// bypasses row-level security (no row filters, no column masks — same policy as
+// v1), so we serve them from Rust. Everyone else forwards to v1, which applies
+// their row filter predicate + column masks. Agent connections were already
+// short-circuited by `agent_guard` upstream.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct DataQuery {
+    schema: Option<String>,
+    limit: Option<String>,
+    offset: Option<String>,
+    #[serde(rename = "orderBy")]
+    order_by: Option<String>,
+    filters: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FilterItem {
+    column: String,
+    op: String,
+    #[serde(default)]
+    value: Value,
+}
+
+/// A filter value as bindable text (NULL-preserving) — mirrors node-postgres
+/// sending an untyped param that Postgres coerces to the column type via CAST.
+fn val_to_text(v: &Value) -> Option<String> {
+    match v {
+        Value::Null => None,
+        Value::String(s) => Some(s.clone()),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Number(n) => Some(n.to_string()),
+        other => Some(other.to_string()),
+    }
+}
+
+/// Map column name -> a castable type string (`format_type`), e.g. "integer",
+/// "character varying(255)", "public.my_enum", "timestamp with time zone".
+async fn column_cast_types(c: &mut PgConnection, schema: &str, table: &str) -> Result<std::collections::HashMap<String, String>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT a.attname::text AS name, format_type(a.atttypid, a.atttypmod) AS ftype \
+           FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid \
+           JOIN pg_namespace n ON n.oid = c.relnamespace \
+          WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped",
+    ).bind(schema).bind(table).fetch_all(&mut *c).await?;
+    Ok(rows.iter().map(|r| (
+        r.try_get::<String, _>("name").unwrap_or_default(),
+        r.try_get::<String, _>("ftype").unwrap_or_else(|_| "text".into()),
+    )).collect())
+}
+
+const ALLOWED_FILTER_OPS: &[&str] = &["=", "!=", "<", "<=", ">", ">=", "like", "ilike", "is null", "is not null", "in"];
+
+async fn v1_table_data(State(state): State<AppState>, user: AuthUser, Path((id, name)): Path<(String, String)>, Query(q): Query<DataQuery>, req: Request) -> Result<Response, ApiError> {
+    // Owner bypasses masks/row-filters → serve in Rust. Anyone else → v1 (which
+    // enforces their row predicate + column masks). Missing/other → v1 decides.
+    let owner: Option<String> = sqlx::query_scalar(r#"SELECT "ownerId" FROM "Connection" WHERE "id" = $1"#)
+        .bind(&id).fetch_optional(&state.pool).await?;
+    if owner.as_deref() != Some(user.id.as_str()) {
+        return Ok(proxy(State(state), req).await);
+    }
+
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let schema = q.schema.clone().unwrap_or_else(|| "public".into());
+    let casts = column_cast_types(&mut c, &schema, &name).await?;
+    if casts.is_empty() {
+        return Err(ApiError::bad(format!("No such table {schema}.{name}")));
+    }
+    let (qs, qt) = (quote_ident(&schema), quote_ident(&name));
+    let fqtn = format!("{qs}.{qt}");
+
+    // Filters → WHERE, binding untyped-then-cast params (v1 op whitelist).
+    let filters: Vec<FilterItem> = match &q.filters {
+        Some(s) if !s.trim().is_empty() => serde_json::from_str(s).map_err(|_| ApiError::bad("Invalid filters"))?,
+        _ => vec![],
+    };
+    let mut where_parts: Vec<String> = Vec::new();
+    let mut binds: Vec<Option<String>> = Vec::new();
+    for f in &filters {
+        let cast = casts.get(&f.column).ok_or_else(|| ApiError::bad(format!("Unknown column {}", f.column)))?;
+        let op = f.op.to_lowercase();
+        if !ALLOWED_FILTER_OPS.contains(&op.as_str()) {
+            return Err(ApiError::bad(format!("Disallowed filter op {op}")));
+        }
+        let qcol = quote_ident(&f.column);
+        if op == "is null" || op == "is not null" {
+            where_parts.push(format!("{qcol} {}", op.to_uppercase()));
+        } else if op == "in" {
+            match f.value.as_array() {
+                Some(arr) if !arr.is_empty() => {
+                    let mut phs = Vec::new();
+                    for el in arr {
+                        binds.push(val_to_text(el));
+                        phs.push(format!("CAST(${} AS {cast})", binds.len()));
+                    }
+                    where_parts.push(format!("{qcol} IN ({})", phs.join(",")));
+                }
+                _ => where_parts.push("false".into()),
+            }
+        } else if op == "like" || op == "ilike" {
+            // Text pattern match — column must be text-comparable (as in v1).
+            binds.push(val_to_text(&f.value));
+            where_parts.push(format!("{qcol} {} ${}", op.to_uppercase(), binds.len()));
+        } else {
+            binds.push(val_to_text(&f.value));
+            where_parts.push(format!("{qcol} {} CAST(${} AS {cast})", op.to_uppercase(), binds.len()));
+        }
+    }
+    let where_sql = if where_parts.is_empty() { String::new() } else { format!("WHERE {}", where_parts.join(" AND ")) };
+
+    // ORDER BY (whitelist against real columns).
+    let mut order_cols: Vec<String> = Vec::new();
+    if let Some(ob) = &q.order_by {
+        for part in ob.split(',').filter(|s| !s.is_empty()) {
+            let mut it = part.splitn(2, ':');
+            let col = it.next().unwrap_or("");
+            let dir = it.next().unwrap_or("asc");
+            if col.is_empty() { continue; }
+            if !casts.contains_key(col) {
+                return Err(ApiError::bad(format!("Unknown column {col}")));
+            }
+            let d = if dir.eq_ignore_ascii_case("desc") { "DESC" } else { "ASC" };
+            order_cols.push(format!("{} {}", quote_ident(col), d));
+        }
+    }
+    let order_sql = if order_cols.is_empty() { String::new() } else { format!("ORDER BY {}", order_cols.join(", ")) };
+
+    let limit = q.limit.as_deref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(50).clamp(1, 1000);
+    let offset = q.offset.as_deref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0).max(0);
+
+    // Cheap pagination count: reltuples estimate; exact only when small.
+    const EXACT_COUNT_THRESHOLD: i64 = 50_000;
+    let estimate: i64 = sqlx::query_scalar(
+        "SELECT GREATEST(0, c.reltuples)::bigint FROM pg_class c \
+           JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2",
+    ).bind(&schema).bind(&name).fetch_optional(&mut c).await?.unwrap_or(0);
+
+    let mut total: Option<i64>;
+    let mut total_is_estimate = false;
+    if where_parts.is_empty() {
+        if estimate < EXACT_COUNT_THRESHOLD {
+            total = Some(sqlx::query_scalar::<_, i64>(&format!("SELECT count(*)::bigint FROM {fqtn}")).fetch_one(&mut c).await?);
+        } else {
+            total = Some(estimate);
+            total_is_estimate = true;
+        }
+    } else if estimate < EXACT_COUNT_THRESHOLD {
+        let sql = format!("SELECT count(*)::bigint FROM {fqtn} {where_sql}");
+        let mut cq = sqlx::query_scalar::<_, i64>(&sql);
+        for b in &binds { cq = cq.bind(b.as_deref()); }
+        total = Some(cq.fetch_one(&mut c).await?);
+    } else {
+        total = None;
+    }
+
+    // Rows as a jsonb array (order-preserving; serde_json preserve_order on).
+    let rows_sql = format!(
+        "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM \
+         (SELECT * FROM {fqtn} {where_sql} {order_sql} LIMIT {limit} OFFSET {offset}) t",
+    );
+    let mut rq = sqlx::query_scalar::<_, Value>(&rows_sql);
+    for b in &binds { rq = rq.bind(b.as_deref()); }
+    let rows_json: Value = rq.fetch_one(&mut c).await?;
+
+    // Columns (ColumnMeta shape) for the response.
+    let colrows = sqlx::query(COLUMN_INFO_SQL).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+    let cols = column_infos(&colrows);
+
+    // `total: null` when unknown — keep the field present.
+    Ok(Json(json!({
+        "columns": cols,
+        "rows": rows_json,
+        "total": total,
+        "totalIsEstimate": total_is_estimate,
+    })).into_response())
+}
+
+async fn v1_lookup(State(state): State<AppState>, user: AuthUser, Path((id, name)): Path<(String, String)>, Query(q): Query<LookupQuery>, req: Request) -> Result<Response, ApiError> {
+    // Same owner-bypass rule: masks apply to non-owners, so they go to v1.
+    let owner: Option<String> = sqlx::query_scalar(r#"SELECT "ownerId" FROM "Connection" WHERE "id" = $1"#)
+        .bind(&id).fetch_optional(&state.pool).await?;
+    if owner.as_deref() != Some(user.id.as_str()) {
+        return Ok(proxy(State(state), req).await);
+    }
+    let (schema, column, value) = match (q.schema.clone(), q.column.clone(), q.value.clone()) {
+        (Some(s), Some(col), Some(v)) => (s, col, v),
+        _ => return Err(ApiError::bad("schema, column and value are required")),
+    };
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let casts = column_cast_types(&mut c, &schema, &name).await?;
+    let cast = casts.get(&column).ok_or_else(|| ApiError::bad(format!("Unknown column {column}")))?;
+    let (qs, qt) = (quote_ident(&schema), quote_ident(&name));
+    let sql = format!(
+        "SELECT to_jsonb(t) FROM (SELECT * FROM {qs}.{qt} WHERE {} = CAST($1 AS {cast}) LIMIT 1) t",
+        quote_ident(&column),
+    );
+    let row: Option<Value> = sqlx::query_scalar(&sql).bind(&value).fetch_optional(&mut c).await?;
+    Ok(Json(json!({ "row": row })).into_response())
+}
+
+#[derive(Deserialize)]
+struct LookupQuery {
+    schema: Option<String>,
+    column: Option<String>,
+    value: Option<String>,
 }
 
 #[derive(Deserialize)]

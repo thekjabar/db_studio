@@ -101,6 +101,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/health/db", get(health_db))
         // --- Rust hot path: v1's EXACT paths, so the perf-critical calls run
         //     in Rust. Everything else falls through to the v1 proxy below. ---
+        .route("/api/connections", get(v1_connections_list))
+        .route("/api/connections/:id", get(v1_connection_get))
         .route("/api/connections/:id/schemas", get(v1_schemas))
         .route("/api/connections/:id/tables", get(v1_tables))
         .route("/api/connections/:id/query", post(v1_query))
@@ -733,6 +735,74 @@ async fn conn_table_rows(State(state): State<AppState>, user: AuthUser, Path((id
 async fn conn_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Json(body): Json<RunBody>) -> ApiResult<Json<Value>> {
     let mut c = connect_target(&state, &id, &user.id).await?;
     run_on(&mut c, &body.sql, state.max_rows).await.map(Json)
+}
+
+// ---------------------------------------------------------------------------
+// Connections list/get — v1-shaped (decrypts credentials for host/port/user/db).
+// ---------------------------------------------------------------------------
+
+const CONN_COLS: &str = r#""id","name","dialect"::text AS dialect,"credentialsCt","readOnly","statementTimeoutMs","slowQueryAlertMs","slowQueryAlertEmail","requireReview","workspaceId","viaAgent","agentId","createdAt","updatedAt""#;
+
+fn conn_dto(r: &PgRow, crypto: &crypto::Crypto) -> Value {
+    let id: String = r.try_get("id").unwrap_or_default();
+    // Decrypt host/port/user/database; password is intentionally omitted.
+    let creds = r
+        .try_get::<String, _>("credentialsCt")
+        .ok()
+        .and_then(|ct| crypto.decrypt(&ct, &crypto::Crypto::conn_purpose(&id)).ok())
+        .and_then(|j| serde_json::from_str::<crypto::ConnectionCredentials>(&j).ok());
+    json!({
+        "id": id,
+        "name": r.try_get::<String, _>("name").unwrap_or_default(),
+        "dialect": r.try_get::<String, _>("dialect").unwrap_or_default(),
+        "host": creds.as_ref().map(|c| c.host.clone()),
+        "port": creds.as_ref().map(|c| c.port),
+        "user": creds.as_ref().map(|c| c.user.clone()),
+        "database": creds.as_ref().map(|c| c.database.clone()),
+        "sslMode": creds.as_ref().and_then(|c| c.ssl_mode.clone()),
+        "readOnly": r.try_get::<bool, _>("readOnly").unwrap_or(false),
+        "statementTimeoutMs": r.try_get::<i32, _>("statementTimeoutMs").ok(),
+        "slowQueryAlertMs": r.try_get::<Option<i32>, _>("slowQueryAlertMs").ok().flatten(),
+        "slowQueryAlertEmail": r.try_get::<Option<String>, _>("slowQueryAlertEmail").ok().flatten(),
+        "requireReview": r.try_get::<bool, _>("requireReview").unwrap_or(false),
+        "workspaceId": r.try_get::<Option<String>, _>("workspaceId").ok().flatten(),
+        "viaAgent": r.try_get::<bool, _>("viaAgent").unwrap_or(false),
+        "agentId": r.try_get::<Option<String>, _>("agentId").ok().flatten(),
+        "createdAt": r.try_get::<chrono::NaiveDateTime, _>("createdAt").ok().map(|d| d.and_utc().to_rfc3339()),
+        "updatedAt": r.try_get::<chrono::NaiveDateTime, _>("updatedAt").ok().map(|d| d.and_utc().to_rfc3339()),
+    })
+}
+
+async fn v1_connections_list(State(state): State<AppState>, user: AuthUser) -> ApiResult<Json<Value>> {
+    let crypto = state.crypto.as_ref().ok_or_else(|| ApiError::internal("ENCRYPTION_KEY not configured"))?;
+    let rows = sqlx::query(&format!(
+        r#"SELECT {CONN_COLS} FROM "Connection" c
+           WHERE c."ownerId" = $1 OR EXISTS (
+             SELECT 1 FROM "ConnectionMember" m WHERE m."connectionId" = c."id" AND m."userId" = $1
+           )
+           ORDER BY c."createdAt" DESC"#,
+    ))
+    .bind(&user.id)
+    .fetch_all(&state.pool)
+    .await?;
+    let list: Vec<Value> = rows.iter().map(|r| conn_dto(r, crypto)).collect();
+    Ok(Json(json!(list)))
+}
+
+async fn v1_connection_get(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let crypto = state.crypto.as_ref().ok_or_else(|| ApiError::internal("ENCRYPTION_KEY not configured"))?;
+    let row = sqlx::query(&format!(
+        r#"SELECT {CONN_COLS} FROM "Connection" c
+           WHERE c."id" = $1 AND (c."ownerId" = $2 OR EXISTS (
+             SELECT 1 FROM "ConnectionMember" m WHERE m."connectionId" = c."id" AND m."userId" = $2
+           )) LIMIT 1"#,
+    ))
+    .bind(&id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Connection not found"))?;
+    Ok(Json(conn_dto(&row, crypto)))
 }
 
 // ---------------------------------------------------------------------------

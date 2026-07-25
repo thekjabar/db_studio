@@ -92,6 +92,59 @@ const FILTER_OPS: { op: string; label: string }[] = [
   { op: "is not null", label: "[ is not null ]" },
 ];
 
+/** Column picker with a search box — tables can have dozens of columns, so a
+ *  plain <select> is hard to scan. Filters the list as you type. */
+function SearchableColumnSelect({
+  columns,
+  value,
+  onChange,
+  triggerClassName = "h-8 w-40 text-xs",
+}: {
+  columns: { name: string; dataType?: string }[];
+  value: string;
+  onChange: (v: string) => void;
+  triggerClassName?: string;
+}) {
+  const [q, setQ] = useState("");
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return columns;
+    return columns.filter(
+      (c) => c.name.toLowerCase().includes(s) || (c.dataType ?? "").toLowerCase().includes(s),
+    );
+  }, [columns, q]);
+  return (
+    <Select value={value} onValueChange={onChange} onOpenChange={(o) => !o && setQ("")}>
+      <SelectTrigger className={triggerClassName}>
+        <SelectValue placeholder="Column" />
+      </SelectTrigger>
+      <SelectContent className="max-h-72">
+        <div className="sticky top-0 z-10 -mx-1 -mt-1 mb-1 border-b border-border bg-popover px-1 py-1">
+          <Input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            // Stop Radix Select's type-ahead from hijacking our keystrokes.
+            onKeyDown={(e) => e.stopPropagation()}
+            placeholder="Search column…"
+            className="h-7 text-xs"
+          />
+        </div>
+        {filtered.length === 0 ? (
+          <div className="px-2 py-3 text-xs text-muted-foreground">No matching column</div>
+        ) : (
+          filtered.map((c) => (
+            <SelectItem key={c.name} value={c.name}>
+              <span className="font-mono">{c.name}</span>
+              <span className="ml-2 text-muted-foreground text-[10px]">{c.dataType}</span>
+            </SelectItem>
+          ))
+        )}
+      </SelectContent>
+    </Select>
+  );
+}
+
 // Turn a raw user string into the correctly-typed value for the filter.
 function coerceFilterValue(raw: string, op: string): unknown {
   if (op === "is null" || op === "is not null") return null;
@@ -680,24 +733,13 @@ export default function TableRoute() {
           )}
           {filterDraft.map((f, i) => (
             <div key={i} className="flex items-center gap-2">
-              <Select
+              <SearchableColumnSelect
+                columns={colsQ.data ?? []}
                 value={f.column}
-                onValueChange={(v) =>
+                onChange={(v) =>
                   setFilterDraft((xs) => xs.map((x, j) => (j === i ? { ...x, column: v } : x)))
                 }
-              >
-                <SelectTrigger className="h-8 w-40 text-xs">
-                  <SelectValue placeholder="Column" />
-                </SelectTrigger>
-                <SelectContent className="max-h-64">
-                  {(colsQ.data ?? []).map((c) => (
-                    <SelectItem key={c.name} value={c.name}>
-                      <span className="font-mono">{c.name}</span>
-                      <span className="ml-2 text-muted-foreground text-[10px]">{c.dataType}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              />
               <Select
                 value={f.op}
                 onValueChange={(v) => setFilterDraft((xs) => xs.map((x, j) => (j === i ? { ...x, op: v } : x)))}
@@ -757,24 +799,14 @@ export default function TableRoute() {
           )}
           {sortDraft.map((s, i) => (
             <div key={i} className="flex items-center gap-2">
-              <Select
+              <SearchableColumnSelect
+                columns={colsQ.data ?? []}
                 value={s.column}
-                onValueChange={(v) =>
+                onChange={(v) =>
                   setSortDraft((xs) => xs.map((x, j) => (j === i ? { ...x, column: v } : x)))
                 }
-              >
-                <SelectTrigger className="h-8 flex-1 text-xs">
-                  <SelectValue placeholder="Column" />
-                </SelectTrigger>
-                <SelectContent className="max-h-64">
-                  {(colsQ.data ?? []).map((c) => (
-                    <SelectItem key={c.name} value={c.name}>
-                      <span className="font-mono">{c.name}</span>
-                      <span className="ml-2 text-muted-foreground text-[10px]">{c.dataType}</span>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                triggerClassName="h-8 flex-1 text-xs"
+              />
               <Button
                 size="sm"
                 variant="outline"

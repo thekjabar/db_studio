@@ -15,7 +15,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{request::Parts, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use axum::body::{to_bytes, Body};
@@ -101,6 +101,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/health/db", get(health_db))
         // --- Rust hot path: v1's EXACT paths, so the perf-critical calls run
         //     in Rust. Everything else falls through to the v1 proxy below. ---
+        .route("/api/users/me", get(v1_me).patch(v1_update_me))
         .route("/api/connections", get(v1_connections_list))
         .route("/api/connections/:id", get(v1_connection_get))
         .route("/api/connections/:id/schemas", get(v1_schemas))
@@ -803,6 +804,67 @@ async fn v1_connection_get(State(state): State<AppState>, user: AuthUser, Path(i
     .await?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Connection not found"))?;
     Ok(Json(conn_dto(&row, crypto)))
+}
+
+// ---------------------------------------------------------------------------
+// Users — GET/PATCH /users/me (AuthUser shape).
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProfile {
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    density: Option<String>,
+    #[serde(default)]
+    theme: Option<String>,
+}
+
+async fn me_dto(pool: &PgPool, id: &str) -> ApiResult<Json<Value>> {
+    let r = sqlx::query(
+        r#"SELECT u."id", u."email", u."displayName", u."density"::text AS density,
+                  u."theme"::text AS theme, u."isAdmin", u."createdAt",
+                  COALESCE(t."enabled", false) AS totp_enabled
+           FROM "User" u LEFT JOIN "TotpSecret" t ON t."userId" = u."id"
+           WHERE u."id" = $1 LIMIT 1"#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "User not found"))?;
+    Ok(Json(json!({
+        "id": r.try_get::<String, _>("id").unwrap_or_default(),
+        "email": r.try_get::<String, _>("email").unwrap_or_default(),
+        "displayName": r.try_get::<Option<String>, _>("displayName").ok().flatten(),
+        "density": r.try_get::<String, _>("density").unwrap_or_default(),
+        "theme": r.try_get::<String, _>("theme").unwrap_or_default(),
+        "isAdmin": r.try_get::<bool, _>("isAdmin").unwrap_or(false),
+        "createdAt": r.try_get::<chrono::NaiveDateTime, _>("createdAt").ok().map(|d| d.and_utc().to_rfc3339()),
+        "totpEnabled": r.try_get::<bool, _>("totp_enabled").unwrap_or(false),
+    })))
+}
+
+async fn v1_me(State(state): State<AppState>, user: AuthUser) -> ApiResult<Json<Value>> {
+    me_dto(&state.pool, &user.id).await
+}
+
+async fn v1_update_me(State(state): State<AppState>, user: AuthUser, Json(body): Json<UpdateProfile>) -> ApiResult<Json<Value>> {
+    sqlx::query(
+        r#"UPDATE "User" SET
+             "displayName" = COALESCE($1, "displayName"),
+             "density" = COALESCE($2::"Density", "density"),
+             "theme" = COALESCE($3::"Theme", "theme"),
+             "updatedAt" = now()
+           WHERE "id" = $4"#,
+    )
+    .bind(&body.display_name)
+    .bind(&body.density)
+    .bind(&body.theme)
+    .bind(&user.id)
+    .execute(&state.pool)
+    .await?;
+    me_dto(&state.pool, &user.id).await
 }
 
 // ---------------------------------------------------------------------------

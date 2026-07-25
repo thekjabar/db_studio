@@ -113,6 +113,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/connections/:id/tables", get(v1_tables))
         .route("/api/connections/:id/tables/:name/columns", get(v1_conn_columns))
         .route("/api/connections/:id/tables/:name/definition", get(v1_definition))
+        .route("/api/snippets", get(snippet_list).post(snippet_create))
+        .route("/api/snippets/:id", patch(snippet_update).delete(snippet_delete))
         .route("/api/connections/:id/er", get(v1_er))
         .route("/api/connections/:id/functions", get(v1_functions))
         .route("/api/connections/:id/triggers", get(v1_triggers))
@@ -1535,6 +1537,106 @@ async fn sq_delete(State(state): State<AppState>, user: AuthUser, Path((id, qid)
         .bind(&id)
         .execute(&state.pool)
         .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Snippets — per-user reusable SQL blocks under /snippets. Owner-scoped only
+// (no connection membership), so a straight app-DB CRUD port.
+// ---------------------------------------------------------------------------
+
+const SNIPPET_COLS: &str = r#""id","userId","connectionId","name","sqlText","createdAt","updatedAt""#;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateSnippet {
+    name: String,
+    sql_text: String,
+    #[serde(default)]
+    connection_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateSnippet {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    sql_text: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SnippetListQ {
+    #[serde(rename = "connectionId")]
+    connection_id: Option<String>,
+}
+
+fn snippet_dto(r: &PgRow) -> Value {
+    json!({
+        "id": r.try_get::<String, _>("id").unwrap_or_default(),
+        "userId": r.try_get::<String, _>("userId").unwrap_or_default(),
+        "connectionId": r.try_get::<Option<String>, _>("connectionId").ok().flatten(),
+        "name": r.try_get::<String, _>("name").unwrap_or_default(),
+        "sqlText": r.try_get::<String, _>("sqlText").unwrap_or_default(),
+        "createdAt": iso(r, "createdAt"),
+        "updatedAt": iso(r, "updatedAt"),
+    })
+}
+
+async fn snippet_list(State(state): State<AppState>, user: AuthUser, Query(q): Query<SnippetListQ>) -> ApiResult<Json<Value>> {
+    let rows = match q.connection_id.filter(|s| !s.is_empty()) {
+        Some(cid) => sqlx::query(&format!(
+            r#"SELECT {SNIPPET_COLS} FROM "Snippet" WHERE "userId" = $1 AND ("connectionId" IS NULL OR "connectionId" = $2) ORDER BY "updatedAt" DESC LIMIT 200"#,
+        )).bind(&user.id).bind(cid).fetch_all(&state.pool).await?,
+        None => sqlx::query(&format!(
+            r#"SELECT {SNIPPET_COLS} FROM "Snippet" WHERE "userId" = $1 ORDER BY "updatedAt" DESC LIMIT 200"#,
+        )).bind(&user.id).fetch_all(&state.pool).await?,
+    };
+    Ok(Json(json!(rows.iter().map(snippet_dto).collect::<Vec<_>>())))
+}
+
+async fn snippet_create(State(state): State<AppState>, user: AuthUser, Json(body): Json<CreateSnippet>) -> ApiResult<(StatusCode, Json<Value>)> {
+    let r = sqlx::query(&format!(
+        r#"INSERT INTO "Snippet" ("id","userId","name","sqlText","connectionId","createdAt","updatedAt")
+           VALUES ($1,$2,$3,$4,$5,now(),now()) RETURNING {SNIPPET_COLS}"#,
+    ))
+    .bind(gen_id())
+    .bind(&user.id)
+    .bind(&body.name)
+    .bind(&body.sql_text)
+    .bind(&body.connection_id)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok((StatusCode::CREATED, Json(snippet_dto(&r))))
+}
+
+async fn snippet_owner(pool: &PgPool, id: &str, user_id: &str) -> ApiResult<()> {
+    let owner: Option<String> = sqlx::query_scalar(r#"SELECT "userId" FROM "Snippet" WHERE "id" = $1"#)
+        .bind(id).fetch_optional(pool).await?;
+    match owner {
+        None => Err(ApiError::new(StatusCode::NOT_FOUND, "Not found")),
+        Some(o) if o != user_id => Err(ApiError::new(StatusCode::FORBIDDEN, "Forbidden")),
+        _ => Ok(()),
+    }
+}
+
+async fn snippet_update(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Json(body): Json<UpdateSnippet>) -> ApiResult<Json<Value>> {
+    snippet_owner(&state.pool, &id, &user.id).await?;
+    let r = sqlx::query(&format!(
+        r#"UPDATE "Snippet" SET "name" = COALESCE($1,"name"), "sqlText" = COALESCE($2,"sqlText"), "updatedAt" = now()
+           WHERE "id" = $3 RETURNING {SNIPPET_COLS}"#,
+    ))
+    .bind(&body.name)
+    .bind(&body.sql_text)
+    .bind(&id)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(Json(snippet_dto(&r)))
+}
+
+async fn snippet_delete(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<StatusCode> {
+    snippet_owner(&state.pool, &id, &user.id).await?;
+    sqlx::query(r#"DELETE FROM "Snippet" WHERE "id" = $1"#).bind(&id).execute(&state.pool).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

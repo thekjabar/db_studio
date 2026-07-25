@@ -102,6 +102,7 @@ async fn main() -> anyhow::Result<()> {
         // --- Rust hot path: v1's EXACT paths, so the perf-critical calls run
         //     in Rust. Everything else falls through to the v1 proxy below. ---
         .route("/api/users/me", get(v1_me).patch(v1_update_me))
+        .route("/api/workspaces", get(v1_workspaces_list))
         .route("/api/connections", get(v1_connections_list))
         .route("/api/connections/:id", get(v1_connection_get))
         .route("/api/connections/:id/schemas", get(v1_schemas))
@@ -777,6 +778,34 @@ fn conn_dto(r: &PgRow, crypto: &crypto::Crypto) -> Value {
         "createdAt": r.try_get::<chrono::NaiveDateTime, _>("createdAt").ok().map(|d| d.and_utc().to_rfc3339()),
         "updatedAt": r.try_get::<chrono::NaiveDateTime, _>("updatedAt").ok().map(|d| d.and_utc().to_rfc3339()),
     })
+}
+
+async fn v1_workspaces_list(State(state): State<AppState>, user: AuthUser) -> ApiResult<Json<Value>> {
+    let rows = sqlx::query(
+        r#"SELECT DISTINCT w."id", w."name", w."slug", w."isPersonal", w."ownerId", w."createdAt", w."updatedAt"
+           FROM "Workspace" w
+           LEFT JOIN "WorkspaceMember" m ON m."workspaceId" = w."id" AND m."userId" = $1
+           WHERE w."ownerId" = $1 OR m."userId" IS NOT NULL
+           ORDER BY w."isPersonal" DESC, w."createdAt" ASC"#,
+    )
+    .bind(&user.id)
+    .fetch_all(&state.pool)
+    .await?;
+    let list: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.try_get::<String, _>("id").unwrap_or_default(),
+                "name": r.try_get::<String, _>("name").unwrap_or_default(),
+                "slug": r.try_get::<String, _>("slug").unwrap_or_default(),
+                "isPersonal": r.try_get::<bool, _>("isPersonal").unwrap_or(false),
+                "ownerId": r.try_get::<String, _>("ownerId").unwrap_or_default(),
+                "createdAt": iso(r, "createdAt"),
+                "updatedAt": iso(r, "updatedAt"),
+            })
+        })
+        .collect();
+    Ok(Json(json!(list)))
 }
 
 async fn v1_connections_list(State(state): State<AppState>, user: AuthUser) -> ApiResult<Json<Value>> {

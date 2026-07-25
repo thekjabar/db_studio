@@ -1,5 +1,6 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowUpRight, Check, Copy, Key, Link2, Loader2, Maximize2 } from "lucide-react";
 import { toast } from "sonner";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -196,6 +197,23 @@ export function DataGrid({
   // Arrow-key navigation state — the focused cell in the grid.
   const [activeCell, setActiveCell] = React.useState<{ r: number; c: number }>({ r: 0, c: 0 });
   const containerRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Row virtualization — only the visible rows become DOM. This is what keeps
+  // scrolling smooth on wide tables (100 rows × 30+ columns would otherwise be
+  // thousands of cells, each with hover/copy machinery).
+  const capped = React.useMemo(() => rows.slice(0, MAX_RENDER_ROWS), [rows]);
+  const rowVirtualizer = useVirtualizer({
+    count: capped.length,
+    getScrollElement: () => containerRef.current,
+    estimateSize: () => 29,
+    overscan: 16,
+  });
+
+  // Keep the keyboard-focused cell scrolled into view (rows may be virtualized out).
+  React.useEffect(() => {
+    if (capped.length > 0) rowVirtualizer.scrollToIndex(activeCell.r, { align: "auto" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCell.r]);
 
   // Keep activeCell in range when rows/columns shrink.
   React.useEffect(() => {
@@ -457,39 +475,57 @@ export function DataGrid({
               </td>
             </tr>
           )}
-          {!loading &&
-            // Hard cap on rendered rows. The server already truncates at the
-            // user's configured cap (default 1000), but a federated query or
-            // local result from `pnpm dev` could still hand us 50k rows — and
-            // rendering 50k <tr>s will pin a browser tab. 5000 is enough for
-            // any meaningful scroll-through; anything over that, the user
-            // should narrow the SELECT. Real virtualization is a larger
-            // refactor than this cap's pragmatic trade-off.
-            rows.slice(0, MAX_RENDER_ROWS).map((row, i) => (
-              <GridRow
-                key={i}
-                i={i}
-                row={row}
-                columns={columns}
-                widths={widths}
-                isSel={!!selected?.has(i)}
-                selectable={selectable}
-                activeCol={activeCell.r === i ? activeCell.c : -1}
-                editingCol={editing?.r === i ? editing.c : null}
-                fkMap={fkMap}
-                onOpenFk={onOpenFk}
-                onEditCell={onEditCell}
-                onEditJsonCell={onEditJsonCell}
-                onExpandRow={onExpandRow}
-                onToggleSelect={onToggleSelect}
-                setActive={setActive}
-                startEdit={startEdit}
-                stopEdit={stopEdit}
-                openFkHover={openFkHover}
-                closeFkHover={closeFkHover}
-                navigateFk={navigateFk}
-              />
-            ))}
+          {!loading && capped.length > 0 && (() => {
+            // Only render the visible slice; pad the scroll height with two
+            // spacer rows so the scrollbar and row positions stay correct.
+            const items = rowVirtualizer.getVirtualItems();
+            const total = rowVirtualizer.getTotalSize();
+            const padTop = items.length ? items[0].start : 0;
+            const padBottom = items.length ? total - items[items.length - 1].end : 0;
+            return (
+              <>
+                {padTop > 0 && (
+                  <tr aria-hidden>
+                    <td colSpan={colSpan} style={{ height: padTop, padding: 0, border: 0 }} />
+                  </tr>
+                )}
+                {items.map((vi) => {
+                  const i = vi.index;
+                  const row = capped[i];
+                  return (
+                    <GridRow
+                      key={i}
+                      i={i}
+                      row={row}
+                      columns={columns}
+                      widths={widths}
+                      isSel={!!selected?.has(i)}
+                      selectable={selectable}
+                      activeCol={activeCell.r === i ? activeCell.c : -1}
+                      editingCol={editing?.r === i ? editing.c : null}
+                      fkMap={fkMap}
+                      onOpenFk={onOpenFk}
+                      onEditCell={onEditCell}
+                      onEditJsonCell={onEditJsonCell}
+                      onExpandRow={onExpandRow}
+                      onToggleSelect={onToggleSelect}
+                      setActive={setActive}
+                      startEdit={startEdit}
+                      stopEdit={stopEdit}
+                      openFkHover={openFkHover}
+                      closeFkHover={closeFkHover}
+                      navigateFk={navigateFk}
+                    />
+                  );
+                })}
+                {padBottom > 0 && (
+                  <tr aria-hidden>
+                    <td colSpan={colSpan} style={{ height: padBottom, padding: 0, border: 0 }} />
+                  </tr>
+                )}
+              </>
+            );
+          })()}
         </tbody>
       </table>
 

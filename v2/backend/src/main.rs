@@ -116,6 +116,8 @@ async fn main() -> anyhow::Result<()> {
             "/api/connections/:id/tables/:name/rows",
             post(row_insert).patch(row_update).delete(row_delete),
         )
+        .route("/api/connections/:id/tables/:name/rows/bulk-delete", post(row_bulk_delete))
+        .route("/api/connections/:id/tables/:name/rows/bulk-update", post(row_bulk_update))
         .route("/api/connections/:id/query", post(v1_query))
         .route("/api/connections/:id/saved-queries", get(sq_list).post(sq_create))
         .route(
@@ -1082,6 +1084,70 @@ async fn row_delete(State(state): State<AppState>, user: AuthUser, Path((id, tab
     );
     let n = sqlx::query(&sql).bind(&body.pk).execute(&mut c).await?.rows_affected();
     Ok(Json(json!({ "deleted": n })))
+}
+
+#[derive(Deserialize)]
+struct BulkDelete {
+    pks: Vec<Value>,
+}
+#[derive(Deserialize)]
+struct BulkUpdate {
+    pks: Vec<Value>,
+    values: Value,
+}
+
+fn pk_keys(pks: &[Value]) -> Vec<String> {
+    pks.first().map(json_keys).unwrap_or_default()
+}
+
+async fn row_bulk_delete(State(state): State<AppState>, user: AuthUser, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<BulkDelete>) -> ApiResult<Json<Value>> {
+    require_write(&state.pool, &id, &user.id).await?;
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let schema = q.schema.unwrap_or_else(|| "public".into());
+    if !core_table_exists(&mut c, &schema, &table).await? {
+        return Err(ApiError::bad(format!("Unknown table {schema}.{table}")));
+    }
+    if body.pks.is_empty() {
+        return Ok(Json(json!({ "affectedRows": 0 })));
+    }
+    let pkeys = pk_keys(&body.pks);
+    if pkeys.is_empty() {
+        return Err(ApiError::bad("pks entries must have key columns"));
+    }
+    let (qs, qt) = (quote_ident(&schema), quote_ident(&table));
+    let whr = pkeys.iter().map(|k| { let q = quote_ident(k); format!("o.{q} = k.{q}") }).collect::<Vec<_>>().join(" AND ");
+    let sql = format!(
+        "DELETE FROM {qs}.{qt} AS o USING jsonb_populate_recordset(NULL::{qs}.{qt}, $1::jsonb) k WHERE {whr}",
+    );
+    let n = sqlx::query(&sql).bind(Value::Array(body.pks)).execute(&mut c).await?.rows_affected();
+    Ok(Json(json!({ "affectedRows": n })))
+}
+
+async fn row_bulk_update(State(state): State<AppState>, user: AuthUser, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<BulkUpdate>) -> ApiResult<Json<Value>> {
+    require_write(&state.pool, &id, &user.id).await?;
+    let mut c = connect_target(&state, &id, &user.id).await?;
+    let schema = q.schema.unwrap_or_else(|| "public".into());
+    if !core_table_exists(&mut c, &schema, &table).await? {
+        return Err(ApiError::bad(format!("Unknown table {schema}.{table}")));
+    }
+    if body.pks.is_empty() {
+        return Ok(Json(json!({ "affectedRows": 0 })));
+    }
+    let pkeys = pk_keys(&body.pks);
+    let vkeys = json_keys(&body.values);
+    if pkeys.is_empty() || vkeys.is_empty() {
+        return Err(ApiError::bad("pks and values are required"));
+    }
+    let (qs, qt) = (quote_ident(&schema), quote_ident(&table));
+    let set = vkeys.iter().map(|k| { let q = quote_ident(k); format!("{q} = v.{q}") }).collect::<Vec<_>>().join(", ");
+    let whr = pkeys.iter().map(|k| { let q = quote_ident(k); format!("o.{q} = k.{q}") }).collect::<Vec<_>>().join(" AND ");
+    let sql = format!(
+        "UPDATE {qs}.{qt} AS o SET {set} \
+         FROM jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) v, jsonb_populate_recordset(NULL::{qs}.{qt}, $2::jsonb) k \
+         WHERE {whr}",
+    );
+    let n = sqlx::query(&sql).bind(&body.values).bind(Value::Array(body.pks)).execute(&mut c).await?.rows_affected();
+    Ok(Json(json!({ "affectedRows": n })))
 }
 
 // ---------------------------------------------------------------------------

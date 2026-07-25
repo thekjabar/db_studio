@@ -15,7 +15,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{request::Parts, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use axum::body::{to_bytes, Body};
@@ -107,6 +107,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/connections/:id/schemas", get(v1_schemas))
         .route("/api/connections/:id/tables", get(v1_tables))
         .route("/api/connections/:id/query", post(v1_query))
+        .route("/api/connections/:id/saved-queries", get(sq_list).post(sq_create))
+        .route(
+            "/api/connections/:id/saved-queries/:queryId",
+            get(sq_get).patch(sq_update).delete(sq_delete),
+        )
         // --- Strangler proxy: every other endpoint → v1 Node API ---
         .fallback(proxy)
         .layer(CorsLayer::permissive())
@@ -804,6 +809,165 @@ async fn v1_connection_get(State(state): State<AppState>, user: AuthUser, Path(i
     .await?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Connection not found"))?;
     Ok(Json(conn_dto(&row, crypto)))
+}
+
+// ---------------------------------------------------------------------------
+// Connection access role + helpers (shared by member-scoped resources).
+// ---------------------------------------------------------------------------
+
+/// Returns the user's effective role on a connection ("OWNER" for the owner,
+/// else the member role), or None if they have no access.
+async fn conn_role(pool: &PgPool, conn_id: &str, user_id: &str) -> ApiResult<Option<String>> {
+    let role: Option<String> = sqlx::query_scalar(
+        r#"SELECT CASE WHEN c."ownerId" = $2 THEN 'OWNER' ELSE m."role"::text END
+           FROM "Connection" c
+           LEFT JOIN "ConnectionMember" m ON m."connectionId" = c."id" AND m."userId" = $2
+           WHERE c."id" = $1 AND (c."ownerId" = $2 OR m."userId" IS NOT NULL) LIMIT 1"#,
+    )
+    .bind(conn_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(role)
+}
+
+async fn require_read(pool: &PgPool, conn_id: &str, user_id: &str) -> ApiResult<()> {
+    conn_role(pool, conn_id, user_id)
+        .await?
+        .map(|_| ())
+        .ok_or_else(|| ApiError::new(StatusCode::FORBIDDEN, "No access to this connection"))
+}
+
+async fn require_write(pool: &PgPool, conn_id: &str, user_id: &str) -> ApiResult<()> {
+    match conn_role(pool, conn_id, user_id).await?.as_deref() {
+        Some("OWNER") | Some("EDITOR") => Ok(()),
+        Some(_) => Err(ApiError::new(StatusCode::FORBIDDEN, "Requires editor access")),
+        None => Err(ApiError::new(StatusCode::FORBIDDEN, "No access to this connection")),
+    }
+}
+
+/// cuid-like id (starts with 'c'; unique — matches Prisma's `@default(cuid())`
+/// well enough for a String @id column).
+fn gen_id() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let s: String = (0..24)
+        .map(|_| std::char::from_digit(rng.gen_range(0..36), 36).unwrap())
+        .collect();
+    format!("c{s}")
+}
+
+fn iso(r: &PgRow, col: &str) -> Option<String> {
+    r.try_get::<chrono::NaiveDateTime, _>(col).ok().map(|d| d.and_utc().to_rfc3339())
+}
+
+// ---------------------------------------------------------------------------
+// Saved queries — CRUD under /connections/:id/saved-queries.
+// ---------------------------------------------------------------------------
+
+const SQ_COLS: &str = r#""id","name","sqlText","chartConfig","createdAt","updatedAt""#;
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedQueryBody {
+    name: String,
+    sql_text: String,
+    #[serde(default)]
+    chart_config: Option<Value>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedQueryPatch {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    sql_text: Option<String>,
+    #[serde(default)]
+    chart_config: Option<Value>,
+}
+
+fn sq_dto(r: &PgRow) -> Value {
+    json!({
+        "id": r.try_get::<String, _>("id").unwrap_or_default(),
+        "name": r.try_get::<String, _>("name").unwrap_or_default(),
+        "sqlText": r.try_get::<String, _>("sqlText").unwrap_or_default(),
+        "chartConfig": r.try_get::<Option<Value>, _>("chartConfig").ok().flatten(),
+        "createdAt": iso(r, "createdAt"),
+        "updatedAt": iso(r, "updatedAt"),
+    })
+}
+
+async fn sq_list(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    require_read(&state.pool, &id, &user.id).await?;
+    let rows = sqlx::query(&format!(
+        r#"SELECT {SQ_COLS} FROM "SavedQuery" WHERE "connectionId" = $1 ORDER BY "createdAt" DESC"#,
+    ))
+    .bind(&id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(json!(rows.iter().map(sq_dto).collect::<Vec<_>>())))
+}
+
+async fn sq_get(State(state): State<AppState>, user: AuthUser, Path((id, qid)): Path<(String, String)>) -> ApiResult<Json<Value>> {
+    require_read(&state.pool, &id, &user.id).await?;
+    let r = sqlx::query(&format!(
+        r#"SELECT {SQ_COLS} FROM "SavedQuery" WHERE "id" = $1 AND "connectionId" = $2 LIMIT 1"#,
+    ))
+    .bind(&qid)
+    .bind(&id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Saved query not found"))?;
+    Ok(Json(sq_dto(&r)))
+}
+
+async fn sq_create(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Json(body): Json<SavedQueryBody>) -> ApiResult<Json<Value>> {
+    require_write(&state.pool, &id, &user.id).await?;
+    let r = sqlx::query(&format!(
+        r#"INSERT INTO "SavedQuery" ("id","name","sqlText","chartConfig","userId","connectionId","createdAt","updatedAt")
+           VALUES ($1,$2,$3,$4,$5,$6,now(),now()) RETURNING {SQ_COLS}"#,
+    ))
+    .bind(gen_id())
+    .bind(&body.name)
+    .bind(&body.sql_text)
+    .bind(&body.chart_config)
+    .bind(&user.id)
+    .bind(&id)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(Json(sq_dto(&r)))
+}
+
+async fn sq_update(State(state): State<AppState>, user: AuthUser, Path((id, qid)): Path<(String, String)>, Json(body): Json<SavedQueryPatch>) -> ApiResult<Json<Value>> {
+    require_write(&state.pool, &id, &user.id).await?;
+    let r = sqlx::query(&format!(
+        r#"UPDATE "SavedQuery" SET
+             "name" = COALESCE($1, "name"),
+             "sqlText" = COALESCE($2, "sqlText"),
+             "chartConfig" = COALESCE($3, "chartConfig"),
+             "updatedAt" = now()
+           WHERE "id" = $4 AND "connectionId" = $5 RETURNING {SQ_COLS}"#,
+    ))
+    .bind(&body.name)
+    .bind(&body.sql_text)
+    .bind(&body.chart_config)
+    .bind(&qid)
+    .bind(&id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Saved query not found"))?;
+    Ok(Json(sq_dto(&r)))
+}
+
+async fn sq_delete(State(state): State<AppState>, user: AuthUser, Path((id, qid)): Path<(String, String)>) -> ApiResult<StatusCode> {
+    require_write(&state.pool, &id, &user.id).await?;
+    sqlx::query(r#"DELETE FROM "SavedQuery" WHERE "id" = $1 AND "connectionId" = $2"#)
+        .bind(&qid)
+        .bind(&id)
+        .execute(&state.pool)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ---------------------------------------------------------------------------

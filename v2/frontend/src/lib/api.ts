@@ -58,7 +58,13 @@ http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
-// Refresh on 401
+// Refresh on 401. EVERY refresh caller (bootstrap, tab-focus, this interceptor)
+// must funnel through one in-flight promise. v1 rotates the refresh token on
+// every call and its reuse-detection revokes the WHOLE token family if an
+// already-rotated token is presented again — so two concurrent refreshes on the
+// same cookie (e.g. bootstrap racing a 401, or focus racing a query) rotate on
+// the first and nuke the family on the second, logging the user out. Single-
+// flighting guarantees concurrent callers share one rotation.
 let refreshPromise: Promise<string | null> | null = null;
 
 async function doRefresh(): Promise<string | null> {
@@ -79,6 +85,14 @@ async function doRefresh(): Promise<string | null> {
   }
 }
 
+/** Single-flight session refresh shared by every caller (see note above). */
+export function refreshSession(): Promise<string | null> {
+  if (!refreshPromise) {
+    refreshPromise = doRefresh().finally(() => (refreshPromise = null));
+  }
+  return refreshPromise;
+}
+
 http.interceptors.response.use(
   (r) => r,
   async (error: AxiosError) => {
@@ -87,16 +101,18 @@ http.interceptors.response.use(
 
     if (status === 401 && original && !original._retry && !original.url?.includes("/auth/")) {
       original._retry = true;
-      if (!refreshPromise) refreshPromise = doRefresh().finally(() => (refreshPromise = null));
-      const newToken = await refreshPromise;
+      const newToken = await refreshSession();
       if (newToken) {
         original.headers = original.headers ?? {};
         (original.headers as Record<string, string>).Authorization = `Bearer ${newToken}`;
         return http.request(original);
       }
       useAuth.getState().clear();
-      if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-        window.location.href = "/login";
+      // Under /v2 the login route is /v2/login (BrowserRouter basename); a bare
+      // "/login" would escape to the v1 app. BASE_URL is "/v2/" here, "/" in v1.
+      const loginPath = `${import.meta.env.BASE_URL}login`;
+      if (typeof window !== "undefined" && !window.location.pathname.startsWith(loginPath)) {
+        window.location.href = loginPath;
       }
     }
     return Promise.reject(error);
@@ -999,7 +1015,8 @@ export const api = {
     return { accessToken: data.accessToken, user };
   },
   logout: () => http.post("/auth/logout").then((r) => r.data),
-  refresh: () => http.post<{ accessToken: string }>("/auth/refresh").then((r) => r.data),
+  refresh: (): Promise<{ accessToken: string } | null> =>
+    refreshSession().then((t) => (t ? { accessToken: t } : null)),
   me: () => http.get<AuthUser>("/users/me").then((r) => r.data),
   oauthProviders: () =>
     http.get<{ google: boolean; github: boolean }>("/auth/oauth/providers").then((r) => r.data),

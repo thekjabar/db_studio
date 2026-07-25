@@ -9,15 +9,22 @@ export const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000/ap
  *  the root (downloads, health, the agent WS server). */
 export const API_ORIGIN = API_URL.replace(/\/api\/?$/, "");
 
+/** Absolute origin the local agent talks to (WS `/agent-ws` + `/downloads`).
+ *  The agent gateway + binaries live on the v1 backend, so under /v2 — where
+ *  `API_ORIGIN` is the relative `/v2` and can't yield a host — this must be set
+ *  explicitly (`VITE_AGENT_ORIGIN=https://api.queryschema.com`). For v1 it's
+ *  unset and falls back to `API_ORIGIN`, which already is that absolute origin. */
+export const AGENT_ORIGIN = import.meta.env.VITE_AGENT_ORIGIN || API_ORIGIN;
+
 /** Per-platform links to the local agent binaries. Built elsewhere and served
- *  by nginx from the API origin; we only wire the download hrefs. */
+ *  by nginx from the agent origin; we only wire the download hrefs. */
 export const AGENT_DOWNLOADS = {
   // `-v6` = WebView2 windowed app, fully rebranded "Query Schema" + embedded
   // taskbar icon and file-properties metadata. Versioned URL busts caches.
-  windows: `${API_ORIGIN}/downloads/agent-windows-amd64-v6.exe`,
-  macIntel: `${API_ORIGIN}/downloads/agent-macos-amd64`,
-  macArm: `${API_ORIGIN}/downloads/agent-macos-arm64`,
-  linux: `${API_ORIGIN}/downloads/agent-linux-amd64-v3`,
+  windows: `${AGENT_ORIGIN}/downloads/agent-windows-amd64-v6.exe`,
+  macIntel: `${AGENT_ORIGIN}/downloads/agent-macos-amd64`,
+  macArm: `${AGENT_ORIGIN}/downloads/agent-macos-arm64`,
+  linux: `${AGENT_ORIGIN}/downloads/agent-linux-amd64-v3`,
 } as const;
 
 /** Back-compat alias — the original single Windows download link. Points at the
@@ -29,9 +36,9 @@ export const AGENT_DOWNLOAD_URL = AGENT_DOWNLOADS.windows;
  *  from AGENT_TUNNEL_PROTOCOL.md. */
 export const AGENT_SERVER_HOST = (() => {
   try {
-    return new URL(API_ORIGIN).host || "database-api.mrwari.com";
+    return new URL(AGENT_ORIGIN).host || "api.queryschema.com";
   } catch {
-    return "database-api.mrwari.com";
+    return "api.queryschema.com";
   }
 })();
 

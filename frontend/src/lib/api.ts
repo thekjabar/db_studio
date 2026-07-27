@@ -51,7 +51,14 @@ http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 });
 
-// Refresh on 401
+// Refresh on 401. EVERY refresh caller (bootstrap, tab-focus, this interceptor)
+// must funnel through one in-flight promise. The refresh token rotates on every
+// call and reuse-detection revokes the user's WHOLE token family if an
+// already-rotated token is presented again — and that revocation is
+// `updateMany({ userId, revokedAt: null })`, so it also kills sessions in OTHER
+// tabs and in the /v2 app, which shares this user's token family. Two
+// concurrent refreshes on the same cookie therefore log the user out
+// everywhere. Single-flighting guarantees concurrent callers share one rotation.
 let refreshPromise: Promise<string | null> | null = null;
 
 async function doRefresh(): Promise<string | null> {
@@ -72,6 +79,27 @@ async function doRefresh(): Promise<string | null> {
   }
 }
 
+/**
+ * Single-flight session refresh shared by every caller (see note above).
+ *
+ * The in-process promise only dedupes callers in THIS tab. Two tabs — or the v1
+ * and /v2 apps, which are same-origin — each hold their own promise and would
+ * still read the same cookie and rotate it twice, tripping reuse-detection and
+ * logging the user out everywhere. The Web Lock serializes refreshes across all
+ * tabs and both apps on this origin, so the second holder runs only after the
+ * first has rotated the cookie and therefore sends the NEW token.
+ */
+export function refreshSession(): Promise<string | null> {
+  if (!refreshPromise) {
+    const run =
+      typeof navigator !== "undefined" && navigator.locks
+        ? navigator.locks.request("qs-auth-refresh", () => doRefresh())
+        : doRefresh();
+    refreshPromise = Promise.resolve(run).finally(() => (refreshPromise = null));
+  }
+  return refreshPromise;
+}
+
 http.interceptors.response.use(
   (r) => r,
   async (error: AxiosError) => {
@@ -80,8 +108,7 @@ http.interceptors.response.use(
 
     if (status === 401 && original && !original._retry && !original.url?.includes("/auth/")) {
       original._retry = true;
-      if (!refreshPromise) refreshPromise = doRefresh().finally(() => (refreshPromise = null));
-      const newToken = await refreshPromise;
+      const newToken = await refreshSession();
       if (newToken) {
         original.headers = original.headers ?? {};
         (original.headers as Record<string, string>).Authorization = `Bearer ${newToken}`;
@@ -992,7 +1019,8 @@ export const api = {
     return { accessToken: data.accessToken, user };
   },
   logout: () => http.post("/auth/logout").then((r) => r.data),
-  refresh: () => http.post<{ accessToken: string }>("/auth/refresh").then((r) => r.data),
+  refresh: (): Promise<{ accessToken: string } | null> =>
+    refreshSession().then((t) => (t ? { accessToken: t } : null)),
   me: () => http.get<AuthUser>("/users/me").then((r) => r.data),
   oauthProviders: () =>
     http.get<{ google: boolean; github: boolean }>("/auth/oauth/providers").then((r) => r.data),

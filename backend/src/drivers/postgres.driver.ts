@@ -222,12 +222,23 @@ export class PostgresDriver implements IDatabaseDriver {
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const orderSql = (q.orderBy ?? [])
-      .map((o) => {
-        whitelistIdent(o.column, colNames);
-        return `${quotePg(o.column)} ${o.direction === 'desc' ? 'DESC' : 'ASC'}`;
-      })
-      .join(', ');
+    const sortedNames = (q.orderBy ?? []).map((o) => o.column);
+    const orderParts = (q.orderBy ?? []).map((o) => {
+      whitelistIdent(o.column, colNames);
+      return `${quotePg(o.column)} ${o.direction === 'desc' ? 'DESC' : 'ASC'}`;
+    });
+    // STABLE PAGINATION. With no ORDER BY, Postgres returns physical heap order,
+    // and an UPDATE writes a NEW tuple version (usually appended to the end of
+    // the heap) — so editing a row made it jump position in the grid. Append the
+    // primary key as a tiebreaker so the ordering is total and deterministic:
+    // fixes both the unsorted case and ties within a sort on a non-unique
+    // column. The PK is indexed, so LIMIT/OFFSET stays a cheap index scan.
+    // No PK → fall back to ctid (physical order, i.e. today's behaviour).
+    for (const pk of cols.filter((c) => c.isPrimaryKey).map((c) => c.name)) {
+      if (!sortedNames.includes(pk)) orderParts.push(`${quotePg(pk)} ASC`);
+    }
+    if (!orderParts.length) orderParts.push('ctid ASC');
+    const orderSql = orderParts.join(', ');
 
     return this.withClient(async (client) => {
       const limit = Math.max(1, Math.min(q.limit, 1000));

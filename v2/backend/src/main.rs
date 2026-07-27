@@ -50,6 +50,40 @@ struct AppState {
     /// HTTP client + origin for the strangler proxy to the v1 Node API.
     http: reqwest::Client,
     v1_origin: String,
+    /// Refresh-token lifetime in seconds (JWT_REFRESH_TTL, default 7d).
+    refresh_ttl_secs: i64,
+    /// Refresh-cookie attributes (mirror v1's setRefreshCookie).
+    cookie_domain: String,
+    cookie_secure: bool,
+    /// Block unverified users at login (matches v1 requireEmailVerification).
+    require_email_verification: bool,
+    /// Per-email failed-login lockout (in-memory; v2 is single-pod — matches
+    /// v1's documented Map fallback when Redis is absent).
+    cooldown: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, CooldownEntry>>>,
+}
+
+#[derive(Clone, Copy)]
+struct CooldownEntry {
+    failures: u32,
+    reset_at: i64,
+    locked_until: Option<i64>,
+}
+
+/// Parse a `<n><unit>` TTL (s/m/h/d) to seconds; default 7 days.
+fn parse_ttl_secs(s: &str) -> i64 {
+    let s = s.trim();
+    let (num, mult) = if let Some(n) = s.strip_suffix('d') {
+        (n, 86_400)
+    } else if let Some(n) = s.strip_suffix('h') {
+        (n, 3_600)
+    } else if let Some(n) = s.strip_suffix('m') {
+        (n, 60)
+    } else if let Some(n) = s.strip_suffix('s') {
+        (n, 1)
+    } else {
+        return 7 * 86_400;
+    };
+    num.trim().parse::<i64>().map(|n| n * mult).unwrap_or(7 * 86_400)
 }
 
 #[tokio::main]
@@ -95,7 +129,19 @@ async fn main() -> anyhow::Result<()> {
     let http = reqwest::Client::builder()
         .build()
         .expect("reqwest client");
-    let state = AppState { pool, jwt_secret, jwt_ttl, max_rows, crypto, http, v1_origin };
+    let refresh_ttl_secs = parse_ttl_secs(&std::env::var("JWT_REFRESH_TTL").unwrap_or_else(|_| "7d".into()));
+    let cookie_domain = std::env::var("COOKIE_DOMAIN").unwrap_or_else(|_| ".queryschema.com".into());
+    let cookie_secure = std::env::var("COOKIE_SECURE").map(|v| v != "false").unwrap_or(true);
+    // Default true — queryschema prod has email enabled, so v1 requires
+    // verification. Only an explicit "false" opens login to unverified users.
+    let require_email_verification = std::env::var("REQUIRE_EMAIL_VERIFICATION")
+        .map(|v| v != "false" && v != "0")
+        .unwrap_or(true);
+    let cooldown = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let state = AppState {
+        pool, jwt_secret, jwt_ttl, max_rows, crypto, http, v1_origin,
+        refresh_ttl_secs, cookie_domain, cookie_secure, require_email_verification, cooldown,
+    };
 
     let app = Router::new()
         .route("/health", get(|| async { Json(json!({ "ok": true, "service": "queryschema-v2" })) }))
@@ -165,18 +211,26 @@ async fn shutdown_signal() {
 struct ApiError {
     status: StatusCode,
     message: String,
+    /// Optional full JSON body (for v1-shaped coded errors like ACCOUNT_PENDING).
+    body: Option<Value>,
 }
 impl ApiError {
     fn new(status: StatusCode, msg: impl Into<String>) -> Self {
-        Self { status, message: msg.into() }
+        Self { status, message: msg.into(), body: None }
     }
     fn bad(msg: impl Into<String>) -> Self { Self::new(StatusCode::BAD_REQUEST, msg) }
     fn unauthorized(msg: impl Into<String>) -> Self { Self::new(StatusCode::UNAUTHORIZED, msg) }
     fn internal(msg: impl Into<String>) -> Self { Self::new(StatusCode::INTERNAL_SERVER_ERROR, msg) }
+    /// v1-shaped `{ code, message }` body (login gates, lockout).
+    fn coded(status: StatusCode, code: &str, msg: impl Into<String>) -> Self {
+        let m = msg.into();
+        Self { status, message: m.clone(), body: Some(json!({ "code": code, "message": m })) }
+    }
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.status, Json(json!({ "error": self.message }))).into_response()
+        let body = self.body.unwrap_or_else(|| json!({ "error": self.message }));
+        (self.status, Json(body)).into_response()
     }
 }
 impl From<sqlx::Error> for ApiError {
@@ -1397,17 +1451,24 @@ async fn v1_indexes(State(state): State<AppState>, user: AuthUser, Path(id): Pat
 /// Returns the user's effective role on a connection ("OWNER" for the owner,
 /// else the member role), or None if they have no access.
 async fn conn_role(pool: &PgPool, conn_id: &str, user_id: &str) -> ApiResult<Option<String>> {
-    let role: Option<String> = sqlx::query_scalar(
-        r#"SELECT CASE WHEN c."ownerId" = $2 THEN 'OWNER' ELSE m."role"::text END
+    // Matches v1 RbacService.effectiveRole precedence: connection owner > direct
+    // ConnectionMember grant > workspace membership.
+    let role: Option<Option<String>> = sqlx::query_scalar(
+        r#"SELECT CASE
+               WHEN c."ownerId" = $2 THEN 'OWNER'
+               WHEN m."role" IS NOT NULL THEN m."role"::text
+               WHEN wm."role" IS NOT NULL THEN wm."role"::text
+               ELSE NULL END
            FROM "Connection" c
            LEFT JOIN "ConnectionMember" m ON m."connectionId" = c."id" AND m."userId" = $2
-           WHERE c."id" = $1 AND (c."ownerId" = $2 OR m."userId" IS NOT NULL) LIMIT 1"#,
+           LEFT JOIN "WorkspaceMember" wm ON wm."workspaceId" = c."workspaceId" AND wm."userId" = $2
+           WHERE c."id" = $1 LIMIT 1"#,
     )
     .bind(conn_id)
     .bind(user_id)
     .fetch_optional(pool)
     .await?;
-    Ok(role)
+    Ok(role.flatten())
 }
 
 async fn require_read(pool: &PgPool, conn_id: &str, user_id: &str) -> ApiResult<()> {
@@ -1877,6 +1938,26 @@ async fn column_cast_types(c: &mut PgConnection, schema: &str, table: &str) -> R
 
 const ALLOWED_FILTER_OPS: &[&str] = &["=", "!=", "<", "<=", ">", ">=", "like", "ilike", "is null", "is not null", "in"];
 
+/// Primary-key column names in key order (empty when the table has no PK).
+/// Used as the deterministic ORDER BY tiebreaker for stable pagination.
+async fn primary_key_cols(c: &mut PgConnection, schema: &str, table: &str) -> Result<Vec<String>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT a.attname::text AS name \
+           FROM pg_index i \
+           JOIN pg_class cl ON cl.oid = i.indrelid \
+           JOIN pg_namespace n ON n.oid = cl.relnamespace \
+           JOIN unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) ON true \
+           JOIN pg_attribute a ON a.attrelid = cl.oid AND a.attnum = k.attnum \
+          WHERE n.nspname = $1 AND cl.relname = $2 AND i.indisprimary \
+          ORDER BY k.ord",
+    )
+    .bind(schema)
+    .bind(table)
+    .fetch_all(&mut *c)
+    .await?;
+    Ok(rows.iter().filter_map(|r| r.try_get::<String, _>("name").ok()).collect())
+}
+
 async fn v1_table_data(State(state): State<AppState>, user: AuthUser, Path((id, name)): Path<(String, String)>, Query(q): Query<DataQuery>, req: Request) -> Result<Response, ApiError> {
     // Owner bypasses masks/row-filters → serve in Rust. Anyone else → v1 (which
     // enforces their row predicate + column masks). Missing/other → v1 decides.
@@ -1936,6 +2017,7 @@ async fn v1_table_data(State(state): State<AppState>, user: AuthUser, Path((id, 
 
     // ORDER BY (whitelist against real columns).
     let mut order_cols: Vec<String> = Vec::new();
+    let mut sorted_names: Vec<String> = Vec::new();
     if let Some(ob) = &q.order_by {
         for part in ob.split(',').filter(|s| !s.is_empty()) {
             let mut it = part.splitn(2, ':');
@@ -1947,9 +2029,27 @@ async fn v1_table_data(State(state): State<AppState>, user: AuthUser, Path((id, 
             }
             let d = if dir.eq_ignore_ascii_case("desc") { "DESC" } else { "ASC" };
             order_cols.push(format!("{} {}", quote_ident(col), d));
+            sorted_names.push(col.to_string());
         }
     }
-    let order_sql = if order_cols.is_empty() { String::new() } else { format!("ORDER BY {}", order_cols.join(", ")) };
+    // STABLE PAGINATION. Postgres returns rows in physical heap order when no
+    // ORDER BY is given, and an UPDATE writes a NEW tuple version (usually at
+    // the end of the heap) — so editing a row made it jump to a different
+    // position in the grid, and an index-keyed selection then pointed at the
+    // wrong row. Always append the primary key as a tiebreaker so the ordering
+    // is total and deterministic: it fixes the unsorted case AND ties within a
+    // user sort on a non-unique column. PK is indexed, so LIMIT/OFFSET stays a
+    // cheap index scan. Tables with no PK fall back to ctid (physical order —
+    // same as today's behaviour, the best available without a unique key).
+    for pk in primary_key_cols(&mut c, &schema, &name).await? {
+        if !sorted_names.contains(&pk) {
+            order_cols.push(format!("{} ASC", quote_ident(&pk)));
+        }
+    }
+    if order_cols.is_empty() {
+        order_cols.push("ctid ASC".into());
+    }
+    let order_sql = format!("ORDER BY {}", order_cols.join(", "));
 
     let limit = q.limit.as_deref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(50).clamp(1, 1000);
     let offset = q.offset.as_deref().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0).max(0);

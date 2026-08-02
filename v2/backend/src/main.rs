@@ -2255,7 +2255,6 @@ async fn proxy(State(state): State<AppState>, req: Request) -> Response {
 
     let status = resp.status();
     let headers = resp.headers().clone();
-    let body_bytes = resp.bytes().await.unwrap_or_default();
     let mut builder = Response::builder().status(status.as_u16());
     for (k, v) in headers.iter() {
         let name = k.as_str();
@@ -2272,8 +2271,23 @@ async fn proxy(State(state): State<AppState>, req: Request) -> Response {
             builder = builder.header(name, v.as_bytes());
         }
     }
+    // STREAM the upstream body straight through — never buffer it.
+    //
+    // This used to be `resp.bytes().await`, which waited for the ENTIRE upstream
+    // response before sending the client a single byte. For `pg_dump` backups
+    // that meant: dump runs to completion (minutes on a multi-GB database) with
+    // the browser showing 0 B and no progress, the whole dump held in this
+    // container's memory (capped at 384 MB, so large dumps could not complete at
+    // all), and only then did the download start. It also swallowed errors via
+    // `unwrap_or_default()`, which turned a failed read into an empty body with a
+    // success status — a silently corrupt "backup".
+    //
+    // Streaming makes time-to-first-byte immediate (which also keeps us under
+    // Cloudflare's ~100s first-byte limit), makes memory use constant regardless
+    // of dump size, and surfaces a mid-transfer failure as an aborted download
+    // instead of a truncated file that looks fine.
     builder
-        .body(Body::from(body_bytes))
+        .body(Body::from_stream(resp.bytes_stream()))
         .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
 }
 

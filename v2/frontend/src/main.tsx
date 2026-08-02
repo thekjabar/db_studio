@@ -24,7 +24,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter basename="/v2">
+        <BrowserRouter basename={import.meta.env.BASE_URL}>
           <ModalProvider>
             <BackupJobProvider>
               <App />

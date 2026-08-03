@@ -154,6 +154,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/auth/login", post(login))
         .route("/api/auth/refresh", post(auth_refresh))
         .route("/api/auth/logout", post(auth_logout))
+        .route("/api/auth/change-password", post(change_password))
+        .route("/api/auth/verify-email", post(verify_email))
+        .route("/api/auth/complete-password-reset", post(complete_password_reset))
+        .route("/api/auth/sessions", get(sessions_list).delete(sessions_revoke_all))
+        .route("/api/auth/sessions/:id", delete(session_revoke))
         .route("/api/users/me", get(v1_me).patch(v1_update_me))
         .route("/api/workspaces", get(v1_workspaces_list))
         // Create/update carry v1-only business logic (SSRF host guard,
@@ -629,6 +634,246 @@ async fn login(
         .header(axum::http::header::SET_COOKIE, refresh_cookie(&state, &refresh, expires_at))
         .body(Body::from(serde_json::to_vec(&json!({ "accessToken": access, "userId": id })).unwrap_or_default()))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()))
+}
+
+/// Argon2id with v1's exact parameters (m=65536, t=3, p=4, len=32, 16-byte
+/// salt) so hashes written here are readable by v1 and vice-versa.
+fn hash_argon2(password: &str) -> Result<String, ApiError> {
+    use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
+    use argon2::{Algorithm, Argon2, Params, Version};
+    let params = Params::new(65536, 3, 4, Some(32)).map_err(|e| ApiError::internal(e.to_string()))?;
+    let a = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let salt = SaltString::generate(&mut OsRng);
+    a.hash_password(password.as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .map_err(|e| ApiError::internal(e.to_string()))
+}
+
+#[derive(Deserialize)]
+struct ChangePasswordBody {
+    #[serde(rename = "currentPassword")]
+    current_password: String,
+    #[serde(rename = "newPassword")]
+    new_password: String,
+}
+
+/// v1 keeps the CURRENT session alive and revokes every other one.
+async fn change_password(
+    State(state): State<AppState>,
+    user: AuthUser,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<ChangePasswordBody>,
+) -> ApiResult<Response> {
+    if body.new_password.chars().count() < 12 || body.new_password.chars().count() > 128 {
+        return Err(ApiError::bad("Password must be 12-128 chars"));
+    }
+    let meta = req_meta(&headers);
+    let row = sqlx::query(r#"SELECT "passwordHash" FROM "User" WHERE "id" = $1"#)
+        .bind(&user.id)
+        .fetch_optional(&state.pool)
+        .await?
+        .ok_or_else(|| ApiError::unauthorized("Unauthorized"))?;
+    let hash: Option<String> = row.try_get("passwordHash").ok().flatten();
+    let hash = hash.ok_or_else(|| {
+        ApiError::bad("This account signs in with a provider and has no password to change.")
+    })?;
+    if verify_argon2(&body.current_password, &hash).is_err() {
+        return Err(ApiError::unauthorized("Current password is incorrect"));
+    }
+    if verify_argon2(&body.new_password, &hash).is_ok() {
+        return Err(ApiError::bad("New password must be different from the current one"));
+    }
+
+    let new_hash = hash_argon2(&body.new_password)?;
+    sqlx::query(r#"UPDATE "User" SET "passwordHash" = $1, "updatedAt" = now() WHERE "id" = $2"#)
+        .bind(&new_hash)
+        .bind(&user.id)
+        .execute(&state.pool)
+        .await?;
+
+    let keep = cookie_from_header(&headers, REFRESH_COOKIE).map(|r| sha256_hex(&r));
+    let _ = sqlx::query(
+        r#"UPDATE "RefreshToken" SET "revokedAt" = now()
+           WHERE "userId" = $1 AND "revokedAt" IS NULL AND ($2::text IS NULL OR "tokenHash" <> $2)"#,
+    )
+    .bind(&user.id)
+    .bind(keep.as_deref())
+    .execute(&state.pool)
+    .await;
+    audit(&state, Some(&user.id), "PASSWORD_CHANGED", &meta, None).await;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+async fn sessions_list(
+    State(state): State<AppState>,
+    user: AuthUser,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let current = cookie_from_header(&headers, REFRESH_COOKIE).map(|r| sha256_hex(&r));
+    let rows = sqlx::query(
+        r#"SELECT "id","userAgent","ip","createdAt","expiresAt","tokenHash"
+           FROM "RefreshToken"
+           WHERE "userId" = $1 AND "revokedAt" IS NULL AND "expiresAt" > now()
+           ORDER BY "createdAt" DESC"#,
+    )
+    .bind(&user.id)
+    .fetch_all(&state.pool)
+    .await?;
+    let out: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let hash: String = r.try_get("tokenHash").unwrap_or_default();
+            json!({
+                "id": r.try_get::<String, _>("id").unwrap_or_default(),
+                "userAgent": r.try_get::<Option<String>, _>("userAgent").ok().flatten(),
+                "ip": r.try_get::<Option<String>, _>("ip").ok().flatten(),
+                "createdAt": r.try_get::<chrono::DateTime<chrono::Utc>, _>("createdAt").ok(),
+                "expiresAt": r.try_get::<chrono::DateTime<chrono::Utc>, _>("expiresAt").ok(),
+                "current": current.as_deref() == Some(hash.as_str()),
+            })
+        })
+        .collect();
+    Ok(Json(Value::Array(out)))
+}
+
+/// v1 answers `{ok:true}` even when the id is unknown or belongs to someone
+/// else — deliberately, so session ids can't be probed.
+async fn session_revoke(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let _ = sqlx::query(
+        r#"UPDATE "RefreshToken" SET "revokedAt" = now()
+           WHERE "id" = $1 AND "userId" = $2 AND "revokedAt" IS NULL"#,
+    )
+    .bind(&id)
+    .bind(&user.id)
+    .execute(&state.pool)
+    .await;
+    Ok(Json(json!({ "ok": true })))
+}
+
+async fn sessions_revoke_all(
+    State(state): State<AppState>,
+    user: AuthUser,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let keep = cookie_from_header(&headers, REFRESH_COOKIE).map(|r| sha256_hex(&r));
+    let res = sqlx::query(
+        r#"UPDATE "RefreshToken" SET "revokedAt" = now()
+           WHERE "userId" = $1 AND "revokedAt" IS NULL AND ($2::text IS NULL OR "tokenHash" <> $2)"#,
+    )
+    .bind(&user.id)
+    .bind(keep.as_deref())
+    .execute(&state.pool)
+    .await?;
+    Ok(Json(json!({ "revoked": res.rows_affected() })))
+}
+
+#[derive(Deserialize)]
+struct TokenBody {
+    token: String,
+}
+
+/// Consume an email-verification token. No email is sent here, so this is
+/// fully native; issuing/resending still goes to v1 until the mailer lands.
+async fn verify_email(State(state): State<AppState>, Json(body): Json<TokenBody>) -> ApiResult<Json<Value>> {
+    if body.token.trim().is_empty() {
+        return Err(ApiError::bad("Missing token"));
+    }
+    let sha = sha256_hex(&body.token);
+    let row = sqlx::query(
+        r#"SELECT "id","userId","expiresAt","consumedAt" FROM "EmailVerification" WHERE "tokenSha" = $1"#,
+    )
+    .bind(&sha)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Invalid or expired verification link"))?;
+
+    if row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("consumedAt").ok().flatten().is_some() {
+        return Err(ApiError::bad("This link has already been used"));
+    }
+    let expires: chrono::DateTime<chrono::Utc> =
+        row.try_get("expiresAt").map_err(|e| ApiError::internal(e.to_string()))?;
+    if expires < chrono::Utc::now() {
+        return Err(ApiError::bad("This link has expired"));
+    }
+    let vid: String = row.try_get("id").map_err(|e| ApiError::internal(e.to_string()))?;
+    let uid: String = row.try_get("userId").map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let mut tx = state.pool.begin().await?;
+    sqlx::query(r#"UPDATE "EmailVerification" SET "consumedAt" = now() WHERE "id" = $1"#)
+        .bind(&vid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        r#"UPDATE "User" SET "emailVerifiedAt" = COALESCE("emailVerifiedAt", now()), "updatedAt" = now()
+           WHERE "id" = $1"#,
+    )
+    .bind(&uid)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+struct CompleteResetBody {
+    token: String,
+    #[serde(rename = "newPassword")]
+    new_password: String,
+}
+
+/// Consume a password-reset token and set the new password. v1 kills EVERY
+/// session on reset (no exception for the caller).
+async fn complete_password_reset(
+    State(state): State<AppState>,
+    Json(body): Json<CompleteResetBody>,
+) -> ApiResult<Json<Value>> {
+    if body.token.trim().is_empty() {
+        return Err(ApiError::bad("Missing token"));
+    }
+    if body.new_password.chars().count() < 8 {
+        return Err(ApiError::bad("Password must be at least 8 characters"));
+    }
+    let sha = sha256_hex(&body.token);
+    let row = sqlx::query(
+        r#"SELECT "id","userId","expiresAt","consumedAt" FROM "PasswordReset" WHERE "tokenSha" = $1"#,
+    )
+    .bind(&sha)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Invalid or expired reset link"))?;
+
+    if row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("consumedAt").ok().flatten().is_some() {
+        return Err(ApiError::bad("This link has already been used"));
+    }
+    let expires: chrono::DateTime<chrono::Utc> =
+        row.try_get("expiresAt").map_err(|e| ApiError::internal(e.to_string()))?;
+    if expires < chrono::Utc::now() {
+        return Err(ApiError::bad("This link has expired"));
+    }
+    let rid: String = row.try_get("id").map_err(|e| ApiError::internal(e.to_string()))?;
+    let uid: String = row.try_get("userId").map_err(|e| ApiError::internal(e.to_string()))?;
+    let new_hash = hash_argon2(&body.new_password)?;
+
+    let mut tx = state.pool.begin().await?;
+    sqlx::query(r#"UPDATE "PasswordReset" SET "consumedAt" = now() WHERE "id" = $1"#)
+        .bind(&rid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(r#"UPDATE "User" SET "passwordHash" = $1, "updatedAt" = now() WHERE "id" = $2"#)
+        .bind(&new_hash)
+        .bind(&uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(r#"UPDATE "RefreshToken" SET "revokedAt" = now() WHERE "userId" = $1 AND "revokedAt" IS NULL"#)
+        .bind(&uid)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(json!({ "ok": true })))
 }
 
 /// Replay a JSON request to v1 and return its response verbatim (used for the

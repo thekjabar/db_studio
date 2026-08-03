@@ -8,7 +8,20 @@ name = "queryschema-v2"
 path = "src/main.rs"
 
 [dependencies]
-axum = "0.7"
+# ws: the agent tunnel gateway. multipart: CSV import upload.
+axum = { version = "0.7", features = ["ws", "multipart"] }
+# BullMQ-compatible queue writes (schedule cron upserts) + live agent presence,
+# which v1 keeps in Redis. Without this those routes can never leave Node.
+redis = { version = "0.27", default-features = false, features = ["tokio-comp", "connection-manager"] }
+# v1 classifies SQL with an AST parse (node-sql-parser) to decide read-only vs
+# mutating, and transpiles between dialects. A keyword heuristic disagrees
+# exactly on the stacked-statement / CTE-hiding-a-write cases that gate exists
+# for, so a real parser is required.
+sqlparser = "0.52"
+# TOTP (2FA): HMAC-SHA1 over a base32 secret, plus the QR for enrolment.
+sha1 = "0.10"
+base32 = "0.5"
+qrcode = { version = "0.14", default-features = false }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "process"] }
 # Bridges pg_dump's stdout (AsyncRead) to an axum response body (Stream) so a
 # multi-GB backup streams instead of buffering.

@@ -8,7 +8,12 @@
 //! binary compiles without a database connection at build time.
 
 mod admin;
+mod ai;
 mod audit_log;
+mod billing;
+mod conns;
+mod misc;
+mod opsadmin;
 mod backup;
 mod collab;
 mod crypto;
@@ -215,10 +220,12 @@ async fn main() -> anyhow::Result<()> {
         // assertOwnedAgent, viaAgent/agentId persistence) â€” proxy them to v1 so
         // agent connections are validated + stored exactly as in v1. Reads +
         // delete stay in Rust.
-        .route("/api/connections", get(v1_connections_list).post(proxy))
+        // create/update now live in conns.rs (SSRF guard + agent ownership +
+        // quota + credential encryption ported), so they no longer proxy.
+        .route("/api/connections", get(v1_connections_list))
         .route(
             "/api/connections/:id",
-            get(v1_connection_get).patch(proxy).delete(v1_connection_delete),
+            get(v1_connection_get).delete(v1_connection_delete),
         )
         .route("/api/connections/:id/test", post(v1_connection_test))
         .route("/api/connections/:id/schemas", get(v1_schemas))
@@ -259,6 +266,11 @@ async fn main() -> anyhow::Result<()> {
         .merge(dbadmin::routes())
         .merge(datamove::routes())
         .merge(query_tools::routes())
+        .merge(conns::routes())
+        .merge(ai::routes())
+        .merge(billing::routes())
+        .merge(misc::routes())
+        .merge(opsadmin::routes())
         // --- Strangler proxy: every other endpoint â†’ v1 Node API ---
         .fallback(proxy)
         // Agent-backed connections bypass Rust entirely (tunnel lives in v1).
@@ -1418,6 +1430,8 @@ struct SignupBody {
     password: String,
     #[serde(rename = "displayName")]
     display_name: Option<String>,
+    #[serde(rename = "inviteCode")]
+    invite_code: Option<String>,
 }
 
 async fn signup(
@@ -1461,6 +1475,18 @@ async fn signup(
         };
         return Ok((StatusCode::CREATED, Json(json!({ "userId": fake, "needsVerification": true })))
             .into_response());
+    }
+
+    // Invite gate. v1 enforces this inside AuthService.signup; without it a
+    // v2-served signup would silently ignore REQUIRE_INVITE_CODE_ON_SIGNUP and
+    // let anyone register on an invite-only instance. Consumed AFTER the
+    // duplicate-email check so a repeated signup can't burn someone's code.
+    let require_invite = std::env::var("REQUIRE_INVITE_CODE_ON_SIGNUP")
+        .map(|v| v == "true" || v == "1")
+        .unwrap_or(false);
+    if require_invite {
+        let code = body.invite_code.as_deref().unwrap_or("");
+        misc::consume_invite_code(&state, code, &email).await?;
     }
 
     let needs_verify = state.require_email_verification;
@@ -3728,7 +3754,20 @@ async fn via_agent(pool: &PgPool, id: &str) -> bool {
 /// connection is `viaAgent`, short-circuit to the v1 proxy instead of routing
 /// to the Rust handler.
 async fn agent_guard(State(state): State<AppState>, req: Request, next: Next) -> Response {
-    let id = conn_id_from_path(req.uri().path()).map(|s| s.to_string());
+    // Managing the connection ROW is app-DB work — it never touches the target
+    // database, so it must not be shipped down the agent tunnel. Without this
+    // exemption a viaAgent connection could be created in Rust but never edited
+    // here (and agent routing could never be turned off), because the guard
+    // matched the bare /api/connections/:id path too.
+    let path = req.uri().path();
+    let is_bare_connection_route = conn_id_from_path(path)
+        .map(|id| path.trim_end_matches('/') == format!("/api/connections/{id}"))
+        .unwrap_or(false);
+    if is_bare_connection_route && matches!(req.method(), &axum::http::Method::PATCH) {
+        return next.run(req).await;
+    }
+
+    let id = conn_id_from_path(path).map(|s| s.to_string());
     if let Some(id) = id {
         if via_agent(&state.pool, &id).await {
             return proxy(State(state), req).await;

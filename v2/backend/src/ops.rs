@@ -54,11 +54,11 @@ use crate::{conn_role, gen_id, iso, ApiError, ApiResult, AppState, AuthUser};
 pub fn routes() -> Router<AppState> {
     Router::new()
         // ---- agents (AgentsController, global JwtAuthGuard) ----
-        .route("/api/agents", get(crate::proxy).post(agent_create))
+        .route("/api/agents", get(agents_list).post(agent_create))
         // Static sibling of `/:id` below — matchit prefers the literal segment,
         // so "authorize" is never captured as an agent id.
         .route("/api/agents/authorize", post(agent_authorize))
-        .route("/api/agents/:id", get(crate::proxy).delete(agent_delete))
+        .route("/api/agents/:id", get(agent_get).delete(agent_delete))
         .route("/api/agents/:id/pairing-token", post(agent_pairing_token))
         // ---- schedules (SchedulerController, @UseGuards(JwtAuthGuard)) ----
         .route("/api/schedules", get(schedules_list).post(crate::proxy))
@@ -198,6 +198,43 @@ async fn owned_agent(state: &AppState, id: &str, user_id: &str) -> ApiResult<()>
 }
 
 /// POST /api/agents — v1 `AgentsService.create`. 201 (Nest's POST default).
+/// v1 read `online` from its in-process registry, which is why these two routes
+/// used to proxy. The tunnel now lives here, so `tunnel::is_online` is the
+/// authoritative answer and they are served natively.
+async fn agents_list(State(state): State<AppState>, user: AuthUser) -> ApiResult<Json<Value>> {
+    let rows = sqlx::query(
+        r#"SELECT "id","name","lastSeenAt" FROM "Agent"
+           WHERE "ownerId" = $1 ORDER BY "createdAt" DESC, "id" DESC"#,
+    )
+    .bind(&user.id)
+    .fetch_all(&state.pool)
+    .await?;
+    let out: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let id: String = r.try_get("id").unwrap_or_default();
+            agent_view(r, crate::tunnel::is_online(&id))
+        })
+        .collect();
+    Ok(Json(Value::Array(out)))
+}
+
+async fn agent_get(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let row = sqlx::query(
+        r#"SELECT "id","name","lastSeenAt" FROM "Agent" WHERE "id" = $1 AND "ownerId" = $2"#,
+    )
+    .bind(&id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Not Found"))?;
+    Ok(Json(agent_view(&row, crate::tunnel::is_online(&id))))
+}
+
 async fn agent_create(
     State(state): State<AppState>,
     user: AuthUser,

@@ -190,6 +190,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/auth/resend-verification", post(resend_verification))
         .route("/api/auth/sessions", get(sessions_list).delete(sessions_revoke_all))
         .route("/api/auth/sessions/:id", delete(session_revoke))
+        .route("/api/api-keys", get(api_keys_list).post(api_key_create))
+        .route("/api/api-keys/:id", delete(api_key_delete))
+        .route("/api/api-keys/:id/revoke", post(api_key_revoke))
         .route("/api/users/me", get(v1_me).patch(v1_update_me))
         .route("/api/workspaces", get(v1_workspaces_list))
         // Create/update carry v1-only business logic (SSRF host guard,
@@ -846,6 +849,116 @@ async fn request_password_reset(State(state): State<AppState>, Json(body): Json<
         }
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+// ── API keys ────────────────────────────────────────────────────────────────
+// Token = "dbs_live_" + 32 random bytes base64url. Stored twice, exactly as v1:
+// sha256 hex for the O(1) unique-index lookup, plus argon2id as a safety net
+// against a hash collision. The raw token is returned ONCE, on create.
+
+const API_KEY_PREFIX: &str = "dbs_live_";
+const API_KEY_COLS: &str = r#""id","userId","name","tokenPrefix","connectionIds","expiresAt","revokedAt","lastUsedAt","createdAt""#;
+
+fn api_key_json(r: &sqlx::postgres::PgRow) -> Value {
+    json!({
+        "id": r.try_get::<String, _>("id").unwrap_or_default(),
+        "userId": r.try_get::<String, _>("userId").unwrap_or_default(),
+        "name": r.try_get::<String, _>("name").unwrap_or_default(),
+        "tokenPrefix": r.try_get::<String, _>("tokenPrefix").unwrap_or_default(),
+        "connectionIds": r.try_get::<Vec<String>, _>("connectionIds").unwrap_or_default(),
+        "expiresAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("expiresAt").ok().flatten(),
+        "revokedAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("revokedAt").ok().flatten(),
+        "lastUsedAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("lastUsedAt").ok().flatten(),
+        "createdAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("createdAt").ok().flatten(),
+    })
+}
+
+async fn api_keys_list(State(state): State<AppState>, user: AuthUser) -> ApiResult<Json<Value>> {
+    let rows = sqlx::query(&format!(
+        r#"SELECT {API_KEY_COLS} FROM "ApiKey" WHERE "userId" = $1 ORDER BY "createdAt" DESC"#
+    ))
+    .bind(&user.id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(Value::Array(rows.iter().map(api_key_json).collect())))
+}
+
+#[derive(Deserialize)]
+struct CreateApiKey {
+    name: String,
+    #[serde(rename = "connectionIds", default)]
+    connection_ids: Vec<String>,
+    #[serde(rename = "expiresAt", default)]
+    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+async fn api_key_create(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(body): Json<CreateApiKey>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let name = body.name.trim();
+    if name.is_empty() || name.chars().count() > 80 {
+        return Err(ApiError::bad("name must be 1-80 chars"));
+    }
+    let raw = {
+        use rand::RngCore;
+        let mut b = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut b);
+        format!("{API_KEY_PREFIX}{}", B64.encode(b))
+    };
+    let token_prefix = format!("{}…", &raw[..API_KEY_PREFIX.len() + 6]);
+    let row = sqlx::query(&format!(
+        r#"INSERT INTO "ApiKey" ("id","userId","name","tokenSha","tokenHash","tokenPrefix","connectionIds","expiresAt","createdAt")
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now()) RETURNING {API_KEY_COLS}"#
+    ))
+    .bind(gen_id())
+    .bind(&user.id)
+    .bind(name)
+    .bind(sha256_hex(&raw))
+    .bind(hash_argon2(&raw)?)
+    .bind(&token_prefix)
+    .bind(&body.connection_ids)
+    .bind(body.expires_at)
+    .fetch_one(&state.pool)
+    .await?;
+    let mut out = api_key_json(&row);
+    // Only time the caller ever sees the full token.
+    out["token"] = json!(raw);
+    Ok((StatusCode::CREATED, Json(out)))
+}
+
+async fn api_key_revoke(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let row = sqlx::query(&format!(
+        r#"UPDATE "ApiKey" SET "revokedAt" = COALESCE("revokedAt", now())
+           WHERE "id" = $1 AND "userId" = $2 RETURNING {API_KEY_COLS}"#
+    ))
+    .bind(&id)
+    .bind(&user.id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Not Found"))?;
+    Ok(Json(api_key_json(&row)))
+}
+
+async fn api_key_delete(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let r = sqlx::query(r#"DELETE FROM "ApiKey" WHERE "id" = $1 AND "userId" = $2"#)
+        .bind(&id)
+        .bind(&user.id)
+        .execute(&state.pool)
+        .await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::new(StatusCode::NOT_FOUND, "Not Found"));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn slugify(s: &str) -> String {

@@ -190,6 +190,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/auth/resend-verification", post(resend_verification))
         .route("/api/auth/sessions", get(sessions_list).delete(sessions_revoke_all))
         .route("/api/auth/sessions/:id", delete(session_revoke))
+        .route("/api/connections/:id/row-filters", get(row_filters_list).post(row_filter_create))
+        .route("/api/connections/:id/row-filters/:filterId", delete(row_filter_delete))
+        .route("/api/connections/:id/column-masks", get(column_masks_list).post(column_mask_create))
+        .route("/api/connections/:id/column-masks/:maskId", delete(column_mask_delete))
         .route("/api/api-keys", get(api_keys_list).post(api_key_create))
         .route("/api/api-keys/:id", delete(api_key_delete))
         .route("/api/api-keys/:id/revoke", post(api_key_revoke))
@@ -849,6 +853,329 @@ async fn request_password_reset(State(state): State<AppState>, Json(body): Json<
         }
     }
     Ok(Json(json!({ "ok": true })))
+}
+
+// ── row filters + column masks ──────────────────────────────────────────────
+//
+// A row filter is a SQL predicate stored verbatim and appended to queries, so
+// its validator is a SECURITY control, not a nicety. This is a faithful port of
+// v1's tokenizer: whitelist identifiers/numbers/strings/comparison ops/a small
+// keyword set/the single `:userId` placeholder, and reject everything else.
+
+fn ident_ok(s: &str) -> bool {
+    let mut cs = s.chars();
+    match cs.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    s.len() <= 64 && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn validate_predicate(raw: &str) -> Result<(), String> {
+    if raw.is_empty() || raw.len() > 1000 {
+        return Err("Predicate must be 1..1000 chars".into());
+    }
+    if raw.contains(';') || raw.contains("--") || raw.contains("/*") || raw.contains("*/") {
+        return Err("Disallowed character or comment".into());
+    }
+    const OPS2: [&str; 4] = ["<>", "!=", "<=", ">="];
+    const OPS1: [char; 4] = ['=', '<', '>', '!'];
+    const KEYWORDS: [&str; 8] = ["AND", "OR", "NOT", "IS", "NULL", "TRUE", "FALSE", "IN"];
+
+    let b: Vec<char> = raw.chars().collect();
+    let n = b.len();
+    let mut i = 0usize;
+    while i < n {
+        while i < n && b[i].is_whitespace() {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+        let ch = b[i];
+        if ch == '(' || ch == ')' || ch == ',' {
+            i += 1;
+            continue;
+        }
+        if ch == ':' {
+            let rest: String = b[i..n.min(i + 7)].iter().collect();
+            if rest == ":userId" {
+                i += 7;
+                continue;
+            }
+            return Err(format!("Unknown placeholder at position {i}"));
+        }
+        if i + 1 < n {
+            let two: String = b[i..i + 2].iter().collect();
+            if OPS2.contains(&two.as_str()) {
+                i += 2;
+                continue;
+            }
+        }
+        if OPS1.contains(&ch) && ch != '!' {
+            i += 1;
+            continue;
+        }
+        if ch == '\'' {
+            i += 1;
+            while i < n {
+                if b[i] == '\'' {
+                    if i + 1 < n && b[i + 1] == '\'' {
+                        i += 2;
+                        continue;
+                    }
+                    i += 1;
+                    break;
+                }
+                i += 1;
+            }
+            continue;
+        }
+        if ch.is_ascii_digit() {
+            while i < n && (b[i].is_ascii_digit() || b[i] == '.') {
+                i += 1;
+            }
+            continue;
+        }
+        if ch.is_ascii_alphabetic() || ch == '_' {
+            let start = i;
+            while i < n && (b[i].is_ascii_alphanumeric() || b[i] == '_' || b[i] == '.') {
+                i += 1;
+            }
+            let tok: String = b[start..i].iter().collect();
+            if KEYWORDS.contains(&tok.to_uppercase().as_str()) {
+                continue;
+            }
+            if tok.split('.').all(ident_ok) {
+                continue;
+            }
+            return Err(format!("Invalid identifier \"{tok}\""));
+        }
+        return Err(format!("Unexpected character \"{ch}\" at position {i}"));
+    }
+    Ok(())
+}
+
+/// Only the connection owner may manage filters/masks (v1 @RequireRole('OWNER')
+/// on these routes resolves to the owner for this resource).
+async fn require_conn_owner(state: &AppState, conn_id: &str, user_id: &str) -> Result<(), ApiError> {
+    let owner: Option<String> = sqlx::query_scalar(r#"SELECT "ownerId" FROM "Connection" WHERE "id" = $1"#)
+        .bind(conn_id)
+        .fetch_optional(&state.pool)
+        .await?
+        .flatten();
+    match owner {
+        None => Err(ApiError::new(StatusCode::NOT_FOUND, "Connection not found")),
+        Some(o) if o == user_id => Ok(()),
+        Some(_) => Err(ApiError::new(StatusCode::FORBIDDEN, "No access to this connection")),
+    }
+}
+
+async fn row_filters_list(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    require_conn_owner(&state, &id, &user.id).await?;
+    let rows = sqlx::query(
+        r#"SELECT f."id", f."userId", f."schemaName", f."tableName", f."predicate", f."createdAt", u."email"
+           FROM "RowFilter" f JOIN "User" u ON u."id" = f."userId"
+           WHERE f."connectionId" = $1 ORDER BY f."createdAt" DESC"#,
+    )
+    .bind(&id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(Value::Array(
+        rows.iter()
+            .map(|r| {
+                json!({
+                    "id": r.try_get::<String, _>("id").unwrap_or_default(),
+                    "userId": r.try_get::<String, _>("userId").unwrap_or_default(),
+                    "email": r.try_get::<String, _>("email").unwrap_or_default(),
+                    "schemaName": r.try_get::<String, _>("schemaName").unwrap_or_default(),
+                    "tableName": r.try_get::<String, _>("tableName").unwrap_or_default(),
+                    "predicate": r.try_get::<String, _>("predicate").unwrap_or_default(),
+                    "createdAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("createdAt").ok().flatten(),
+                })
+            })
+            .collect(),
+    )))
+}
+
+#[derive(Deserialize)]
+struct CreateRowFilter {
+    email: String,
+    #[serde(rename = "schemaName")]
+    schema_name: String,
+    #[serde(rename = "tableName")]
+    table_name: String,
+    predicate: String,
+}
+
+async fn row_filter_create(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+    Json(body): Json<CreateRowFilter>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    require_conn_owner(&state, &id, &user.id).await?;
+    if !ident_ok(&body.schema_name) || !ident_ok(&body.table_name) {
+        return Err(ApiError::bad("Invalid schema/table identifier"));
+    }
+    validate_predicate(&body.predicate).map_err(ApiError::bad)?;
+    let target: Option<String> = sqlx::query_scalar(r#"SELECT "id" FROM "User" WHERE "email" = $1"#)
+        .bind(body.email.trim().to_lowercase())
+        .fetch_optional(&state.pool)
+        .await?
+        .flatten();
+    let target = target.ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "User not found"))?;
+    let row = sqlx::query(
+        r#"INSERT INTO "RowFilter" ("id","connectionId","userId","schemaName","tableName","predicate","createdAt")
+           VALUES ($1,$2,$3,$4,$5,$6,now())
+           ON CONFLICT ("connectionId","userId","schemaName","tableName")
+           DO UPDATE SET "predicate" = EXCLUDED."predicate"
+           RETURNING "id","userId","schemaName","tableName","predicate","createdAt""#,
+    )
+    .bind(gen_id())
+    .bind(&id)
+    .bind(&target)
+    .bind(&body.schema_name)
+    .bind(&body.table_name)
+    .bind(&body.predicate)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": row.try_get::<String, _>("id").unwrap_or_default(),
+            "userId": row.try_get::<String, _>("userId").unwrap_or_default(),
+            "schemaName": row.try_get::<String, _>("schemaName").unwrap_or_default(),
+            "tableName": row.try_get::<String, _>("tableName").unwrap_or_default(),
+            "predicate": row.try_get::<String, _>("predicate").unwrap_or_default(),
+            "createdAt": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("createdAt").ok().flatten(),
+        })),
+    ))
+}
+
+async fn row_filter_delete(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((id, filter_id)): Path<(String, String)>,
+) -> ApiResult<StatusCode> {
+    require_conn_owner(&state, &id, &user.id).await?;
+    let r = sqlx::query(r#"DELETE FROM "RowFilter" WHERE "id" = $1 AND "connectionId" = $2"#)
+        .bind(&filter_id)
+        .bind(&id)
+        .execute(&state.pool)
+        .await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::new(StatusCode::NOT_FOUND, "Not Found"));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn column_masks_list(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    require_conn_owner(&state, &id, &user.id).await?;
+    let rows = sqlx::query(
+        r#"SELECT m."id", m."userId", m."schemaName", m."tableName", m."columnName", m."createdAt", u."email"
+           FROM "ColumnMask" m JOIN "User" u ON u."id" = m."userId"
+           WHERE m."connectionId" = $1 ORDER BY m."createdAt" DESC"#,
+    )
+    .bind(&id)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Json(Value::Array(
+        rows.iter()
+            .map(|r| {
+                json!({
+                    "id": r.try_get::<String, _>("id").unwrap_or_default(),
+                    "userId": r.try_get::<String, _>("userId").unwrap_or_default(),
+                    "email": r.try_get::<String, _>("email").unwrap_or_default(),
+                    "schemaName": r.try_get::<String, _>("schemaName").unwrap_or_default(),
+                    "tableName": r.try_get::<String, _>("tableName").unwrap_or_default(),
+                    "columnName": r.try_get::<String, _>("columnName").unwrap_or_default(),
+                    "createdAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("createdAt").ok().flatten(),
+                })
+            })
+            .collect(),
+    )))
+}
+
+#[derive(Deserialize)]
+struct CreateColumnMask {
+    email: String,
+    #[serde(rename = "schemaName")]
+    schema_name: String,
+    #[serde(rename = "tableName")]
+    table_name: String,
+    #[serde(rename = "columnName")]
+    column_name: String,
+}
+
+async fn column_mask_create(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+    Json(body): Json<CreateColumnMask>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    require_conn_owner(&state, &id, &user.id).await?;
+    if !ident_ok(&body.schema_name) || !ident_ok(&body.table_name) || !ident_ok(&body.column_name) {
+        return Err(ApiError::bad("Invalid schema/table/column identifier"));
+    }
+    let target: Option<String> = sqlx::query_scalar(r#"SELECT "id" FROM "User" WHERE "email" = $1"#)
+        .bind(body.email.trim().to_lowercase())
+        .fetch_optional(&state.pool)
+        .await?
+        .flatten();
+    let target = target.ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "User not found"))?;
+    let row = sqlx::query(
+        r#"INSERT INTO "ColumnMask" ("id","connectionId","userId","schemaName","tableName","columnName","createdAt")
+           VALUES ($1,$2,$3,$4,$5,$6,now())
+           ON CONFLICT ("connectionId","userId","schemaName","tableName","columnName") DO NOTHING
+           RETURNING "id","userId","schemaName","tableName","columnName","createdAt""#,
+    )
+    .bind(gen_id())
+    .bind(&id)
+    .bind(&target)
+    .bind(&body.schema_name)
+    .bind(&body.table_name)
+    .bind(&body.column_name)
+    .fetch_optional(&state.pool)
+    .await?;
+    let out = match row {
+        Some(r) => json!({
+            "id": r.try_get::<String, _>("id").unwrap_or_default(),
+            "userId": r.try_get::<String, _>("userId").unwrap_or_default(),
+            "schemaName": r.try_get::<String, _>("schemaName").unwrap_or_default(),
+            "tableName": r.try_get::<String, _>("tableName").unwrap_or_default(),
+            "columnName": r.try_get::<String, _>("columnName").unwrap_or_default(),
+            "createdAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("createdAt").ok().flatten(),
+        }),
+        // Already masked — idempotent, mirror v1's "nothing changed" answer.
+        None => json!({ "ok": true }),
+    };
+    Ok((StatusCode::CREATED, Json(out)))
+}
+
+async fn column_mask_delete(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path((id, mask_id)): Path<(String, String)>,
+) -> ApiResult<StatusCode> {
+    require_conn_owner(&state, &id, &user.id).await?;
+    let r = sqlx::query(r#"DELETE FROM "ColumnMask" WHERE "id" = $1 AND "connectionId" = $2"#)
+        .bind(&mask_id)
+        .bind(&id)
+        .execute(&state.pool)
+        .await?;
+    if r.rows_affected() == 0 {
+        return Err(ApiError::new(StatusCode::NOT_FOUND, "Not Found"));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ── API keys ────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-//! Query Schema v2 — Rust/axum reimplementation of the v1 hot path.
+﻿//! Query Schema v2 â€” Rust/axum reimplementation of the v1 hot path.
 //!
 //! Shares the same Postgres as v1 (`DATABASE_URL`), verifies the same argon2id
 //! password hashes, and returns a server-measured `tookMs` on the data endpoints
@@ -8,6 +8,7 @@
 //! binary compiles without a database connection at build time.
 
 mod crypto;
+mod docs;
 
 use std::time::Instant;
 
@@ -44,7 +45,7 @@ struct AppState {
     jwt_ttl: i64,
     /// Hard cap on rows returned by row/query endpoints.
     max_rows: i64,
-    /// Present when ENCRYPTION_KEY is set — enables decrypting v1 connection
+    /// Present when ENCRYPTION_KEY is set â€” enables decrypting v1 connection
     /// credentials to reach target databases. None = app-DB-only mode.
     crypto: Option<crypto::Crypto>,
     /// HTTP client + origin for the strangler proxy to the v1 Node API.
@@ -57,7 +58,7 @@ struct AppState {
     cookie_secure: bool,
     /// Block unverified users at login (matches v1 requireEmailVerification).
     require_email_verification: bool,
-    /// Per-email failed-login lockout (in-memory; v2 is single-pod — matches
+    /// Per-email failed-login lockout (in-memory; v2 is single-pod â€” matches
     /// v1's documented Map fallback when Redis is absent).
     cooldown: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, CooldownEntry>>>,
     /// Mail via the Resend HTTP API (prod sets RESEND_API_KEY/RESEND_FROM).
@@ -130,7 +131,7 @@ async fn main() -> anyhow::Result<()> {
 
     let crypto = crypto::Crypto::from_env().ok();
     if crypto.is_some() {
-        tracing::info!("ENCRYPTION_KEY loaded — target-database connections enabled");
+        tracing::info!("ENCRYPTION_KEY loaded â€” target-database connections enabled");
     }
     let v1_origin = std::env::var("V1_ORIGIN").unwrap_or_else(|_| "http://dbdash-api:3000".into());
     let http = reqwest::Client::builder()
@@ -139,7 +140,7 @@ async fn main() -> anyhow::Result<()> {
     let refresh_ttl_secs = parse_ttl_secs(&std::env::var("JWT_REFRESH_TTL").unwrap_or_else(|_| "7d".into()));
     let cookie_domain = std::env::var("COOKIE_DOMAIN").unwrap_or_else(|_| ".queryschema.com".into());
     let cookie_secure = std::env::var("COOKIE_SECURE").map(|v| v != "false").unwrap_or(true);
-    // Default true — queryschema prod has email enabled, so v1 requires
+    // Default true â€” queryschema prod has email enabled, so v1 requires
     // verification. Only an explicit "false" opens login to unverified users.
     let require_email_verification = std::env::var("REQUIRE_EMAIL_VERIFICATION")
         .map(|v| v != "false" && v != "0")
@@ -161,9 +162,9 @@ async fn main() -> anyhow::Result<()> {
         })
         .unwrap_or_else(|| "https://queryschema.com".into());
     if resend_key.is_some() && mail_from.is_some() {
-        tracing::info!("mail enabled (Resend) — verification + reset emails sent natively");
+        tracing::info!("mail enabled (Resend) â€” verification + reset emails sent natively");
     } else {
-        tracing::warn!("mail NOT configured — verification/reset links will only be logged");
+        tracing::warn!("mail NOT configured â€” verification/reset links will only be logged");
     }
     let state = AppState {
         pool, jwt_secret, jwt_ttl, max_rows, crypto, http, v1_origin,
@@ -200,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/users/me", get(v1_me).patch(v1_update_me))
         .route("/api/workspaces", get(v1_workspaces_list))
         // Create/update carry v1-only business logic (SSRF host guard,
-        // assertOwnedAgent, viaAgent/agentId persistence) — proxy them to v1 so
+        // assertOwnedAgent, viaAgent/agentId persistence) â€” proxy them to v1 so
         // agent connections are validated + stored exactly as in v1. Reads +
         // delete stay in Rust.
         .route("/api/connections", get(v1_connections_list).post(proxy))
@@ -233,7 +234,7 @@ async fn main() -> anyhow::Result<()> {
             "/api/connections/:id/saved-queries/:queryId",
             get(sq_get).patch(sq_update).delete(sq_delete),
         )
-        // --- Strangler proxy: every other endpoint → v1 Node API ---
+        // --- Strangler proxy: every other endpoint â†’ v1 Node API ---
         .fallback(proxy)
         // Agent-backed connections bypass Rust entirely (tunnel lives in v1).
         .layer(middleware::from_fn_with_state(state.clone(), agent_guard))
@@ -294,7 +295,7 @@ impl IntoResponse for ApiError {
 }
 impl From<sqlx::Error> for ApiError {
     fn from(e: sqlx::Error) -> Self {
-        // Surface the DB message — this is a query tool, the SQL error IS the useful output.
+        // Surface the DB message â€” this is a query tool, the SQL error IS the useful output.
         ApiError::new(StatusCode::BAD_REQUEST, e.to_string())
     }
 }
@@ -385,14 +386,14 @@ impl FromRequestParts<AppState> for AuthUser {
     }
 }
 
-// ── auth (ported from v1; MUST stay wire-compatible) ─────────────────────────
+// â”€â”€ auth (ported from v1; MUST stay wire-compatible) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
-// Compatibility contract with the v1 Node API — breaking any of these logs every
+// Compatibility contract with the v1 Node API â€” breaking any of these logs every
 // live user out, so they are exact by design:
 //   * access token: HS256, claims {sub, email, iat, exp}, signed with the same
 //     JWT_ACCESS_SECRET, so tokens issued here verify in v1 and vice-versa.
 //   * refresh token: an OPAQUE 48-byte base64url string (not a JWT), stored as
-//     an unsalted lowercase-hex sha256 in "RefreshToken"."tokenHash" — the exact
+//     an unsalted lowercase-hex sha256 in "RefreshToken"."tokenHash" â€” the exact
 //     digest v1 writes, so existing rows keep working.
 //   * cookie: dbdash_rt, Path=/api/auth, SameSite=Strict, HttpOnly, explicit
 //     Domain and absolute Expires (v1 uses Expires, not Max-Age).
@@ -419,7 +420,7 @@ fn cookie_from_header(parts: &axum::http::HeaderMap, name: &str) -> Option<Strin
     })
 }
 
-fn refresh_cookie(state: &AppState, token: &str, expires: chrono::DateTime<chrono::Utc>) -> String {
+fn refresh_cookie(state: &AppState, token: &str, expires: chrono::NaiveDateTime) -> String {
     // Mirrors v1's setRefreshCookie exactly, including Path=/api/auth (so the
     // cookie is NOT sent to ordinary API calls) and Expires rather than Max-Age.
     let mut c = format!(
@@ -448,7 +449,7 @@ fn clear_refresh_cookie(state: &AppState) -> String {
     c
 }
 
-/// Best-effort audit row — never fails the request (v1 also swallows these).
+/// Best-effort audit row â€” never fails the request (v1 also swallows these).
 async fn audit(state: &AppState, user_id: Option<&str>, action: &str, meta: &ReqMeta, extra: Option<Value>) {
     let _ = sqlx::query(
         r#"INSERT INTO "AuditLog" ("id","userId","action","ip","userAgent","metadata","createdAt")
@@ -526,7 +527,7 @@ async fn issue_tokens(
     user_id: &str,
     email: &str,
     meta: &ReqMeta,
-) -> Result<(String, String, chrono::DateTime<chrono::Utc>), ApiError> {
+) -> Result<(String, String, chrono::NaiveDateTime), ApiError> {
     let now = chrono::Utc::now();
     let claims = Claims {
         sub: user_id.to_string(),
@@ -536,14 +537,17 @@ async fn issue_tokens(
     };
     let access = jwt_encode(&claims, &state.jwt_secret).map_err(|e| ApiError::internal(e.to_string()))?;
 
-    // 48 random bytes, base64url — byte-for-byte the shape v1 issues.
+    // 48 random bytes, base64url â€” byte-for-byte the shape v1 issues.
     let raw: String = {
         use rand::RngCore;
         let mut b = [0u8; 48];
         rand::thread_rng().fill_bytes(&mut b);
         B64.encode(b)
     };
-    let expires_at = now + chrono::Duration::seconds(state.refresh_ttl_secs);
+    // Prisma's DateTime columns are `timestamp WITHOUT time zone`, which sqlx
+    // only binds/decodes as NaiveDateTime — passing a DateTime<Utc> here is a
+    // type mismatch that fails the INSERT (i.e. breaks login).
+    let expires_at = (now + chrono::Duration::seconds(state.refresh_ttl_secs)).naive_utc();
     sqlx::query(
         r#"INSERT INTO "RefreshToken" ("id","userId","tokenHash","expiresAt","userAgent","ip","createdAt")
            VALUES ($1,$2,$3,$4,$5,$6,now())"#,
@@ -617,14 +621,19 @@ async fn login(
         return Err(ApiError::unauthorized("Invalid credentials"));
     }
 
-    // 2FA is not ported yet — hand the whole login to v1 so TOTP users are
+    // 2FA is not ported yet â€” hand the whole login to v1 so TOTP users are
     // unaffected. Remove once /auth/2fa/* lands in Rust.
     let totp_enabled: bool = row.try_get("totpEnabled").unwrap_or(false);
     if totp_enabled {
         return forward_to_v1_json(&state, "/api/auth/login", &body, &headers).await;
     }
 
-    let suspended: Option<chrono::DateTime<chrono::Utc>> = row.try_get("suspendedAt").ok().flatten();
+    // NOTE: no `.ok().flatten()` on the two gate columns below. That pattern
+    // turns a DECODE error into `None`, which here would silently mean "not
+    // suspended" / "not verified" — i.e. a type mistake would quietly disable a
+    // security check instead of failing loudly. Propagate the error instead.
+    let suspended: Option<chrono::NaiveDateTime> =
+        row.try_get("suspendedAt").map_err(|e| ApiError::internal(e.to_string()))?;
     if suspended.is_some() {
         let reason: Option<String> = row.try_get("suspendedReason").ok().flatten();
         audit(&state, Some(&id), "LOGIN_SUSPENDED", &meta, None).await;
@@ -656,7 +665,8 @@ async fn login(
     }
 
     if state.require_email_verification {
-        let verified: Option<chrono::DateTime<chrono::Utc>> = row.try_get("emailVerifiedAt").ok().flatten();
+        let verified: Option<chrono::NaiveDateTime> =
+            row.try_get("emailVerifiedAt").map_err(|e| ApiError::internal(e.to_string()))?;
         if verified.is_none() {
             return Err(ApiError::new(StatusCode::FORBIDDEN, "Verify your email address to sign in."));
         }
@@ -674,7 +684,7 @@ async fn login(
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()))
 }
 
-// ── mail (Resend HTTP API — prod has RESEND_API_KEY set, no SMTP) ────────────
+// â”€â”€ mail (Resend HTTP API â€” prod has RESEND_API_KEY set, no SMTP) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
@@ -702,7 +712,7 @@ fn render_email(title: &str, intro: &str, btn_label: &str, btn_url: &str, note: 
 }
 
 /// Fire-and-forget send through Resend. Returns false when mail isn't
-/// configured or the API rejects it — callers must stay silent either way so
+/// configured or the API rejects it â€” callers must stay silent either way so
 /// the response never reveals whether an address exists.
 async fn send_mail(state: &AppState, to: &str, subject: &str, text: &str, html: &str) -> bool {
     let (Some(key), Some(from)) = (state.resend_key.as_ref(), state.mail_from.as_ref()) else {
@@ -735,7 +745,7 @@ async fn send_mail(state: &AppState, to: &str, subject: &str, text: &str, html: 
     }
 }
 
-/// 32 random bytes, base64url — the token shape v1 mails out. Stored as sha256.
+/// 32 random bytes, base64url â€” the token shape v1 mails out. Stored as sha256.
 fn gen_email_token() -> String {
     use rand::RngCore;
     let mut b = [0u8; 32];
@@ -790,7 +800,7 @@ struct EmailBody {
     email: String,
 }
 
-/// Always answers `{ok:true}` — never reveals whether the address exists.
+/// Always answers `{ok:true}` â€” never reveals whether the address exists.
 async fn resend_verification(State(state): State<AppState>, Json(body): Json<EmailBody>) -> ApiResult<Json<Value>> {
     let email = body.email.trim().to_lowercase();
     if let Some(row) = sqlx::query(r#"SELECT "id","emailVerifiedAt" FROM "User" WHERE "email" = $1"#)
@@ -798,7 +808,7 @@ async fn resend_verification(State(state): State<AppState>, Json(body): Json<Ema
         .fetch_optional(&state.pool)
         .await?
     {
-        let verified: Option<chrono::DateTime<chrono::Utc>> =
+        let verified: Option<chrono::NaiveDateTime> =
             row.try_get("emailVerifiedAt").ok().flatten();
         if verified.is_none() {
             if let Ok(id) = row.try_get::<String, _>("id") {
@@ -855,7 +865,7 @@ async fn request_password_reset(State(state): State<AppState>, Json(body): Json<
     Ok(Json(json!({ "ok": true })))
 }
 
-// ── row filters + column masks ──────────────────────────────────────────────
+// â”€â”€ row filters + column masks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // A row filter is a SQL predicate stored verbatim and appended to queries, so
 // its validator is a SECURITY control, not a nicety. This is a faithful port of
@@ -995,7 +1005,7 @@ async fn row_filters_list(
                     "schemaName": r.try_get::<String, _>("schemaName").unwrap_or_default(),
                     "tableName": r.try_get::<String, _>("tableName").unwrap_or_default(),
                     "predicate": r.try_get::<String, _>("predicate").unwrap_or_default(),
-                    "createdAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("createdAt").ok().flatten(),
+                    "createdAt": r.try_get::<Option<chrono::NaiveDateTime>, _>("createdAt").ok().flatten(),
                 })
             })
             .collect(),
@@ -1052,7 +1062,7 @@ async fn row_filter_create(
             "schemaName": row.try_get::<String, _>("schemaName").unwrap_or_default(),
             "tableName": row.try_get::<String, _>("tableName").unwrap_or_default(),
             "predicate": row.try_get::<String, _>("predicate").unwrap_or_default(),
-            "createdAt": row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("createdAt").ok().flatten(),
+            "createdAt": row.try_get::<Option<chrono::NaiveDateTime>, _>("createdAt").ok().flatten(),
         })),
     ))
 }
@@ -1098,7 +1108,7 @@ async fn column_masks_list(
                     "schemaName": r.try_get::<String, _>("schemaName").unwrap_or_default(),
                     "tableName": r.try_get::<String, _>("tableName").unwrap_or_default(),
                     "columnName": r.try_get::<String, _>("columnName").unwrap_or_default(),
-                    "createdAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("createdAt").ok().flatten(),
+                    "createdAt": r.try_get::<Option<chrono::NaiveDateTime>, _>("createdAt").ok().flatten(),
                 })
             })
             .collect(),
@@ -1153,9 +1163,9 @@ async fn column_mask_create(
             "schemaName": r.try_get::<String, _>("schemaName").unwrap_or_default(),
             "tableName": r.try_get::<String, _>("tableName").unwrap_or_default(),
             "columnName": r.try_get::<String, _>("columnName").unwrap_or_default(),
-            "createdAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("createdAt").ok().flatten(),
+            "createdAt": r.try_get::<Option<chrono::NaiveDateTime>, _>("createdAt").ok().flatten(),
         }),
-        // Already masked — idempotent, mirror v1's "nothing changed" answer.
+        // Already masked â€” idempotent, mirror v1's "nothing changed" answer.
         None => json!({ "ok": true }),
     };
     Ok((StatusCode::CREATED, Json(out)))
@@ -1178,7 +1188,7 @@ async fn column_mask_delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ── API keys ────────────────────────────────────────────────────────────────
+// â”€â”€ API keys â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Token = "dbs_live_" + 32 random bytes base64url. Stored twice, exactly as v1:
 // sha256 hex for the O(1) unique-index lookup, plus argon2id as a safety net
 // against a hash collision. The raw token is returned ONCE, on create.
@@ -1193,10 +1203,10 @@ fn api_key_json(r: &sqlx::postgres::PgRow) -> Value {
         "name": r.try_get::<String, _>("name").unwrap_or_default(),
         "tokenPrefix": r.try_get::<String, _>("tokenPrefix").unwrap_or_default(),
         "connectionIds": r.try_get::<Vec<String>, _>("connectionIds").unwrap_or_default(),
-        "expiresAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("expiresAt").ok().flatten(),
-        "revokedAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("revokedAt").ok().flatten(),
-        "lastUsedAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("lastUsedAt").ok().flatten(),
-        "createdAt": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("createdAt").ok().flatten(),
+        "expiresAt": r.try_get::<Option<chrono::NaiveDateTime>, _>("expiresAt").ok().flatten(),
+        "revokedAt": r.try_get::<Option<chrono::NaiveDateTime>, _>("revokedAt").ok().flatten(),
+        "lastUsedAt": r.try_get::<Option<chrono::NaiveDateTime>, _>("lastUsedAt").ok().flatten(),
+        "createdAt": r.try_get::<Option<chrono::NaiveDateTime>, _>("createdAt").ok().flatten(),
     })
 }
 
@@ -1216,7 +1226,7 @@ struct CreateApiKey {
     #[serde(rename = "connectionIds", default)]
     connection_ids: Vec<String>,
     #[serde(rename = "expiresAt", default)]
-    expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    expires_at: Option<chrono::NaiveDateTime>,
 }
 
 async fn api_key_create(
@@ -1234,7 +1244,7 @@ async fn api_key_create(
         rand::thread_rng().fill_bytes(&mut b);
         format!("{API_KEY_PREFIX}{}", B64.encode(b))
     };
-    let token_prefix = format!("{}…", &raw[..API_KEY_PREFIX.len() + 6]);
+    let token_prefix = format!("{}â€¦", &raw[..API_KEY_PREFIX.len() + 6]);
     let row = sqlx::query(&format!(
         r#"INSERT INTO "ApiKey" ("id","userId","name","tokenSha","tokenHash","tokenPrefix","connectionIds","expiresAt","createdAt")
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now()) RETURNING {API_KEY_COLS}"#
@@ -1323,7 +1333,7 @@ async fn ensure_personal_workspace(state: &AppState, user_id: &str, email: &str,
                 "{}-personal",
                 display.filter(|d| !d.is_empty()).unwrap_or_else(|| email.split('@').next().unwrap_or("user"))
             ));
-            // First free slug, mirroring v1's base, base-2, base-3… walk.
+            // First free slug, mirroring v1's base, base-2, base-3â€¦ walk.
             let mut slug = base.clone();
             for i in 2..20 {
                 let taken: Option<String> =
@@ -1410,7 +1420,7 @@ async fn signup(
     }
     let meta = req_meta(&headers);
 
-    // Existing address is NOT an error in v1 — it returns a throwaway id and a
+    // Existing address is NOT an error in v1 â€” it returns a throwaway id and a
     // needsVerification flag so signup can't be used to enumerate accounts.
     let taken: Option<String> = sqlx::query_scalar(r#"SELECT "id" FROM "User" WHERE "email" = $1"#)
         .bind(&email)
@@ -1560,8 +1570,8 @@ async fn sessions_list(
                 "id": r.try_get::<String, _>("id").unwrap_or_default(),
                 "userAgent": r.try_get::<Option<String>, _>("userAgent").ok().flatten(),
                 "ip": r.try_get::<Option<String>, _>("ip").ok().flatten(),
-                "createdAt": r.try_get::<chrono::DateTime<chrono::Utc>, _>("createdAt").ok(),
-                "expiresAt": r.try_get::<chrono::DateTime<chrono::Utc>, _>("expiresAt").ok(),
+                "createdAt": r.try_get::<chrono::NaiveDateTime, _>("createdAt").ok(),
+                "expiresAt": r.try_get::<chrono::NaiveDateTime, _>("expiresAt").ok(),
                 "current": current.as_deref() == Some(hash.as_str()),
             })
         })
@@ -1570,7 +1580,7 @@ async fn sessions_list(
 }
 
 /// v1 answers `{ok:true}` even when the id is unknown or belongs to someone
-/// else — deliberately, so session ids can't be probed.
+/// else â€” deliberately, so session ids can't be probed.
 async fn session_revoke(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1624,12 +1634,12 @@ async fn verify_email(State(state): State<AppState>, Json(body): Json<TokenBody>
     .await?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Invalid or expired verification link"))?;
 
-    if row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("consumedAt").ok().flatten().is_some() {
+    if row.try_get::<Option<chrono::NaiveDateTime>, _>("consumedAt").ok().flatten().is_some() {
         return Err(ApiError::bad("This link has already been used"));
     }
-    let expires: chrono::DateTime<chrono::Utc> =
+    let expires: chrono::NaiveDateTime =
         row.try_get("expiresAt").map_err(|e| ApiError::internal(e.to_string()))?;
-    if expires < chrono::Utc::now() {
+    if expires < chrono::Utc::now().naive_utc() {
         return Err(ApiError::bad("This link has expired"));
     }
     let vid: String = row.try_get("id").map_err(|e| ApiError::internal(e.to_string()))?;
@@ -1679,12 +1689,12 @@ async fn complete_password_reset(
     .await?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Invalid or expired reset link"))?;
 
-    if row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("consumedAt").ok().flatten().is_some() {
+    if row.try_get::<Option<chrono::NaiveDateTime>, _>("consumedAt").ok().flatten().is_some() {
         return Err(ApiError::bad("This link has already been used"));
     }
-    let expires: chrono::DateTime<chrono::Utc> =
+    let expires: chrono::NaiveDateTime =
         row.try_get("expiresAt").map_err(|e| ApiError::internal(e.to_string()))?;
-    if expires < chrono::Utc::now() {
+    if expires < chrono::Utc::now().naive_utc() {
         return Err(ApiError::bad("This link has expired"));
     }
     let rid: String = row.try_get("id").map_err(|e| ApiError::internal(e.to_string()))?;
@@ -1718,7 +1728,7 @@ async fn forward_to_v1_json<T: Serialize>(
     headers: &axum::http::HeaderMap,
 ) -> ApiResult<Response> {
     let url = format!("{}{}", state.v1_origin, path);
-    // reqwest is built without the `json` feature — serialize by hand.
+    // reqwest is built without the `json` feature â€” serialize by hand.
     let payload = serde_json::to_vec(body).map_err(|e| ApiError::internal(e.to_string()))?;
     let mut rb = state
         .http
@@ -1770,12 +1780,12 @@ async fn auth_refresh(State(state): State<AppState>, headers: axum::http::Header
     let user_id: String = rec.try_get("userId").map_err(|e| ApiError::internal(e.to_string()))?;
     let rec_id: String = rec.try_get("id").map_err(|e| ApiError::internal(e.to_string()))?;
     let email: String = rec.try_get("email").map_err(|e| ApiError::internal(e.to_string()))?;
-    let revoked: Option<chrono::DateTime<chrono::Utc>> = rec.try_get("revokedAt").ok().flatten();
-    let expires: chrono::DateTime<chrono::Utc> =
+    let revoked: Option<chrono::NaiveDateTime> = rec.try_get("revokedAt").ok().flatten();
+    let expires: chrono::NaiveDateTime =
         rec.try_get("expiresAt").map_err(|e| ApiError::internal(e.to_string()))?;
 
     if revoked.is_some() {
-        // Reuse detected — nuke every live session for this user.
+        // Reuse detected â€” nuke every live session for this user.
         let _ = sqlx::query(
             r#"UPDATE "RefreshToken" SET "revokedAt" = now() WHERE "userId" = $1 AND "revokedAt" IS NULL"#,
         )
@@ -1792,7 +1802,7 @@ async fn auth_refresh(State(state): State<AppState>, headers: axum::http::Header
         .await;
         return Err(ApiError::unauthorized("Invalid or expired refresh token"));
     }
-    if expires < chrono::Utc::now() {
+    if expires < chrono::Utc::now().naive_utc() {
         return Err(ApiError::unauthorized("Invalid or expired refresh token"));
     }
 
@@ -1893,7 +1903,7 @@ async fn list_connections(State(state): State<AppState>, user: AuthUser) -> ApiR
 }
 
 // ---------------------------------------------------------------------------
-// Introspection (the shared app Postgres — phase 1)
+// Introspection (the shared app Postgres â€” phase 1)
 // ---------------------------------------------------------------------------
 
 async fn list_schemas(State(state): State<AppState>, _user: AuthUser) -> ApiResult<Json<Value>> {
@@ -1967,7 +1977,7 @@ async fn list_columns(
 }
 
 // ---------------------------------------------------------------------------
-// Table rows (paginated) — the browse hot path
+// Table rows (paginated) â€” the browse hot path
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -2040,7 +2050,7 @@ fn quote_ident(ident: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// SQL runner — the query hot path
+// SQL runner â€” the query hot path
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -2078,7 +2088,7 @@ async fn run_query(
             "tookMs": took,
         })))
     } else {
-        // DML/DDL — execute and report affected rows.
+        // DML/DDL â€” execute and report affected rows.
         let res = sqlx::query(sql).execute(&state.pool).await?;
         Ok(Json(json!({
             "columns": [],
@@ -2090,7 +2100,7 @@ async fn run_query(
 }
 
 // ---------------------------------------------------------------------------
-// Executor-generic core queries — run against the app pool OR a live target
+// Executor-generic core queries â€” run against the app pool OR a live target
 // connection, so introspection/rows/SQL is written once and reused for both.
 // ---------------------------------------------------------------------------
 
@@ -2214,14 +2224,14 @@ async fn run_on<'e, E: sqlx::Executor<'e, Database = Pg>>(exec: E, sql: &str, ma
 }
 
 // ---------------------------------------------------------------------------
-// Target-database handlers — decrypt v1 credentials, connect, run against it.
+// Target-database handlers â€” decrypt v1 credentials, connect, run against it.
 // ---------------------------------------------------------------------------
 
 async fn connect_target(state: &AppState, id: &str, user_id: &str) -> ApiResult<PgConnection> {
     let crypto = state
         .crypto
         .as_ref()
-        .ok_or_else(|| ApiError::internal("ENCRYPTION_KEY not configured — target connections disabled"))?;
+        .ok_or_else(|| ApiError::internal("ENCRYPTION_KEY not configured â€” target connections disabled"))?;
     let row = sqlx::query(
         r#"SELECT c."credentialsCt", c."dialect"::text AS dialect
            FROM "Connection" c
@@ -2248,7 +2258,7 @@ async fn connect_target(state: &AppState, id: &str, user_id: &str) -> ApiResult<
     let creds: crypto::ConnectionCredentials =
         serde_json::from_str(&json).map_err(|e| ApiError::internal(format!("bad credentials json: {e}")))?;
 
-    // No TLS backend compiled yet → Disable only. TLS target support is a
+    // No TLS backend compiled yet â†’ Disable only. TLS target support is a
     // planned follow-up (adds sqlx `tls-rustls`).
     let opts = PgConnectOptions::new()
         .host(&creds.host)
@@ -2298,7 +2308,7 @@ async fn conn_query(State(state): State<AppState>, user: AuthUser, Path(id): Pat
 }
 
 // ---------------------------------------------------------------------------
-// Connections list/get — v1-shaped (decrypts credentials for host/port/user/db).
+// Connections list/get â€” v1-shaped (decrypts credentials for host/port/user/db).
 // ---------------------------------------------------------------------------
 
 const CONN_COLS: &str = r#""id","name","dialect"::text AS dialect,"credentialsCt","readOnly","statementTimeoutMs","slowQueryAlertMs","slowQueryAlertEmail","requireReview","workspaceId","viaAgent","agentId","createdAt","updatedAt""#;
@@ -2541,7 +2551,7 @@ async fn v1_connection_test(State(state): State<AppState>, user: AuthUser, Path(
 }
 
 // ---------------------------------------------------------------------------
-// Row editing — insert/update/delete on /connections/:id/tables/:name/rows.
+// Row editing â€” insert/update/delete on /connections/:id/tables/:name/rows.
 // Uses jsonb_populate_record so arbitrary column types map correctly and
 // unspecified columns keep their defaults on insert.
 // ---------------------------------------------------------------------------
@@ -2694,7 +2704,7 @@ async fn row_bulk_update(State(state): State<AppState>, user: AuthUser, Path((id
 
 // ---------------------------------------------------------------------------
 // Read-only introspection: definition (DDL), ER, functions, triggers, indexes.
-// No per-user masking/filtering — identical output for every reader.
+// No per-user masking/filtering â€” identical output for every reader.
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -2958,7 +2968,7 @@ async fn require_write(pool: &PgPool, conn_id: &str, user_id: &str) -> ApiResult
     }
 }
 
-/// cuid-like id (starts with 'c'; unique — matches Prisma's `@default(cuid())`
+/// cuid-like id (starts with 'c'; unique â€” matches Prisma's `@default(cuid())`
 /// well enough for a String @id column).
 fn gen_id() -> String {
     use rand::Rng;
@@ -2974,7 +2984,7 @@ fn iso(r: &PgRow, col: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Saved queries — CRUD under /connections/:id/saved-queries.
+// Saved queries â€” CRUD under /connections/:id/saved-queries.
 // ---------------------------------------------------------------------------
 
 const SQ_COLS: &str = r#""id","name","sqlText","chartConfig","createdAt","updatedAt""#;
@@ -3083,7 +3093,7 @@ async fn sq_delete(State(state): State<AppState>, user: AuthUser, Path((id, qid)
 }
 
 // ---------------------------------------------------------------------------
-// Snippets — per-user reusable SQL blocks under /snippets. Owner-scoped only
+// Snippets â€” per-user reusable SQL blocks under /snippets. Owner-scoped only
 // (no connection membership), so a straight app-DB CRUD port.
 // ---------------------------------------------------------------------------
 
@@ -3183,7 +3193,7 @@ async fn snippet_delete(State(state): State<AppState>, user: AuthUser, Path(id):
 }
 
 // ---------------------------------------------------------------------------
-// Users — GET/PATCH /users/me (AuthUser shape).
+// Users â€” GET/PATCH /users/me (AuthUser shape).
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -3244,7 +3254,7 @@ async fn v1_update_me(State(state): State<AppState>, user: AuthUser, Json(body):
 }
 
 // ---------------------------------------------------------------------------
-// v1-shaped hot path — these match the frontend's exact endpoints/shapes, so
+// v1-shaped hot path â€” these match the frontend's exact endpoints/shapes, so
 // the perf-critical calls run in Rust instead of proxying to Node.
 // ---------------------------------------------------------------------------
 
@@ -3356,8 +3366,8 @@ async fn v1_conn_columns(State(state): State<AppState>, user: AuthUser, Path((id
 }
 
 // ---------------------------------------------------------------------------
-// Table data — the grid's paginated/filtered/sorted rows. The connection OWNER
-// bypasses row-level security (no row filters, no column masks — same policy as
+// Table data â€” the grid's paginated/filtered/sorted rows. The connection OWNER
+// bypasses row-level security (no row filters, no column masks â€” same policy as
 // v1), so we serve them from Rust. Everyone else forwards to v1, which applies
 // their row filter predicate + column masks. Agent connections were already
 // short-circuited by `agent_guard` upstream.
@@ -3381,7 +3391,7 @@ struct FilterItem {
     value: Value,
 }
 
-/// A filter value as bindable text (NULL-preserving) — mirrors node-postgres
+/// A filter value as bindable text (NULL-preserving) â€” mirrors node-postgres
 /// sending an untyped param that Postgres coerces to the column type via CAST.
 fn val_to_text(v: &Value) -> Option<String> {
     match v {
@@ -3431,8 +3441,8 @@ async fn primary_key_cols(c: &mut PgConnection, schema: &str, table: &str) -> Re
 }
 
 async fn v1_table_data(State(state): State<AppState>, user: AuthUser, Path((id, name)): Path<(String, String)>, Query(q): Query<DataQuery>, req: Request) -> Result<Response, ApiError> {
-    // Owner bypasses masks/row-filters → serve in Rust. Anyone else → v1 (which
-    // enforces their row predicate + column masks). Missing/other → v1 decides.
+    // Owner bypasses masks/row-filters â†’ serve in Rust. Anyone else â†’ v1 (which
+    // enforces their row predicate + column masks). Missing/other â†’ v1 decides.
     let owner: Option<String> = sqlx::query_scalar(r#"SELECT "ownerId" FROM "Connection" WHERE "id" = $1"#)
         .bind(&id).fetch_optional(&state.pool).await?;
     if owner.as_deref() != Some(user.id.as_str()) {
@@ -3448,7 +3458,7 @@ async fn v1_table_data(State(state): State<AppState>, user: AuthUser, Path((id, 
     let (qs, qt) = (quote_ident(&schema), quote_ident(&name));
     let fqtn = format!("{qs}.{qt}");
 
-    // Filters → WHERE, binding untyped-then-cast params (v1 op whitelist).
+    // Filters â†’ WHERE, binding untyped-then-cast params (v1 op whitelist).
     let filters: Vec<FilterItem> = match &q.filters {
         Some(s) if !s.trim().is_empty() => serde_json::from_str(s).map_err(|_| ApiError::bad("Invalid filters"))?,
         _ => vec![],
@@ -3477,7 +3487,7 @@ async fn v1_table_data(State(state): State<AppState>, user: AuthUser, Path((id, 
                 _ => where_parts.push("false".into()),
             }
         } else if op == "like" || op == "ilike" {
-            // Text pattern match — column must be text-comparable (as in v1).
+            // Text pattern match â€” column must be text-comparable (as in v1).
             binds.push(val_to_text(&f.value));
             where_parts.push(format!("{qcol} {} ${}", op.to_uppercase(), binds.len()));
         } else {
@@ -3506,12 +3516,12 @@ async fn v1_table_data(State(state): State<AppState>, user: AuthUser, Path((id, 
     }
     // STABLE PAGINATION. Postgres returns rows in physical heap order when no
     // ORDER BY is given, and an UPDATE writes a NEW tuple version (usually at
-    // the end of the heap) — so editing a row made it jump to a different
+    // the end of the heap) â€” so editing a row made it jump to a different
     // position in the grid, and an index-keyed selection then pointed at the
     // wrong row. Always append the primary key as a tiebreaker so the ordering
     // is total and deterministic: it fixes the unsorted case AND ties within a
     // user sort on a non-unique column. PK is indexed, so LIMIT/OFFSET stays a
-    // cheap index scan. Tables with no PK fall back to ctid (physical order —
+    // cheap index scan. Tables with no PK fall back to ctid (physical order â€”
     // same as today's behaviour, the best available without a unique key).
     for pk in primary_key_cols(&mut c, &schema, &name).await? {
         if !sorted_names.contains(&pk) {
@@ -3564,7 +3574,7 @@ async fn v1_table_data(State(state): State<AppState>, user: AuthUser, Path((id, 
     let colrows = sqlx::query(COLUMN_INFO_SQL).bind(&schema).bind(&name).fetch_all(&mut c).await?;
     let cols = column_infos(&colrows);
 
-    // `total: null` when unknown — keep the field present.
+    // `total: null` when unknown â€” keep the field present.
     Ok(Json(json!({
         "columns": cols,
         "rows": rows_json,
@@ -3663,7 +3673,7 @@ async fn v1_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<
 }
 
 // ---------------------------------------------------------------------------
-// Strangler proxy — forward any unported endpoint to the v1 Node API.
+// Strangler proxy â€” forward any unported endpoint to the v1 Node API.
 // ---------------------------------------------------------------------------
 
 /// Pull the `{id}` out of `/api/connections/{id}[/...]`, else `None`.
@@ -3686,7 +3696,7 @@ async fn via_agent(pool: &PgPool, id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Agent-backed connections MUST be served by v1 — the tunnel (local TCP proxy
+/// Agent-backed connections MUST be served by v1 â€” the tunnel (local TCP proxy
 /// fed by the agent WS) lives only in the Node backend. Rust's `connect_target`
 /// dials the stored host/port directly, which for a firewalled DB behind an
 /// agent can never work. So for any `/api/connections/{id}/*` where the
@@ -3743,7 +3753,7 @@ async fn proxy(State(state): State<AppState>, req: Request) -> Response {
             builder = builder.header(name, v.as_bytes());
         }
     }
-    // STREAM the upstream body straight through — never buffer it.
+    // STREAM the upstream body straight through â€” never buffer it.
     //
     // This used to be `resp.bytes().await`, which waited for the ENTIRE upstream
     // response before sending the client a single byte. For `pg_dump` backups
@@ -3752,7 +3762,7 @@ async fn proxy(State(state): State<AppState>, req: Request) -> Response {
     // container's memory (capped at 384 MB, so large dumps could not complete at
     // all), and only then did the download start. It also swallowed errors via
     // `unwrap_or_default()`, which turned a failed read into an empty body with a
-    // success status — a silently corrupt "backup".
+    // success status â€” a silently corrupt "backup".
     //
     // Streaming makes time-to-first-byte immediate (which also keeps us under
     // Cloudflare's ~100s first-byte limit), makes memory use constant regardless

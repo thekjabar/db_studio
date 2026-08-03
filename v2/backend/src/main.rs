@@ -60,6 +60,13 @@ struct AppState {
     /// Per-email failed-login lockout (in-memory; v2 is single-pod — matches
     /// v1's documented Map fallback when Redis is absent).
     cooldown: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, CooldownEntry>>>,
+    /// Mail via the Resend HTTP API (prod sets RESEND_API_KEY/RESEND_FROM).
+    /// None = mail disabled; links are logged instead, as v1 does in dev.
+    resend_key: Option<String>,
+    mail_from: Option<String>,
+    /// Base URL used to build verification/reset links (v1's APP_BASE_URL,
+    /// falling back to the first FRONTEND_ORIGIN).
+    app_base_url: String,
 }
 
 #[derive(Clone, Copy)]
@@ -138,9 +145,30 @@ async fn main() -> anyhow::Result<()> {
         .map(|v| v != "false" && v != "0")
         .unwrap_or(true);
     let cooldown = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let resend_key = std::env::var("RESEND_API_KEY").ok().filter(|v| !v.trim().is_empty());
+    let mail_from = std::env::var("RESEND_FROM")
+        .or_else(|_| std::env::var("SMTP_FROM"))
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    let app_base_url = std::env::var("APP_BASE_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            std::env::var("FRONTEND_ORIGIN")
+                .ok()
+                .and_then(|v| v.split(',').next().map(|s| s.trim().to_string()))
+                .filter(|v| !v.is_empty())
+        })
+        .unwrap_or_else(|| "https://queryschema.com".into());
+    if resend_key.is_some() && mail_from.is_some() {
+        tracing::info!("mail enabled (Resend) — verification + reset emails sent natively");
+    } else {
+        tracing::warn!("mail NOT configured — verification/reset links will only be logged");
+    }
     let state = AppState {
         pool, jwt_secret, jwt_ttl, max_rows, crypto, http, v1_origin,
         refresh_ttl_secs, cookie_domain, cookie_secure, require_email_verification, cooldown,
+        resend_key, mail_from, app_base_url,
     };
 
     let app = Router::new()
@@ -157,6 +185,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/auth/change-password", post(change_password))
         .route("/api/auth/verify-email", post(verify_email))
         .route("/api/auth/complete-password-reset", post(complete_password_reset))
+        .route("/api/auth/request-password-reset", post(request_password_reset))
+        .route("/api/auth/resend-verification", post(resend_verification))
         .route("/api/auth/sessions", get(sessions_list).delete(sessions_revoke_all))
         .route("/api/auth/sessions/:id", delete(session_revoke))
         .route("/api/users/me", get(v1_me).patch(v1_update_me))
@@ -634,6 +664,187 @@ async fn login(
         .header(axum::http::header::SET_COOKIE, refresh_cookie(&state, &refresh, expires_at))
         .body(Body::from(serde_json::to_vec(&json!({ "accessToken": access, "userId": id })).unwrap_or_default()))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()))
+}
+
+// ── mail (Resend HTTP API — prod has RESEND_API_KEY set, no SMTP) ────────────
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// v1's dark email layout, close enough to be visually identical in a client:
+/// brand wordmark, intro copy, one accent button, a small note.
+fn render_email(title: &str, intro: &str, btn_label: &str, btn_url: &str, note: &str) -> String {
+    format!(
+        r#"<!doctype html><html><body style="margin:0;padding:24px;background:#0b0f14;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+<table role="presentation" width="100%" style="max-width:520px;background:#111820;border:1px solid #1e2733;border-radius:14px;padding:28px">
+<tr><td style="color:#3ECF8E;font-weight:700;font-size:15px;padding-bottom:18px">Query Schema</td></tr>
+<tr><td style="color:#e6e9ef;font-size:20px;font-weight:700;padding-bottom:10px">{}</td></tr>
+<tr><td style="color:#95a1b2;font-size:14px;line-height:22px;padding-bottom:22px">{}</td></tr>
+<tr><td><a href="{}" style="display:inline-block;background:#3ECF8E;color:#04180f;text-decoration:none;font-weight:700;font-size:14px;padding:11px 20px;border-radius:9px">{}</a></td></tr>
+<tr><td style="color:#5c6875;font-size:12px;line-height:19px;padding-top:24px">{}</td></tr>
+</table></td></tr></table></body></html>"#,
+        html_escape(title),
+        html_escape(intro),
+        html_escape(btn_url),
+        html_escape(btn_label),
+        html_escape(note)
+    )
+}
+
+/// Fire-and-forget send through Resend. Returns false when mail isn't
+/// configured or the API rejects it — callers must stay silent either way so
+/// the response never reveals whether an address exists.
+async fn send_mail(state: &AppState, to: &str, subject: &str, text: &str, html: &str) -> bool {
+    let (Some(key), Some(from)) = (state.resend_key.as_ref(), state.mail_from.as_ref()) else {
+        tracing::info!("[dev] mail not configured; would send '{subject}' to {to}");
+        return false;
+    };
+    let payload = json!({ "from": from, "to": [to], "subject": subject, "text": text, "html": html });
+    let body = match serde_json::to_vec(&payload) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    match state
+        .http
+        .post("https://api.resend.com/emails")
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {key}"))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body)
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => true,
+        Ok(r) => {
+            tracing::warn!("resend rejected mail to {to}: {}", r.status());
+            false
+        }
+        Err(e) => {
+            tracing::warn!("resend send failed for {to}: {e}");
+            false
+        }
+    }
+}
+
+/// 32 random bytes, base64url — the token shape v1 mails out. Stored as sha256.
+fn gen_email_token() -> String {
+    use rand::RngCore;
+    let mut b = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut b);
+    B64.encode(b)
+}
+
+/// Issue a verification link (invalidating any outstanding one) and mail it.
+async fn issue_verification(state: &AppState, user_id: &str, email: &str) -> Result<(), ApiError> {
+    sqlx::query(
+        r#"UPDATE "EmailVerification" SET "consumedAt" = now() WHERE "userId" = $1 AND "consumedAt" IS NULL"#,
+    )
+    .bind(user_id)
+    .execute(&state.pool)
+    .await?;
+    let raw = gen_email_token();
+    sqlx::query(
+        r#"INSERT INTO "EmailVerification" ("id","userId","tokenSha","expiresAt","createdAt")
+           VALUES ($1,$2,$3,now() + interval '24 hours',now())"#,
+    )
+    .bind(gen_id())
+    .bind(user_id)
+    .bind(sha256_hex(&raw))
+    .execute(&state.pool)
+    .await?;
+    let link = format!("{}/auth/verify?token={}", state.app_base_url, urlencode(&raw));
+    let text = format!(
+        "Click the link below to verify your email address. The link expires in 24 hours.\n\n{link}\n\nIf you didn't sign up for Query Schema, you can ignore this email."
+    );
+    let html = render_email(
+        "Verify your email",
+        "Welcome to Query Schema! Confirm your email address to finish setting up your account. This link expires in 24 hours.",
+        "Verify email",
+        &link,
+        "If you didn't sign up for Query Schema, you can safely ignore this email.",
+    );
+    send_mail(state, email, "Verify your Query Schema email", &text, &html).await;
+    Ok(())
+}
+
+fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+#[derive(Deserialize)]
+struct EmailBody {
+    email: String,
+}
+
+/// Always answers `{ok:true}` — never reveals whether the address exists.
+async fn resend_verification(State(state): State<AppState>, Json(body): Json<EmailBody>) -> ApiResult<Json<Value>> {
+    let email = body.email.trim().to_lowercase();
+    if let Some(row) = sqlx::query(r#"SELECT "id","emailVerifiedAt" FROM "User" WHERE "email" = $1"#)
+        .bind(&email)
+        .fetch_optional(&state.pool)
+        .await?
+    {
+        let verified: Option<chrono::DateTime<chrono::Utc>> =
+            row.try_get("emailVerifiedAt").ok().flatten();
+        if verified.is_none() {
+            if let Ok(id) = row.try_get::<String, _>("id") {
+                let _ = issue_verification(&state, &id, &email).await;
+            }
+        }
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// Always answers `{ok:true}`. Silent for unknown emails and for OAuth-only
+/// accounts (no password to reset).
+async fn request_password_reset(State(state): State<AppState>, Json(body): Json<EmailBody>) -> ApiResult<Json<Value>> {
+    let email = body.email.trim().to_lowercase();
+    if let Some(row) = sqlx::query(r#"SELECT "id","passwordHash" FROM "User" WHERE "email" = $1"#)
+        .bind(&email)
+        .fetch_optional(&state.pool)
+        .await?
+    {
+        let has_pw: Option<String> = row.try_get("passwordHash").ok().flatten();
+        if has_pw.is_some() {
+            if let Ok(id) = row.try_get::<String, _>("id") {
+                sqlx::query(
+                    r#"UPDATE "PasswordReset" SET "consumedAt" = now() WHERE "userId" = $1 AND "consumedAt" IS NULL"#,
+                )
+                .bind(&id)
+                .execute(&state.pool)
+                .await?;
+                let raw = gen_email_token();
+                sqlx::query(
+                    r#"INSERT INTO "PasswordReset" ("id","userId","tokenSha","expiresAt","createdAt")
+                       VALUES ($1,$2,$3,now() + interval '1 hour',now())"#,
+                )
+                .bind(gen_id())
+                .bind(&id)
+                .bind(sha256_hex(&raw))
+                .execute(&state.pool)
+                .await?;
+                let link = format!("{}/auth/reset?token={}", state.app_base_url, urlencode(&raw));
+                let text = format!(
+                    "Click the link below to reset your password. The link expires in 1 hour and can only be used once.\n\n{link}\n\nIf you didn't request this, you can safely ignore the email."
+                );
+                let html = render_email(
+                    "Reset your password",
+                    "We received a request to reset your Query Schema password. This link expires in 1 hour and can only be used once.",
+                    "Reset password",
+                    &link,
+                    "If you didn't request this, you can safely ignore this email.",
+                );
+                send_mail(&state, &email, "Reset your Query Schema password", &text, &html).await;
+            }
+        }
+    }
+    Ok(Json(json!({ "ok": true })))
 }
 
 /// Argon2id with v1's exact parameters (m=65536, t=3, p=4, len=32, 16-byte

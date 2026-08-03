@@ -235,7 +235,17 @@ impl ApiError {
 }
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let body = self.body.unwrap_or_else(|| json!({ "error": self.message }));
+        // The frontend reads `message` (lib/api.ts: `data?.message`), matching
+        // v1's error envelope. Without it every failure renders as axios's
+        // generic "Request failed with status code 401" instead of the real
+        // reason. `error` is kept alongside for anything still reading it.
+        let body = self.body.unwrap_or_else(|| {
+            json!({
+                "statusCode": self.status.as_u16(),
+                "message": self.message,
+                "error": self.message,
+            })
+        });
         (self.status, Json(body)).into_response()
     }
 }

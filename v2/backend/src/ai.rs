@@ -1048,7 +1048,10 @@ async fn load_conn(state: &AppState, conn_id: &str) -> ApiResult<Option<ConnInfo
 /// SQLite driver), or a missing ENCRYPTION_KEY — is handed to v1 instead of
 /// erroring. Mirrors `main.rs::agent_guard` and `docs.rs::run_saved_query`.
 fn must_proxy(state: &AppState, c: &ConnInfo) -> bool {
-    c.via_agent || !c.dialect.to_lowercase().contains("postgres") || state.crypto.is_none()
+    // NOTE: no viaAgent check here. `agent_guard` in main.rs already forwards
+    // to v1 when the agent is attached to the OTHER backend; if we get this far
+    // the agent is on this process and `connect_target` tunnels through it.
+    !c.dialect.to_lowercase().contains("postgres") || state.crypto.is_none()
 }
 
 /// v1 introspects with `buildDriverForRole(id, Role.VIEWER)` — "Viewer → always

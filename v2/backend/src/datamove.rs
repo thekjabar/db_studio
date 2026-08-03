@@ -171,7 +171,9 @@ async fn rust_dialect(state: &AppState, id: &str) -> ApiResult<Option<String>> {
         .try_get("viaAgent")
         .map_err(|e| ApiError::internal(format!("viaAgent decode failed: {e}")))?;
     let dialect = text(&row, "dialect");
-    if via_agent || !dialect.to_lowercase().contains("postgres") {
+    // viaAgent handled by agent_guard (live presence) + connect_target.
+    let _ = via_agent;
+    if !dialect.to_lowercase().contains("postgres") {
         return Ok(None);
     }
     Ok(Some(dialect))

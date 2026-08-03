@@ -201,7 +201,8 @@ impl ConnMeta {
     /// failing: the agent tunnel and the non-Postgres drivers live only there,
     /// and without ENCRYPTION_KEY we cannot reach a target database at all.
     fn must_proxy(&self, state: &AppState) -> bool {
-        self.via_agent || !self.dialect.to_lowercase().contains("postgres") || state.crypto.is_none()
+        // viaAgent handled by agent_guard (live presence) + connect_target.
+        !self.dialect.to_lowercase().contains("postgres") || state.crypto.is_none()
     }
 }
 

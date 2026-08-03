@@ -1156,7 +1156,9 @@ async fn run_saved_query(
     let via_agent = conn.try_get::<bool, _>("viaAgent").unwrap_or(false);
     // The agent tunnel lives only in the Node backend, and v2 has no non-Postgres
     // drivers — hand those to v1 instead of erroring (mirrors `agent_guard`).
-    if via_agent || !dialect.contains("postgres") || state.crypto.is_none() {
+    // viaAgent is handled by `agent_guard` (live-presence based) + connect_target.
+    let _ = via_agent;
+    if !dialect.contains("postgres") || state.crypto.is_none() {
         return Ok(crate::proxy(State(state.clone()), req).await);
     }
     let crypto = state.crypto.as_ref().expect("checked above");

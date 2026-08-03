@@ -2306,7 +2306,7 @@ async fn connect_target(state: &AppState, id: &str, user_id: &str) -> ApiResult<
         .as_ref()
         .ok_or_else(|| ApiError::internal("ENCRYPTION_KEY not configured â€” target connections disabled"))?;
     let row = sqlx::query(
-        r#"SELECT c."credentialsCt", c."dialect"::text AS dialect
+        r#"SELECT c."credentialsCt", c."dialect"::text AS dialect, c."viaAgent", c."agentId"
            FROM "Connection" c
            WHERE c."id" = $1 AND (
              c."ownerId" = $2
@@ -2331,11 +2331,31 @@ async fn connect_target(state: &AppState, id: &str, user_id: &str) -> ApiResult<
     let creds: crypto::ConnectionCredentials =
         serde_json::from_str(&json).map_err(|e| ApiError::internal(format!("bad credentials json: {e}")))?;
 
+    // Agent-backed connections: the database is not reachable from here, only
+    // from the desktop agent. Open a loopback bridge through the agent's
+    // WebSocket and dial that instead of the stored host.
+    //
+    // Dropping `OpenTunnel` only stops the listener ACCEPTING — the socket we
+    // just established keeps being pumped by its own task, so it is safe to let
+    // the guard fall out of scope once `connect_with` has returned.
+    let via_agent: bool = row.try_get("viaAgent").unwrap_or(false);
+    let (dial_host, dial_port, _tunnel) = if via_agent {
+        let agent_id: Option<String> = row
+            .try_get("agentId")
+            .map_err(|e| ApiError::internal(e.to_string()))?;
+        let agent_id = agent_id
+            .ok_or_else(|| ApiError::bad("Connection is agent-routed but has no agent assigned"))?;
+        let t = tunnel::open_tunnel(&agent_id, &creds.host, creds.port).await?;
+        (t.local_host.clone(), t.local_port, Some(t))
+    } else {
+        (creds.host.clone(), creds.port, None)
+    };
+
     // No TLS backend compiled yet â†’ Disable only. TLS target support is a
     // planned follow-up (adds sqlx `tls-rustls`).
     let opts = PgConnectOptions::new()
-        .host(&creds.host)
-        .port(creds.port)
+        .host(&dial_host)
+        .port(dial_port)
         .username(&creds.user)
         .password(&creds.password)
         .database(&creds.database)
@@ -3759,14 +3779,31 @@ fn conn_id_from_path(path: &str) -> Option<&str> {
 }
 
 /// Is this connection reached through the owner's local tunnel agent?
+/// True when this connection is agent-routed AND its agent is NOT currently
+/// attached to THIS process — i.e. the request has to go to whoever holds the
+/// agent's socket.
+///
+/// The registry is per-process in both stacks, so during the cutover the agent
+/// is attached to exactly one of them. Deciding per-request on live presence
+/// makes the switch self-healing instead of a flag day: while /agent-ws still
+/// points at Node the agent is absent here and we forward; the moment it
+/// reconnects to this process we serve it natively. No coordinated restart, and
+/// repointing nginx back rolls it straight back.
 async fn via_agent(pool: &PgPool, id: &str) -> bool {
-    sqlx::query_scalar::<_, bool>(r#"SELECT "viaAgent" FROM "Connection" WHERE "id" = $1"#)
+    let row = sqlx::query(r#"SELECT "viaAgent", "agentId" FROM "Connection" WHERE "id" = $1"#)
         .bind(id)
         .fetch_optional(pool)
         .await
         .ok()
-        .flatten()
-        .unwrap_or(false)
+        .flatten();
+    let Some(row) = row else { return false };
+    if !row.try_get::<bool, _>("viaAgent").unwrap_or(false) {
+        return false;
+    }
+    match row.try_get::<Option<String>, _>("agentId").ok().flatten() {
+        Some(agent_id) => !tunnel::is_online(&agent_id),
+        None => true, // agent-routed but unassigned — let v1 produce its error
+    }
 }
 
 /// Agent-backed connections MUST be served by v1 â€” the tunnel (local TCP proxy

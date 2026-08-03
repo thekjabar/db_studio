@@ -1876,10 +1876,12 @@ mod tests {
     fn privileges_are_not_widened() {
         assert!(normalize_privileges("table", &["DROP".into()]).is_err());
         assert!(normalize_privileges("schema", &["SELECT".into()]).is_err());
-        assert_eq!(
-            normalize_privileges("table", &["select".into(), "ALL".into()]).unwrap(),
-            vec!["ALL PRIVILEGES".to_string()]
-        );
+        // `.unwrap()` needs Debug on the error type, which ApiError doesn't
+        // implement — match instead so the crate's test target still builds.
+        match normalize_privileges("table", &["select".into(), "ALL".into()]) {
+            Ok(v) => assert_eq!(v, vec!["ALL PRIVILEGES".to_string()]),
+            Err(_) => panic!("expected ALL to collapse to ALL PRIVILEGES"),
+        }
     }
 
     #[test]

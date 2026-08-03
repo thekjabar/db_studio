@@ -14,6 +14,11 @@ mod billing;
 mod conns;
 mod misc;
 mod opsadmin;
+mod totp;
+mod importer;
+mod oauth;
+mod queue;
+mod tunnel;
 mod backup;
 mod collab;
 mod crypto;
@@ -271,6 +276,15 @@ async fn main() -> anyhow::Result<()> {
         .merge(billing::routes())
         .merge(misc::routes())
         .merge(opsadmin::routes())
+        .merge(totp::routes())
+        // /agent-ws lives here now. Additive until nginx repoints agents at
+        // this container — the registry is per-process in BOTH stacks, so the
+        // endpoint must be served by exactly one backend, never split.
+        .merge(tunnel::routes())
+        // Registers only when this process holds the provider credentials —
+        // otherwise the flows keep proxying to v1 rather than half-working.
+        .merge(oauth::routes())
+        .merge(importer::routes())
         // --- Strangler proxy: every other endpoint â†’ v1 Node API ---
         .fallback(proxy)
         // Agent-backed connections bypass Rust entirely (tunnel lives in v1).
@@ -658,11 +672,19 @@ async fn login(
         return Err(ApiError::unauthorized("Invalid credentials"));
     }
 
-    // 2FA is not ported yet â€” hand the whole login to v1 so TOTP users are
-    // unaffected. Remove once /auth/2fa/* lands in Rust.
+    // 2FA, verified natively. v1's order: a missing code is rejected before a
+    // wrong one, and a wrong code audits LOGIN_FAILED but deliberately does NOT
+    // call recordFailure — the lockout counts bad passwords, not bad codes.
     let totp_enabled: bool = row.try_get("totpEnabled").unwrap_or(false);
     if totp_enabled {
-        return forward_to_v1_json(&state, "/api/auth/login", &body, &headers).await;
+        // .filter(non-empty) reproduces JS falsiness on ""
+        let Some(code) = body.totp_code.as_deref().filter(|c| !c.is_empty()) else {
+            return Err(ApiError::unauthorized("TOTP code required"));
+        };
+        if !totp::check_user_code(&state, &id, code).await? {
+            audit(&state, Some(&id), "LOGIN_FAILED", &meta, None).await;
+            return Err(ApiError::unauthorized("Invalid TOTP code"));
+        }
     }
 
     // NOTE: no `.ok().flatten()` on the two gate columns below. That pattern

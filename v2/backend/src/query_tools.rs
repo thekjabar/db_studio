@@ -26,11 +26,12 @@
 //!       adding one is out of scope, so a port could only be a regex
 //!       approximation — exactly the "silently-wrong SQL" the v1 service is
 //!       written to avoid.
+//!
+//! Also NOT here, but ported elsewhere:
 //!   POST /query/cursor, /query/cursor/:cursorId/{fetch,close}
-//!       — server-side cursors keep live per-cursor `pg.Client` sessions (open
-//!       READ ONLY transaction + reaper + global cap) in a Node singleton.
-//!       v2 has nowhere to hold that state, and splitting it across the two
-//!       processes would strand pages of an open cursor.
+//!       — server-side cursors keep live per-cursor sessions (open READ ONLY
+//!       transaction + reaper + global cap) in a process-local map, so they sit
+//!       with the CSV import sessions in `src/importer.rs`.
 //!
 //! Notes on faithfulness:
 //!   * Prisma has no `@map`, so every identifier below is the exact quoted

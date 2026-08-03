@@ -23,17 +23,15 @@
 //! `agent_guard`. Snapshot list/delete touch only the app DB, so they are served
 //! natively for every dialect.
 //!
-//! ── csv-import is deliberately NOT here ────────────────────────────────────
-//! v1's `CsvImportService` keeps parsed uploads in a *process-local*
-//! `Map<sessionId, Session>` (no table — there is no CSV import model in
-//! `prisma/models/`), and the session is created by `POST …/csv-import/upload`,
-//! a multipart request. axum 0.7 is compiled here without its `multipart`
-//! feature (see Cargo.lock: no `multer`), so the upload cannot be ported without
-//! touching Cargo.toml. Porting only dry-run/commit would be worse than not
-//! porting at all: the upload would land in the Node process and the follow-up
-//! calls in the Rust one, which has an empty session map — every dry-run would
-//! answer "Import session not found or expired". So the whole module is left to
-//! the strangler proxy; no csv-import route is registered below.
+//! ── csv-import lives in `importer.rs` ──────────────────────────────────────
+//! It used to be left to the strangler proxy: v1's `CsvImportService` keeps
+//! parsed uploads in a *process-local* `Map<sessionId, Session>` (no table —
+//! there is no CSV import model in `prisma/models/`) and the session is created
+//! by a multipart `POST …/csv-import/upload`, which axum could not accept
+//! without its `multipart` feature. That feature is enabled now, so the whole
+//! module — upload, dry-run and commit together, which is the only way the
+//! session map stays in one process — is ported in `src/importer.rs`. No
+//! csv-import route is registered below.
 //!
 //! v1 sources of truth:
 //!   backend/src/migration-export/migration-export.controller.ts

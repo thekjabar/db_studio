@@ -10,8 +10,12 @@ path = "src/main.rs"
 [dependencies]
 # ws: the agent tunnel gateway. multipart: CSV import upload.
 axum = { version = "0.7", features = ["ws", "multipart"] }
-# BullMQ-compatible queue writes (schedule cron upserts) + live agent presence,
-# which v1 keeps in Redis. Without this those routes can never leave Node.
+# Reserved for BullMQ-compatible queue writes. NOT yet used: reproducing
+# bullmq's repeatable-job entries needs a cron parser + msgpack + its versioned
+# Lua scripts, and a malformed entry stalls the scheduler for everyone rather
+# than failing loudly, so schedule mutations still proxy to v1.
+# (Agent presence is NOT in Redis — it is an in-process map; the Rust tunnel
+# now owns that instead, see tunnel::is_online.)
 redis = { version = "0.27", default-features = false, features = ["tokio-comp", "connection-manager"] }
 # v1 classifies SQL with an AST parse (node-sql-parser) to decide read-only vs
 # mutating, and transpiles between dialects. A keyword heuristic disagrees

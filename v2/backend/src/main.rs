@@ -7,12 +7,18 @@
 //! Everything uses the sqlx *runtime* query API (no `query!` macro), so the
 //! binary compiles without a database connection at build time.
 
+mod admin;
 mod audit_log;
 mod backup;
 mod collab;
 mod crypto;
+mod datamove;
+mod dbadmin;
 mod docs;
+mod ops;
 mod permissions;
+mod query_tools;
+mod sharing;
 mod workspaces;
 
 use std::time::Instant;
@@ -247,6 +253,12 @@ async fn main() -> anyhow::Result<()> {
         .merge(backup::routes())
         .merge(docs::routes())
         .merge(collab::routes())
+        .merge(admin::routes())
+        .merge(ops::routes())
+        .merge(sharing::routes())
+        .merge(dbadmin::routes())
+        .merge(datamove::routes())
+        .merge(query_tools::routes())
         // --- Strangler proxy: every other endpoint â†’ v1 Node API ---
         .fallback(proxy)
         // Agent-backed connections bypass Rust entirely (tunnel lives in v1).

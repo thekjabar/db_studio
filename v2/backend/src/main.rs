@@ -3835,7 +3835,28 @@ async fn agent_guard(State(state): State<AppState>, req: Request, next: Next) ->
     next.run(req).await
 }
 
+/// The NestJS backend was removed on 2026-08-03 — this process serves the whole
+/// product. Anything still calling `proxy` is an endpoint that was never ported
+/// (BullMQ schedule writes, federated query, audit revert, SQL transpile,
+/// /metrics). Attempting the old HTTP hop would hang until DNS/connect failed
+/// and surface as a confusing 502, so answer immediately and say why.
+///
+/// Set V1_ORIGIN_ENABLED=true to restore forwarding if v1 is ever brought back.
 async fn proxy(State(state): State<AppState>, req: Request) -> Response {
+    if std::env::var("V1_ORIGIN_ENABLED").map(|v| v != "true").unwrap_or(true) {
+        let path = req.uri().path().to_string();
+        tracing::warn!("unported endpoint hit after v1 removal: {} {}", req.method(), path);
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            Json(json!({
+                "statusCode": 501,
+                "message": "This endpoint is not available: it was served by the legacy backend, which has been removed.",
+                "error": "Not Implemented",
+                "path": path,
+            })),
+        )
+            .into_response();
+    }
     let (parts, body) = req.into_parts();
     let bytes = match to_bytes(body, 26_214_400).await {
         Ok(b) => b,

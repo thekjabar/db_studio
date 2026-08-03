@@ -7,11 +7,10 @@
 //! handed out still resolves here and vice-versa.
 //!
 //! Ported: list, query-history, export.csv, revert-preview.
-//! NOT ported: `POST .../revert` — it executes INSERT/UPDATE/DELETE against the
-//! *target* database through v1's role-scoped driver stack
-//! (`ConnectionsService.buildDriverForRole` + `insertRow`/`updateRow`/
-//! `deleteRow`/`getTableColumns`). That machinery does not exist in v2, so the
-//! route is deliberately left unregistered and falls through to the v1 proxy.
+//! `POST .../revert` lives in `lastmile.rs` — it writes to the *target*
+//! database, so it needs the driver layer (`connect_target` + the row writers)
+//! rather than just the app DB. It reuses `audit_require_role` from here so
+//! both halves of the audit surface enforce RBAC identically.
 
 use std::collections::HashSet;
 
@@ -41,8 +40,9 @@ pub fn routes() -> Router<AppState> {
             "/api/connections/:id/audit/:entryId/revert-preview",
             get(audit_revert_preview),
         )
-    // NOTE: POST "/api/connections/:id/audit/:entryId/revert" is intentionally
-    // absent — see the module docs. It falls through to the v1 proxy.
+    // NOTE: POST "/api/connections/:id/audit/:entryId/revert" is registered by
+    // `lastmile::routes()` (same `:id` / `:entryId` param names, so the merge
+    // does not conflict).
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +61,9 @@ fn role_rank(role: &str) -> i32 {
 /// v1 `RbacService.require`: owner > direct ConnectionMember > WorkspaceMember,
 /// first hit wins. 404 when the connection does not exist, 403 when the caller
 /// has no role at all or ranks below `min` — with v1's exact messages.
-async fn audit_require_role(
+///
+/// `pub(crate)` so `lastmile::audit_revert` gates on the identical check.
+pub(crate) async fn audit_require_role(
     state: &AppState,
     conn_id: &str,
     user_id: &str,

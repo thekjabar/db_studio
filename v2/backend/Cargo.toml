@@ -9,7 +9,10 @@ path = "src/main.rs"
 
 [dependencies]
 axum = "0.7"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "process"] }
+# Bridges pg_dump's stdout (AsyncRead) to an axum response body (Stream) so a
+# multi-GB backup streams instead of buffering.
+tokio-util = { version = "0.7", features = ["io"] }
 tower-http = { version = "0.5", features = ["cors", "trace"] }
 # Runtime query API only (no `query!` macro) so this compiles without a live DB.
 # No TLS backend → no `ring`/C-compiler dependency (app DB is reached over the

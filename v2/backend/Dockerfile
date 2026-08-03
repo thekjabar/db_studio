@@ -17,8 +17,9 @@ COPY src ./src
 RUN touch src/main.rs && cargo build --release
 
 FROM debian:bookworm-slim
+# postgresql-client provides pg_dump for the /backup endpoints.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/target/release/queryschema-v2 /usr/local/bin/queryschema-v2
 ENV PORT=3010

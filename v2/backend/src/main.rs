@@ -847,6 +847,187 @@ async fn request_password_reset(State(state): State<AppState>, Json(body): Json<
     Ok(Json(json!({ "ok": true })))
 }
 
+fn slugify(s: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash && !out.is_empty() {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+/// v1's ensurePersonalWorkspace + startTrial: every user owns a personal
+/// workspace (OWNER member) carrying a FREE/TRIALING subscription. Without it
+/// the app has nowhere to hang connections or billing.
+async fn ensure_personal_workspace(state: &AppState, user_id: &str, email: &str, display: Option<&str>) {
+    let existing: Option<String> = sqlx::query_scalar(
+        r#"SELECT "id" FROM "Workspace" WHERE "ownerId" = $1 AND "isPersonal" = true LIMIT 1"#,
+    )
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+
+    let ws_id = match existing {
+        Some(id) => id,
+        None => {
+            let base = slugify(&format!(
+                "{}-personal",
+                display.filter(|d| !d.is_empty()).unwrap_or_else(|| email.split('@').next().unwrap_or("user"))
+            ));
+            // First free slug, mirroring v1's base, base-2, base-3… walk.
+            let mut slug = base.clone();
+            for i in 2..20 {
+                let taken: Option<String> =
+                    sqlx::query_scalar(r#"SELECT "id" FROM "Workspace" WHERE "slug" = $1"#)
+                        .bind(&slug)
+                        .fetch_optional(&state.pool)
+                        .await
+                        .ok()
+                        .flatten();
+                if taken.is_none() {
+                    break;
+                }
+                slug = format!("{base}-{i}");
+            }
+            let id = gen_id();
+            if sqlx::query(
+                r#"INSERT INTO "Workspace" ("id","name","slug","isPersonal","ownerId","createdAt","updatedAt")
+                   VALUES ($1,'Personal',$2,true,$3,now(),now())"#,
+            )
+            .bind(&id)
+            .bind(&slug)
+            .bind(user_id)
+            .execute(&state.pool)
+            .await
+            .is_err()
+            {
+                return;
+            }
+            let _ = sqlx::query(
+                r#"INSERT INTO "WorkspaceMember" ("id","workspaceId","userId","role","createdAt")
+                   VALUES ($1,$2,$3,'OWNER',now())"#,
+            )
+            .bind(gen_id())
+            .bind(&id)
+            .bind(user_id)
+            .execute(&state.pool)
+            .await;
+            id
+        }
+    };
+
+    // 7-day FREE trial; ON CONFLICT DO NOTHING = v1's upsert-with-empty-update.
+    let _ = sqlx::query(
+        r#"INSERT INTO "Subscription" ("id","workspaceId","plan","status","periodStart","periodEnd","createdAt","updatedAt")
+           VALUES ($1,$2,'FREE','TRIALING',now(),now() + interval '7 days',now(),now())
+           ON CONFLICT ("workspaceId") DO NOTHING"#,
+    )
+    .bind(gen_id())
+    .bind(&ws_id)
+    .execute(&state.pool)
+    .await;
+}
+
+#[derive(Deserialize)]
+struct SignupBody {
+    email: String,
+    password: String,
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
+}
+
+async fn signup(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<SignupBody>,
+) -> ApiResult<Response> {
+    let email = body.email.trim().to_lowercase();
+    if !email.contains('@') || email.len() > 254 {
+        return Err(ApiError::bad("email must be an email"));
+    }
+    let pw = &body.password;
+    let n = pw.chars().count();
+    if n < 12 || n > 128 {
+        return Err(ApiError::bad("Password must be 12-128 chars"));
+    }
+    if !pw.chars().any(|c| c.is_ascii_uppercase()) {
+        return Err(ApiError::bad("Password must contain uppercase"));
+    }
+    if !pw.chars().any(|c| c.is_ascii_lowercase()) {
+        return Err(ApiError::bad("Password must contain lowercase"));
+    }
+    if !pw.chars().any(|c| c.is_ascii_digit()) {
+        return Err(ApiError::bad("Password must contain a digit"));
+    }
+    let meta = req_meta(&headers);
+
+    // Existing address is NOT an error in v1 — it returns a throwaway id and a
+    // needsVerification flag so signup can't be used to enumerate accounts.
+    let taken: Option<String> = sqlx::query_scalar(r#"SELECT "id" FROM "User" WHERE "email" = $1"#)
+        .bind(&email)
+        .fetch_optional(&state.pool)
+        .await?
+        .flatten();
+    if taken.is_some() {
+        let fake: String = {
+            use rand::RngCore;
+            let mut b = [0u8; 12];
+            rand::thread_rng().fill_bytes(&mut b);
+            b.iter().map(|x| format!("{x:02x}")).collect()
+        };
+        return Ok((StatusCode::CREATED, Json(json!({ "userId": fake, "needsVerification": true })))
+            .into_response());
+    }
+
+    let needs_verify = state.require_email_verification;
+    let hash = hash_argon2(pw)?;
+    let id = gen_id();
+    let display = body.display_name.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
+
+    sqlx::query(
+        r#"INSERT INTO "User"
+           ("id","email","passwordHash","displayName","emailVerifiedAt","isAdmin",
+            "approvalStatus","approvedAt","createdAt","updatedAt")
+           VALUES ($1,$2,$3,$4, CASE WHEN $5 THEN NULL ELSE now() END, false,
+                   'approved', now(), now(), now())"#,
+    )
+    .bind(&id)
+    .bind(&email)
+    .bind(&hash)
+    .bind(display)
+    .bind(needs_verify)
+    .execute(&state.pool)
+    .await?;
+
+    ensure_personal_workspace(&state, &id, &email, display).await;
+    audit(&state, Some(&id), "SIGNUP", &meta, None).await;
+
+    if needs_verify {
+        // A mail failure still leaves the row + token, so "resend" works.
+        let _ = issue_verification(&state, &id, &email).await;
+        return Ok((StatusCode::CREATED, Json(json!({ "userId": id, "needsVerification": true })))
+            .into_response());
+    }
+
+    let (access, refresh, expires_at) = issue_tokens(&state, &id, &email, &meta).await?;
+    Ok(Response::builder()
+        .status(StatusCode::CREATED)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .header(axum::http::header::SET_COOKIE, refresh_cookie(&state, &refresh, expires_at))
+        .body(Body::from(
+            serde_json::to_vec(&json!({ "accessToken": access, "userId": id })).unwrap_or_default(),
+        ))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()))
+}
+
 /// Argon2id with v1's exact parameters (m=65536, t=3, p=4, len=32, 16-byte
 /// salt) so hashes written here are readable by v1 and vice-versa.
 fn hash_argon2(password: &str) -> Result<String, ApiError> {

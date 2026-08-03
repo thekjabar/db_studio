@@ -179,6 +179,7 @@ async fn main() -> anyhow::Result<()> {
         // Auth, ported from v1 (see the compatibility contract above). The
         // remaining /api/auth/* routes (signup, 2FA, OAuth, SSO, email flows,
         // sessions) still fall through to the v1 proxy.
+        .route("/api/auth/signup", post(signup))
         .route("/api/auth/login", post(login))
         .route("/api/auth/refresh", post(auth_refresh))
         .route("/api/auth/logout", post(auth_logout))

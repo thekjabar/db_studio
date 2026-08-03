@@ -148,6 +148,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/health/db", get(health_db))
         // --- Rust hot path: v1's EXACT paths, so the perf-critical calls run
         //     in Rust. Everything else falls through to the v1 proxy below. ---
+        // Auth, ported from v1 (see the compatibility contract above). The
+        // remaining /api/auth/* routes (signup, 2FA, OAuth, SSO, email flows,
+        // sessions) still fall through to the v1 proxy.
+        .route("/api/auth/login", post(login))
+        .route("/api/auth/refresh", post(auth_refresh))
+        .route("/api/auth/logout", post(auth_logout))
         .route("/api/users/me", get(v1_me).patch(v1_update_me))
         .route("/api/workspaces", get(v1_workspaces_list))
         // Create/update carry v1-only business logic (SSRF host guard,
@@ -246,9 +252,16 @@ type ApiResult<T> = Result<T, ApiError>;
 // Auth
 // ---------------------------------------------------------------------------
 
+/// v1's exact access-token payload: `{sub, email, iat, exp}`, HS256. `email`
+/// and `iat` are optional on decode so tokens minted before this port (which
+/// carried only sub/exp) keep verifying until they expire.
 #[derive(Serialize, Deserialize)]
 struct Claims {
     sub: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    iat: Option<i64>,
     exp: i64,
 }
 
@@ -319,41 +332,412 @@ impl FromRequestParts<AppState> for AuthUser {
     }
 }
 
-#[derive(Deserialize)]
+// ── auth (ported from v1; MUST stay wire-compatible) ─────────────────────────
+//
+// Compatibility contract with the v1 Node API — breaking any of these logs every
+// live user out, so they are exact by design:
+//   * access token: HS256, claims {sub, email, iat, exp}, signed with the same
+//     JWT_ACCESS_SECRET, so tokens issued here verify in v1 and vice-versa.
+//   * refresh token: an OPAQUE 48-byte base64url string (not a JWT), stored as
+//     an unsalted lowercase-hex sha256 in "RefreshToken"."tokenHash" — the exact
+//     digest v1 writes, so existing rows keep working.
+//   * cookie: dbdash_rt, Path=/api/auth, SameSite=Strict, HttpOnly, explicit
+//     Domain and absolute Expires (v1 uses Expires, not Max-Age).
+//   * rotation + reuse detection: presenting an already-revoked token revokes
+//     EVERY live session for that user (v1 treats the whole user as the family).
+
+const REFRESH_COOKIE: &str = "dbdash_rt";
+/// v1 argon2-verifies this when the account is missing so the response time
+/// doesn't reveal whether an email exists.
+const DUMMY_ARGON2: &str = "$argon2id$v=19$m=65536,t=3,p=4$abcdefghijklmnop$abcdefghijklmnopabcdefghijklmnopabcdefghijk";
+
+fn sha256_hex(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn cookie_from_header(parts: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    let raw = parts.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    raw.split(';').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        (k.trim() == name).then(|| v.trim().to_string())
+    })
+}
+
+fn refresh_cookie(state: &AppState, token: &str, expires: chrono::DateTime<chrono::Utc>) -> String {
+    // Mirrors v1's setRefreshCookie exactly, including Path=/api/auth (so the
+    // cookie is NOT sent to ordinary API calls) and Expires rather than Max-Age.
+    let mut c = format!(
+        "{REFRESH_COOKIE}={token}; Path=/api/auth; HttpOnly; SameSite=Strict; Expires={}",
+        expires.format("%a, %d %b %Y %H:%M:%S GMT")
+    );
+    if !state.cookie_domain.is_empty() {
+        c.push_str(&format!("; Domain={}", state.cookie_domain));
+    }
+    if state.cookie_secure {
+        c.push_str("; Secure");
+    }
+    c
+}
+
+fn clear_refresh_cookie(state: &AppState) -> String {
+    let mut c = format!(
+        "{REFRESH_COOKIE}=; Path=/api/auth; HttpOnly; SameSite=Strict; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+    );
+    if !state.cookie_domain.is_empty() {
+        c.push_str(&format!("; Domain={}", state.cookie_domain));
+    }
+    if state.cookie_secure {
+        c.push_str("; Secure");
+    }
+    c
+}
+
+/// Best-effort audit row — never fails the request (v1 also swallows these).
+async fn audit(state: &AppState, user_id: Option<&str>, action: &str, meta: &ReqMeta, extra: Option<Value>) {
+    let _ = sqlx::query(
+        r#"INSERT INTO "AuditLog" ("id","userId","action","ip","userAgent","metadata","createdAt")
+           VALUES ($1,$2,$3::"AuditAction",$4,$5,$6,now())"#,
+    )
+    .bind(gen_id())
+    .bind(user_id)
+    .bind(action)
+    .bind(meta.ip.as_deref())
+    .bind(meta.user_agent.as_deref())
+    .bind(extra)
+    .execute(&state.pool)
+    .await;
+}
+
+struct ReqMeta {
+    ip: Option<String>,
+    user_agent: Option<String>,
+}
+
+fn req_meta(h: &axum::http::HeaderMap) -> ReqMeta {
+    let ip = h
+        .get("cf-connecting-ip")
+        .or_else(|| h.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.split(',').next().unwrap_or(v).trim().to_string());
+    let user_agent = h
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    ReqMeta { ip, user_agent }
+}
+
+// v1 login cooldown: 3 failures inside 15 min locks the email for 15 min.
+const COOLDOWN_WINDOW_SECS: i64 = 15 * 60;
+const COOLDOWN_MAX_FAILURES: u32 = 3;
+const COOLDOWN_LOCK_SECS: i64 = 15 * 60;
+
+fn cooldown_locked_for(state: &AppState, email: &str) -> Option<i64> {
+    let now = chrono::Utc::now().timestamp();
+    let map = state.cooldown.lock().ok()?;
+    let e = map.get(email)?;
+    e.locked_until.filter(|u| *u > now).map(|u| u - now)
+}
+
+fn cooldown_record_failure(state: &AppState, email: &str) {
+    let now = chrono::Utc::now().timestamp();
+    if let Ok(mut map) = state.cooldown.lock() {
+        let e = map.entry(email.to_string()).or_insert(CooldownEntry {
+            failures: 0,
+            reset_at: now + COOLDOWN_WINDOW_SECS,
+            locked_until: None,
+        });
+        if e.reset_at <= now {
+            e.failures = 0;
+            e.reset_at = now + COOLDOWN_WINDOW_SECS;
+        }
+        e.failures += 1;
+        if e.failures >= COOLDOWN_MAX_FAILURES {
+            e.locked_until = Some(now + COOLDOWN_LOCK_SECS);
+            e.failures = 0;
+        }
+    }
+}
+
+fn cooldown_record_success(state: &AppState, email: &str) {
+    if let Ok(mut map) = state.cooldown.lock() {
+        map.remove(email);
+    }
+}
+
+/// Mint an access token + a fresh opaque refresh token row (v1's issueTokens).
+async fn issue_tokens(
+    state: &AppState,
+    user_id: &str,
+    email: &str,
+    meta: &ReqMeta,
+) -> Result<(String, String, chrono::DateTime<chrono::Utc>), ApiError> {
+    let now = chrono::Utc::now();
+    let claims = Claims {
+        sub: user_id.to_string(),
+        email: Some(email.to_string()),
+        iat: Some(now.timestamp()),
+        exp: now.timestamp() + state.jwt_ttl,
+    };
+    let access = jwt_encode(&claims, &state.jwt_secret).map_err(|e| ApiError::internal(e.to_string()))?;
+
+    // 48 random bytes, base64url — byte-for-byte the shape v1 issues.
+    let raw: String = {
+        use rand::RngCore;
+        let mut b = [0u8; 48];
+        rand::thread_rng().fill_bytes(&mut b);
+        B64.encode(b)
+    };
+    let expires_at = now + chrono::Duration::seconds(state.refresh_ttl_secs);
+    sqlx::query(
+        r#"INSERT INTO "RefreshToken" ("id","userId","tokenHash","expiresAt","userAgent","ip","createdAt")
+           VALUES ($1,$2,$3,$4,$5,$6,now())"#,
+    )
+    .bind(gen_id())
+    .bind(user_id)
+    .bind(sha256_hex(&raw))
+    .bind(expires_at)
+    .bind(meta.user_agent.as_deref())
+    .bind(meta.ip.as_deref())
+    .execute(&state.pool)
+    .await?;
+    Ok((access, raw, expires_at))
+}
+
+#[derive(Deserialize, Serialize)]
 struct LoginBody {
     email: String,
     password: String,
+    #[serde(rename = "totpCode", skip_serializing_if = "Option::is_none")]
+    totp_code: Option<String>,
 }
 
-async fn login(State(state): State<AppState>, Json(body): Json<LoginBody>) -> ApiResult<Json<Value>> {
+async fn login(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<LoginBody>,
+) -> ApiResult<Response> {
     let email = body.email.trim().to_lowercase();
+    let meta = req_meta(&headers);
+
+    if let Some(secs) = cooldown_locked_for(&state, &email) {
+        return Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            format!("Too many failed logins. Try again in {} minute(s).", (secs + 59) / 60),
+        ));
+    }
+
     let row = sqlx::query(
-        r#"SELECT "id", "email", "passwordHash", "displayName", "isAdmin"
-           FROM "User" WHERE lower("email") = $1 LIMIT 1"#,
+        r#"SELECT u."id", u."email", u."passwordHash", u."suspendedAt", u."suspendedReason",
+                  u."approvalStatus"::text AS "approvalStatus", u."approvalNote", u."emailVerifiedAt",
+                  COALESCE(t."enabled", false) AS "totpEnabled"
+           FROM "User" u
+           LEFT JOIN "TotpSecret" t ON t."userId" = u."id"
+           WHERE u."email" = $1 LIMIT 1"#,
     )
     .bind(&email)
     .fetch_optional(&state.pool)
     .await?;
 
-    let row = row.ok_or_else(|| ApiError::unauthorized("Invalid credentials"))?;
+    // Equalise timing for unknown accounts exactly as v1 does.
+    let Some(row) = row else {
+        let _ = verify_argon2(&body.password, DUMMY_ARGON2);
+        cooldown_record_failure(&state, &email);
+        return Err(ApiError::unauthorized("Invalid credentials"));
+    };
+
     let id: String = row.try_get("id").map_err(|e| ApiError::internal(e.to_string()))?;
     let hash: Option<String> = row.try_get("passwordHash").ok().flatten();
-    let hash = hash.ok_or_else(|| ApiError::unauthorized("Account has no password set"))?;
+    let ok = match hash.as_deref() {
+        Some(h) => verify_argon2(&body.password, h).is_ok(),
+        None => {
+            // OAuth-only account: still burn the time, still "invalid".
+            let _ = verify_argon2(&body.password, DUMMY_ARGON2);
+            false
+        }
+    };
+    if !ok {
+        audit(&state, Some(&id), "LOGIN_FAILED", &meta, None).await;
+        cooldown_record_failure(&state, &email);
+        return Err(ApiError::unauthorized("Invalid credentials"));
+    }
 
-    verify_argon2(&body.password, &hash)
-        .map_err(|_| ApiError::unauthorized("Invalid credentials"))?;
+    // 2FA is not ported yet — hand the whole login to v1 so TOTP users are
+    // unaffected. Remove once /auth/2fa/* lands in Rust.
+    let totp_enabled: bool = row.try_get("totpEnabled").unwrap_or(false);
+    if totp_enabled {
+        return forward_to_v1_json(&state, "/api/auth/login", &body, &headers).await;
+    }
 
-    let now = chrono::Utc::now().timestamp();
-    let claims = Claims { sub: id.clone(), exp: now + state.jwt_ttl };
-    let token = jwt_encode(&claims, &state.jwt_secret)
-        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let suspended: Option<chrono::DateTime<chrono::Utc>> = row.try_get("suspendedAt").ok().flatten();
+    if suspended.is_some() {
+        let reason: Option<String> = row.try_get("suspendedReason").ok().flatten();
+        audit(&state, Some(&id), "LOGIN_SUSPENDED", &meta, None).await;
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            reason
+                .map(|r| format!("Account suspended: {r}"))
+                .unwrap_or_else(|| "Account suspended. Contact support to restore access.".into()),
+        ));
+    }
 
-    let display: Option<String> = row.try_get("displayName").ok().flatten();
-    let is_admin: bool = row.try_get("isAdmin").unwrap_or(false);
-    Ok(Json(json!({
-        "accessToken": token,
-        "user": { "id": id, "email": email, "displayName": display, "isAdmin": is_admin }
-    })))
+    let approval: String = row.try_get("approvalStatus").unwrap_or_else(|_| "approved".into());
+    if approval == "pending" {
+        audit(&state, Some(&id), "LOGIN_PENDING", &meta, None).await;
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "Your account is awaiting admin approval. You'll be able to sign in once it's reviewed.",
+        ));
+    }
+    if approval == "rejected" {
+        let note: Option<String> = row.try_get("approvalNote").ok().flatten();
+        audit(&state, Some(&id), "LOGIN_REJECTED", &meta, None).await;
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            note.map(|n| format!("Account not approved: {n}")).unwrap_or_else(|| {
+                "Your account was not approved. Contact support if you think this was a mistake.".into()
+            }),
+        ));
+    }
+
+    if state.require_email_verification {
+        let verified: Option<chrono::DateTime<chrono::Utc>> = row.try_get("emailVerifiedAt").ok().flatten();
+        if verified.is_none() {
+            return Err(ApiError::new(StatusCode::FORBIDDEN, "Verify your email address to sign in."));
+        }
+    }
+
+    let (access, refresh, expires_at) = issue_tokens(&state, &id, &email, &meta).await?;
+    cooldown_record_success(&state, &email);
+    audit(&state, Some(&id), "LOGIN", &meta, None).await;
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .header(axum::http::header::SET_COOKIE, refresh_cookie(&state, &refresh, expires_at))
+        .body(Body::from(serde_json::to_vec(&json!({ "accessToken": access, "userId": id })).unwrap_or_default()))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()))
+}
+
+/// Replay a JSON request to v1 and return its response verbatim (used for the
+/// auth flows that are not ported yet, e.g. TOTP logins).
+async fn forward_to_v1_json<T: Serialize>(
+    state: &AppState,
+    path: &str,
+    body: &T,
+    headers: &axum::http::HeaderMap,
+) -> ApiResult<Response> {
+    let url = format!("{}{}", state.v1_origin, path);
+    // reqwest is built without the `json` feature — serialize by hand.
+    let payload = serde_json::to_vec(body).map_err(|e| ApiError::internal(e.to_string()))?;
+    let mut rb = state
+        .http
+        .post(&url)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(payload);
+    for name in ["user-agent", "x-forwarded-for", "cf-connecting-ip", "cookie"] {
+        if let Some(v) = headers.get(name) {
+            rb = rb.header(name, v.as_bytes());
+        }
+    }
+    let resp = rb.send().await.map_err(|e| ApiError::new(StatusCode::BAD_GATEWAY, e.to_string()))?;
+    let status = resp.status();
+    let hdrs = resp.headers().clone();
+    let mut builder = Response::builder().status(status.as_u16());
+    for (k, v) in hdrs.iter() {
+        let n = k.as_str();
+        if n.eq_ignore_ascii_case("transfer-encoding")
+            || n.eq_ignore_ascii_case("content-length")
+            || n.eq_ignore_ascii_case("connection")
+        {
+            continue;
+        }
+        builder = builder.header(n, v.as_bytes());
+    }
+    Ok(builder
+        .body(Body::from_stream(resp.bytes_stream()))
+        .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response()))
+}
+
+/// Rotate a refresh token. Reuse of an already-revoked token revokes every live
+/// session for that user (v1's family = the user).
+async fn auth_refresh(State(state): State<AppState>, headers: axum::http::HeaderMap) -> ApiResult<Response> {
+    let meta = req_meta(&headers);
+    let raw = cookie_from_header(&headers, REFRESH_COOKIE)
+        .ok_or_else(|| ApiError::unauthorized("Missing refresh token"))?;
+    let hash = sha256_hex(&raw);
+
+    let rec = sqlx::query(
+        r#"SELECT r."id", r."userId", r."expiresAt", r."revokedAt", u."email"
+           FROM "RefreshToken" r JOIN "User" u ON u."id" = r."userId"
+           WHERE r."tokenHash" = $1 LIMIT 1"#,
+    )
+    .bind(&hash)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or_else(|| ApiError::unauthorized("Invalid or expired refresh token"))?;
+
+    let user_id: String = rec.try_get("userId").map_err(|e| ApiError::internal(e.to_string()))?;
+    let rec_id: String = rec.try_get("id").map_err(|e| ApiError::internal(e.to_string()))?;
+    let email: String = rec.try_get("email").map_err(|e| ApiError::internal(e.to_string()))?;
+    let revoked: Option<chrono::DateTime<chrono::Utc>> = rec.try_get("revokedAt").ok().flatten();
+    let expires: chrono::DateTime<chrono::Utc> =
+        rec.try_get("expiresAt").map_err(|e| ApiError::internal(e.to_string()))?;
+
+    if revoked.is_some() {
+        // Reuse detected — nuke every live session for this user.
+        let _ = sqlx::query(
+            r#"UPDATE "RefreshToken" SET "revokedAt" = now() WHERE "userId" = $1 AND "revokedAt" IS NULL"#,
+        )
+        .bind(&user_id)
+        .execute(&state.pool)
+        .await;
+        audit(
+            &state,
+            Some(&user_id),
+            "LOGIN_FAILED",
+            &meta,
+            Some(json!({ "reason": "refresh_token_reuse_detected", "revokedAllSessions": true })),
+        )
+        .await;
+        return Err(ApiError::unauthorized("Invalid or expired refresh token"));
+    }
+    if expires < chrono::Utc::now() {
+        return Err(ApiError::unauthorized("Invalid or expired refresh token"));
+    }
+
+    let (access, next_raw, next_exp) = issue_tokens(&state, &user_id, &email, &meta).await?;
+    let _ = sqlx::query(r#"UPDATE "RefreshToken" SET "revokedAt" = now() WHERE "id" = $1"#)
+        .bind(&rec_id)
+        .execute(&state.pool)
+        .await;
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .header(axum::http::header::SET_COOKIE, refresh_cookie(&state, &next_raw, next_exp))
+        .body(Body::from(serde_json::to_vec(&json!({ "accessToken": access })).unwrap_or_default()))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()))
+}
+
+async fn auth_logout(State(state): State<AppState>, user: AuthUser, headers: axum::http::HeaderMap) -> ApiResult<Response> {
+    let meta = req_meta(&headers);
+    if let Some(raw) = cookie_from_header(&headers, REFRESH_COOKIE) {
+        let _ = sqlx::query(
+            r#"UPDATE "RefreshToken" SET "revokedAt" = now() WHERE "tokenHash" = $1 AND "revokedAt" IS NULL"#,
+        )
+        .bind(sha256_hex(&raw))
+        .execute(&state.pool)
+        .await;
+    }
+    audit(&state, Some(&user.id), "LOGOUT", &meta, None).await;
+    Ok(Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header(axum::http::header::SET_COOKIE, clear_refresh_cookie(&state))
+        .body(Body::empty())
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()))
 }
 
 fn verify_argon2(password: &str, hash: &str) -> Result<(), ()> {

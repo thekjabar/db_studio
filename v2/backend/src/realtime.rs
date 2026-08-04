@@ -52,26 +52,28 @@ pub fn layer(state: AppState) -> socketioxide::layer::SocketIoLayer {
     // State is captured by clone rather than pulled from an extractor — the
     // socketioxide state API differs across versions and this is version-proof.
     let ns_state = state.clone();
-    io.ns("/realtime", move |socket: SocketRef| {
+    io.ns("/realtime", move |socket: SocketRef, Data(handshake): Data<serde_json::Value>| {
         let state = ns_state.clone();
-        // Handshake auth. v1 accepts `auth.token` or the Authorization header
-        // and disconnects when neither yields a valid JWT.
-        let token = socket
-            .req_parts()
+        // Handshake auth. The client sends `auth: { token }`, which socket.io
+        // delivers as the CONNECT packet payload — NOT as a header or query
+        // param. Reading only the header/query meant every connection was
+        // rejected and the session closed, which surfaces to the client as
+        // engine.io error 1 "Session ID unknown" on its next poll.
+        let from_auth = handshake
+            .get("token")
+            .and_then(|t| t.as_str())
+            .map(|s| s.to_string());
+        let parts = socket.req_parts();
+        let from_header = parts
             .headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "))
-            .map(|s| s.to_string())
-            .or_else(|| {
-                socket
-                    .req_parts()
-                    .uri
-                    .query()
-                    .and_then(|q| {
-                        q.split('&').find_map(|kv| kv.strip_prefix("token=").map(|t| t.to_string()))
-                    })
-            });
+            .map(|s| s.to_string());
+        let from_query = parts.uri.query().and_then(|q| {
+            q.split('&').find_map(|kv| kv.strip_prefix("token=").map(|t| t.to_string()))
+        });
+        let token = from_auth.or(from_header).or(from_query);
 
         let user_id = token
             .as_deref()

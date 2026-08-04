@@ -290,10 +290,24 @@ async fn main() -> anyhow::Result<()> {
         .fallback(proxy)
         // Agent-backed connections bypass Rust entirely (tunnel lives in v1).
         .layer(middleware::from_fn_with_state(state.clone(), agent_guard))
-        .layer(CorsLayer::permissive())
-        // socket.io (/socket.io/*) serving the /realtime namespace the frontend
-        // connects to. Added last so it wraps the finished router.
+        // socket.io (/socket.io/*) serving the /realtime namespace.
         .layer(realtime::layer(state.clone()))
+        // CORS goes on LAST so it is the OUTERMOST layer — otherwise socket.io
+        // answers first and its responses carry no CORS headers at all, which
+        // the browser rejects (the frontend is on queryschema.com, the socket
+        // on api.queryschema.com).
+        //
+        // Mirroring the request origin + allow_credentials mirrors v1's gateway
+        // (`cors: { origin: true, credentials: true }`). A wildcard origin is
+        // NOT usable here: browsers reject `Access-Control-Allow-Origin: *` on
+        // any credentialed request, and tower-http panics on Any + credentials.
+        .layer(
+            CorsLayer::new()
+                .allow_origin(tower_http::cors::AllowOrigin::mirror_request())
+                .allow_methods(tower_http::cors::AllowMethods::mirror_request())
+                .allow_headers(tower_http::cors::AllowHeaders::mirror_request())
+                .allow_credentials(true),
+        )
         .with_state(state);
 
     let addr = format!("0.0.0.0:{port}");

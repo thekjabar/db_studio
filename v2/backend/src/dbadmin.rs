@@ -27,7 +27,7 @@
 //!
 //! Safety model, carried over verbatim from v1:
 //!   * Every identifier that is interpolated into SQL goes through
-//!     [`quote_pg`] → [`assert_ident_shape`] (v1's `IDENT_RE`), so a role,
+//!     [`quote_pg`] â†’ [`assert_ident_shape`] (v1's `IDENT_RE`), so a role,
 //!     schema, table or column name can never break out of its quotes.
 //!   * Privilege keywords are whitelisted per level; the set is **not** widened.
 //!   * Passwords / VALID UNTIL are the only literals interpolated (the grammar
@@ -38,8 +38,8 @@
 //!     for that role would be read-only (VIEWER-scoped probes always, and any
 //!     role on a `readOnly` connection).
 //!
-//! Anything Rust cannot execute faithfully — a non-Postgres dialect, or no
-//! `ENCRYPTION_KEY` to decrypt credentials with — is forwarded to the v1 Node
+//! Anything Rust cannot execute faithfully â€” a non-Postgres dialect, or no
+//! `ENCRYPTION_KEY` to decrypt credentials with â€” is forwarded to the v1 Node
 //! API instead of failing (agent-backed connections are already short-circuited
 //! upstream by `agent_guard`).
 
@@ -77,7 +77,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 // ---------------------------------------------------------------------------
-// quote.util.ts — identifier / type / expression guards
+// quote.util.ts â€” identifier / type / expression guards
 // ---------------------------------------------------------------------------
 
 /// v1: `const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]{0,62}$/`
@@ -93,12 +93,12 @@ fn ident_shape_ok(s: &str) -> bool {
     s.chars().count() <= 63
 }
 
-/// `JSON.stringify(value)` for a string — used verbatim in v1's error messages.
+/// `JSON.stringify(value)` for a string â€” used verbatim in v1's error messages.
 fn js_string(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| format!("\"{s}\""))
 }
 
-/// v1 `assertIdentShape` — `Invalid identifier: "…"` (400).
+/// v1 `assertIdentShape` â€” `Invalid identifier: "â€¦"` (400).
 fn assert_ident_shape(s: &str) -> ApiResult<()> {
     if ident_shape_ok(s) {
         Ok(())
@@ -107,13 +107,13 @@ fn assert_ident_shape(s: &str) -> ApiResult<()> {
     }
 }
 
-/// v1 `quotePg` — shape-check then double-quote.
+/// v1 `quotePg` â€” shape-check then double-quote.
 fn quote_pg(ident: &str) -> ApiResult<String> {
     assert_ident_shape(ident)?;
     Ok(format!("\"{}\"", ident.replace('"', "\"\"")))
 }
 
-/// v1 `assertSqlType` — `/^[A-Za-z][A-Za-z0-9 _(),\[\]]{0,127}$/` on the trimmed
+/// v1 `assertSqlType` â€” `/^[A-Za-z][A-Za-z0-9 _(),\[\]]{0,127}$/` on the trimmed
 /// value; the error quotes the **untrimmed** input, as v1 does.
 fn assert_sql_type(raw: &str) -> ApiResult<String> {
     let t = raw.trim();
@@ -135,7 +135,7 @@ fn assert_sql_type(raw: &str) -> ApiResult<String> {
     }
 }
 
-/// v1 `assertFkAction` — a closed set of ON DELETE / ON UPDATE keywords.
+/// v1 `assertFkAction` â€” a closed set of ON DELETE / ON UPDATE keywords.
 fn assert_fk_action(raw: Option<&String>) -> ApiResult<Option<String>> {
     let Some(raw) = raw else { return Ok(None) };
     let up = raw.to_uppercase();
@@ -169,7 +169,7 @@ fn has_bare_semicolon(s: &str) -> bool {
     false
 }
 
-/// v1 `assertFreeExpr` — length cap + "no second statement".
+/// v1 `assertFreeExpr` â€” length cap + "no second statement".
 fn assert_free_expr(kind: &str, raw: &str) -> ApiResult<String> {
     if raw.chars().count() > EXPR_MAX_LEN {
         return Err(ApiError::bad(format!("{kind} too long (max {EXPR_MAX_LEN})")));
@@ -204,7 +204,7 @@ fn rank(role: &str) -> u8 {
     }
 }
 
-/// v1 `RbacService.require` — 404 when the connection is gone, 403 with the
+/// v1 `RbacService.require` â€” 404 when the connection is gone, 403 with the
 /// exact same wording when access is missing or the role is too low.
 async fn require_role(state: &AppState, conn_id: &str, user_id: &str, min: &str) -> ApiResult<String> {
     let role = conn_role(&state.pool, conn_id, user_id).await?;
@@ -243,7 +243,7 @@ async fn conn_meta(state: &AppState, id: &str) -> ApiResult<ConnMeta> {
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Connection not found"))?;
-    // `readOnly` decides whether the session refuses writes — never default it
+    // `readOnly` decides whether the session refuses writes â€” never default it
     // silently to the permissive value.
     let read_only: bool = row
         .try_get("readOnly")
@@ -267,14 +267,14 @@ async fn open_target(
     user_id: &str,
     read_only: bool,
     timeout_ms: i32,
-) -> ApiResult<PgConnection> {
+) -> ApiResult<crate::TargetConn> {
     let mut c = connect_target(state, id, user_id).await?;
     sqlx::query(&format!("SET statement_timeout = {timeout_ms}"))
-        .execute(&mut c)
+        .execute(&mut *c)
         .await?;
     if read_only {
         sqlx::query("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
-            .execute(&mut c)
+            .execute(&mut *c)
             .await?;
     }
     Ok(c)
@@ -292,7 +292,7 @@ async fn body_json<T: serde::de::DeserializeOwned>(req: Request) -> ApiResult<T>
 
 const MAX_SQL: usize = 10_000;
 
-/// Best-effort audit row (v1 `AuditService.log` — never fails the request).
+/// Best-effort audit row (v1 `AuditService.log` â€” never fails the request).
 #[allow(clippy::too_many_arguments)]
 async fn audit(
     state: &AppState,
@@ -331,11 +331,11 @@ async fn audit(
 }
 
 // ---------------------------------------------------------------------------
-// Row → JSON helpers
+// Row â†’ JSON helpers
 //
 // v1's node-postgres driver hands the controller plain JS objects; wrapping each
 // statement in `jsonb_agg(to_jsonb(t))` reproduces that exactly (same column
-// names, same JSON types) without needing a decoder per Postgres type — which
+// names, same JSON types) without needing a decoder per Postgres type â€” which
 // matters because several of these probes return `numeric` (sum/lsn_diff), a
 // type this build of sqlx cannot decode natively.
 // ---------------------------------------------------------------------------
@@ -395,7 +395,7 @@ fn jint(x: f64) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// db-users — role management on the target Postgres server (OWNER only).
+// db-users â€” role management on the target Postgres server (OWNER only).
 // ---------------------------------------------------------------------------
 
 const ROLES_SQL: &str = r#"
@@ -593,7 +593,7 @@ async fn create_user(
     let sql = format!("CREATE ROLE {name} {}", opts.join(" "));
 
     let mut c = open_target(&state, &id, &user.id, meta.read_only, meta.timeout_ms).await?;
-    sqlx::query(&sql).execute(&mut c).await?;
+    sqlx::query(&sql).execute(&mut *c).await?;
 
     audit(
         &state,
@@ -693,7 +693,7 @@ async fn alter_user(
     let sql = format!("ALTER ROLE {name} {}", opts.join(" "));
 
     let mut c = open_target(&state, &id, &user.id, meta.read_only, meta.timeout_ms).await?;
-    sqlx::query(&sql).execute(&mut c).await?;
+    sqlx::query(&sql).execute(&mut *c).await?;
 
     audit(
         &state,
@@ -725,7 +725,7 @@ async fn drop_user(
     let sql = format!("DROP ROLE IF EXISTS {name}");
 
     let mut c = open_target(&state, &id, &user.id, meta.read_only, meta.timeout_ms).await?;
-    sqlx::query(&sql).execute(&mut c).await?;
+    sqlx::query(&sql).execute(&mut *c).await?;
 
     audit(
         &state,
@@ -752,7 +752,7 @@ struct GrantDto {
     with_grant_option: Option<bool>,
 }
 
-/// v1 `PRIVS_BY_LEVEL` — the allowed privilege keywords per level. Do not widen.
+/// v1 `PRIVS_BY_LEVEL` â€” the allowed privilege keywords per level. Do not widen.
 fn privs_for_level(level: &str) -> Option<&'static [&'static str]> {
     match level {
         "database" => Some(&["ALL", "CONNECT", "CREATE", "TEMPORARY"]),
@@ -764,7 +764,7 @@ fn privs_for_level(level: &str) -> Option<&'static [&'static str]> {
     }
 }
 
-/// v1 `normalizePrivileges` — validate + canonicalize; `ALL` subsumes the rest.
+/// v1 `normalizePrivileges` â€” validate + canonicalize; `ALL` subsumes the rest.
 fn normalize_privileges(level: &str, requested: &[String]) -> ApiResult<Vec<String>> {
     let allowed = privs_for_level(level)
         .ok_or_else(|| ApiError::bad(format!("Invalid privilege level: {level}")))?;
@@ -836,7 +836,7 @@ async fn grant_or_revoke(
     // Resolve the target before dialling out, so a missing schema/table is
     // reported as v1's validation error rather than a connection failure.
     let partial_target = match dto.level.as_str() {
-        "database" => None, // needs current_database() — filled in below
+        "database" => None, // needs current_database() â€” filled in below
         "schema" => {
             let s = dto
                 .schema
@@ -868,7 +868,7 @@ async fn grant_or_revoke(
         None => {
             // GRANT needs a literal database name; scope it to the connected DB.
             let db: Option<String> = sqlx::query_scalar("SELECT current_database() AS db")
-                .fetch_optional(&mut c)
+                .fetch_optional(&mut *c)
                 .await?;
             let db = db.ok_or_else(|| ApiError::bad("Could not resolve current database"))?;
             format!("DATABASE {}", quote_pg(&db)?)
@@ -882,7 +882,7 @@ async fn grant_or_revoke(
         format!("REVOKE {} ON {target} FROM {role}", privs.join(", "))
     };
 
-    sqlx::query(&sql).execute(&mut c).await?;
+    sqlx::query(&sql).execute(&mut *c).await?;
 
     audit(
         &state,
@@ -949,7 +949,7 @@ async fn membership(
     };
 
     let mut c = open_target(&state, &id, &user.id, meta.read_only, meta.timeout_ms).await?;
-    sqlx::query(&sql).execute(&mut c).await?;
+    sqlx::query(&sql).execute(&mut *c).await?;
 
     audit(
         &state,
@@ -970,7 +970,7 @@ async fn membership(
     Ok(Json(json!({ "ok": true })).into_response())
 }
 
-/// v1 `redactPassword` — `/PASSWORD\s+'(?:[^']|'')*'/i` → `PASSWORD '***'`
+/// v1 `redactPassword` â€” `/PASSWORD\s+'(?:[^']|'')*'/i` â†’ `PASSWORD '***'`
 /// (first match only), so plaintext passwords never reach the audit log.
 fn redact_password(sql: &str) -> String {
     let b = sql.as_bytes();
@@ -988,7 +988,7 @@ fn redact_password(sql: &str) -> String {
         i += 1; // opening quote
         loop {
             if i >= b.len() {
-                return sql.to_string(); // unterminated literal — no match
+                return sql.to_string(); // unterminated literal â€” no match
             }
             if b[i] == b'\'' {
                 if i + 1 < b.len() && b[i + 1] == b'\'' {
@@ -1020,11 +1020,11 @@ fn find_ci(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
 }
 
 // ---------------------------------------------------------------------------
-// schema/tables — CREATE / ALTER / DROP TABLE with a preview-then-confirm gate.
+// schema/tables â€” CREATE / ALTER / DROP TABLE with a preview-then-confirm gate.
 // ---------------------------------------------------------------------------
 
 /// `Option<Option<T>>` that distinguishes an absent key from an explicit `null`
-/// — v1 branches on `!== undefined` for `default` and `comment`.
+/// â€” v1 branches on `!== undefined` for `default` and `comment`.
 fn double_option<'de, T, D>(d: D) -> Result<Option<Option<T>>, D::Error>
 where
     T: Deserialize<'de>,
@@ -1104,7 +1104,7 @@ struct AlterTableDto {
     confirm: Option<bool>,
 }
 
-/// v1 `renderDefault` — `defaultIsExpression` wraps the (validated) expression.
+/// v1 `renderDefault` â€” `defaultIsExpression` wraps the (validated) expression.
 fn render_default(c: &ColumnSpecDto) -> ApiResult<Option<String>> {
     let Some(d) = c.default.as_deref().filter(|d| !d.is_empty()) else {
         return Ok(None);
@@ -1138,7 +1138,7 @@ fn col_definition(c: &ColumnSpecDto) -> ApiResult<String> {
     Ok(parts.join(" "))
 }
 
-/// v1 `fkClause` — `refSchema` defaults to the table's own schema.
+/// v1 `fkClause` â€” `refSchema` defaults to the table's own schema.
 fn fk_clause(spec_schema: &str, fk: &ForeignKeySpecDto) -> ApiResult<String> {
     let mut refs = Vec::with_capacity(fk.ref_columns.len());
     for c in &fk.ref_columns {
@@ -1164,7 +1164,7 @@ fn fk_clause(spec_schema: &str, fk: &ForeignKeySpecDto) -> ApiResult<String> {
     Ok(s)
 }
 
-/// v1 `validateSchemaTable` — refuse DDL against a table that isn't there.
+/// v1 `validateSchemaTable` â€” refuse DDL against a table that isn't there.
 async fn validate_schema_table(c: &mut PgConnection, schema: &str, table: &str) -> ApiResult<()> {
     let found: Option<i32> = sqlx::query_scalar(
         "SELECT 1 FROM information_schema.tables WHERE table_schema=$1 AND table_name=$2",
@@ -1252,7 +1252,7 @@ async fn alter_table(
     }
     let dto: AlterTableDto = body_json(req).await?;
 
-    // v1 opens the driver (and validates the table) before building anything —
+    // v1 opens the driver (and validates the table) before building anything â€”
     // both the preview and the execute path go through validateSchemaTable.
     let mut c = open_target(&state, &id, &user.id, meta.read_only, meta.timeout_ms).await?;
     validate_schema_table(&mut c, &dto.schema, &dto.name).await?;
@@ -1367,7 +1367,7 @@ async fn drop_table(
         return Ok(crate::proxy(State(state), req).await);
     }
     // Express hands `undefined` straight through to the driver, which reports it
-    // as an unknown table — reproduce that rather than inventing a new error.
+    // as an unknown table â€” reproduce that rather than inventing a new error.
     let schema = q.schema.unwrap_or_else(|| "undefined".into());
     let name = q.name.unwrap_or_else(|| "undefined".into());
 
@@ -1378,13 +1378,13 @@ async fn drop_table(
     if q.confirm.as_deref() != Some("true") {
         return Ok(Json(json!({ "preview": sql, "executed": false })).into_response());
     }
-    sqlx::query(&sql).execute(&mut c).await?;
+    sqlx::query(&sql).execute(&mut *c).await?;
     audit(&state, &user.id, &id, "SCHEMA_CHANGE", Some(&sql), None, &rmeta, None).await;
     Ok(Json(json!({ "preview": sql, "executed": true })).into_response())
 }
 
 // ---------------------------------------------------------------------------
-// db-health — read-only operational probes against the target database.
+// db-health â€” read-only operational probes against the target database.
 // ---------------------------------------------------------------------------
 
 /// The pg message only (node-pg's `err.message`), so the `errors[]` strings read
@@ -1415,7 +1415,7 @@ fn squash_head(sql: &str) -> String {
     out
 }
 
-/// v1 `runSafe` — a failing probe records an error string instead of aborting.
+/// v1 `runSafe` â€” a failing probe records an error string instead of aborting.
 async fn run_safe(c: &mut PgConnection, sql: &str, errors: &mut Vec<String>) -> Vec<Value> {
     match query_json(&mut *c, sql, None).await {
         Ok(rows) => rows,
@@ -1477,7 +1477,7 @@ fn truncate_query(v: &Value, max: usize) -> Value {
         Value::String(s) if !s.is_empty() => {
             if s.chars().count() > max {
                 let head: String = s.chars().take(max).collect();
-                Value::String(format!("{head}…"))
+                Value::String(format!("{head}â€¦"))
             } else {
                 Value::String(s.clone())
             }
@@ -1499,7 +1499,7 @@ async fn db_health(
         // MySQL / SQLite / MSSQL probes live in the Node driver layer.
         return Ok(crate::proxy(State(state), req).await);
     }
-    // v1 runs health as VIEWER → always a read-only session.
+    // v1 runs health as VIEWER â†’ always a read-only session.
     let mut c = open_target(&state, &id, &user.id, true, meta.timeout_ms).await?;
 
     let mut errors: Vec<String> = Vec::new();
@@ -1632,7 +1632,7 @@ async fn db_health(
     }
 
     // Long-running statements. jsonb_agg needs an explicit ORDER BY to keep the
-    // inner `ORDER BY query_start ASC` — longest-running first.
+    // inner `ORDER BY query_start ASC` â€” longest-running first.
     let rows = run_safe_ordered(
         &mut c,
         "SELECT pid, usename, datname,\n            EXTRACT(EPOCH FROM (now() - query_start)) * 1000 AS duration_ms,\n            state, query, wait_event\n     FROM pg_stat_activity\n     WHERE state <> 'idle'\n       AND query NOT ILIKE '%pg_stat_activity%'\n       AND query_start IS NOT NULL\n       AND now() - query_start > interval '10 seconds'\n     ORDER BY query_start ASC\n     LIMIT 20",
@@ -1676,14 +1676,14 @@ fn fmt_num(n: f64) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// sensitive-scan — name/type heuristics over the introspected schema (OWNER).
+// sensitive-scan â€” name/type heuristics over the introspected schema (OWNER).
 // ---------------------------------------------------------------------------
 
 fn is_word_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
-/// `a.?b` — `b` immediately after `a`, or with exactly one character between.
+/// `a.?b` â€” `b` immediately after `a`, or with exactly one character between.
 fn dot_opt(h: &str, a: &str, b: &str) -> bool {
     let hb = h.as_bytes();
     let ab = a.as_bytes();
@@ -1702,7 +1702,7 @@ fn dot_opt(h: &str, a: &str, b: &str) -> bool {
     false
 }
 
-/// `w\b` — `w` followed by end-of-string or a non-word character.
+/// `w\b` â€” `w` followed by end-of-string or a non-word character.
 fn word_end(h: &str, w: &str) -> bool {
     let hb = h.as_bytes();
     let wb = w.as_bytes();
@@ -1733,7 +1733,7 @@ fn ip_word(h: &str) -> bool {
     false
 }
 
-/// v1 `NAME_RULES`, in order — the first rule that matches wins.
+/// v1 `NAME_RULES`, in order â€” the first rule that matches wins.
 fn sensitive_kind(column: &str) -> Option<&'static str> {
     let n = column.to_lowercase();
     if n.contains("passwd") || n.contains("password") || n.contains("passhash") || n.contains("pwd") {
@@ -1803,7 +1803,7 @@ async fn sensitive_scan(
     if !servable(&state, &meta) {
         return Ok(crate::proxy(State(state), req).await);
     }
-    // v1 scans as VIEWER — introspection only, never row data.
+    // v1 scans as VIEWER â€” introspection only, never row data.
     let mut c = open_target(&state, &id, &user.id, true, meta.timeout_ms).await?;
 
     // The column half of v1's introspectForER (the FK half is unused here).
@@ -1817,7 +1817,7 @@ async fn sensitive_scan(
             AND n.nspname NOT IN ('pg_catalog','information_schema') \
           ORDER BY n.nspname, cls.relname, a.attnum",
     )
-    .fetch_all(&mut c)
+    .fetch_all(&mut *c)
     .await?;
 
     let mut findings: Vec<Value> = Vec::new();
@@ -1856,7 +1856,7 @@ mod tests {
 
     #[test]
     fn routes_do_not_conflict() {
-        // `Router::route` panics on an ambiguous path — assert the static
+        // `Router::route` panics on an ambiguous path â€” assert the static
         // (`grant`, `membership`) vs dynamic (`:role`) siblings coexist.
         let _ = routes();
     }
@@ -1877,7 +1877,7 @@ mod tests {
         assert!(normalize_privileges("table", &["DROP".into()]).is_err());
         assert!(normalize_privileges("schema", &["SELECT".into()]).is_err());
         // `.unwrap()` needs Debug on the error type, which ApiError doesn't
-        // implement — match instead so the crate's test target still builds.
+        // implement â€” match instead so the crate's test target still builds.
         match normalize_privileges("table", &["select".into(), "ALL".into()]) {
             Ok(v) => assert_eq!(v, vec!["ALL PRIVILEGES".to_string()]),
             Err(_) => panic!("expected ALL to collapse to ALL PRIVILEGES"),

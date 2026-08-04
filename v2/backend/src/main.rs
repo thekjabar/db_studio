@@ -2318,7 +2318,11 @@ async fn run_on<'e, E: sqlx::Executor<'e, Database = Pg>>(exec: E, sql: &str, ma
 // Target-database handlers â€” decrypt v1 credentials, connect, run against it.
 // ---------------------------------------------------------------------------
 
-async fn connect_target(state: &AppState, id: &str, user_id: &str) -> ApiResult<PgConnection> {
+async fn connect_target(
+    state: &AppState,
+    id: &str,
+    user_id: &str,
+) -> ApiResult<sqlx::pool::PoolConnection<sqlx::Postgres>> {
     let crypto = state
         .crypto
         .as_ref()
@@ -2378,44 +2382,98 @@ async fn connect_target(state: &AppState, id: &str, user_id: &str) -> ApiResult<
         .password(&creds.password)
         .database(&creds.database)
         .ssl_mode(PgSslMode::Disable);
-    PgConnection::connect_with(&opts)
+
+    // Reuse a pool per connection instead of dialling per request. This is the
+    // dominant cost on agent-routed connections: opening a tunnel stream plus a
+    // Postgres startup/auth handshake is ~4 sequential round trips to the
+    // agent's machine, paid on EVERY request. v1 cached drivers for the same
+    // reason. The tunnel guard is parked next to the pool so the loopback
+    // listener outlives the connections using it.
+    let pool = {
+        let mut cache = TARGET_POOLS.get_or_init(Default::default).lock().unwrap();
+        cache.retain(|_, v| v.last_used.elapsed() < std::time::Duration::from_secs(300));
+        match cache.get_mut(id) {
+            Some(entry) => {
+                entry.last_used = std::time::Instant::now();
+                entry.pool.clone()
+            }
+            None => {
+                let p = PgPoolOptions::new()
+                    .max_connections(4)
+                    .idle_timeout(std::time::Duration::from_secs(240))
+                    .connect_lazy_with(opts);
+                cache.insert(
+                    id.to_string(),
+                    CachedTarget { pool: p.clone(), last_used: std::time::Instant::now(), _tunnel },
+                );
+                p
+            }
+        }
+    };
+    pool.acquire()
         .await
         .map_err(|e| ApiError::bad(format!("connect to target failed: {e}")))
 }
 
+/// A connection checked out of a cached target pool. Returns itself to the pool
+/// on drop, which is what makes connection reuse work — deref it (`&mut *c`) to
+/// get the `&mut PgConnection` sqlx executors want.
+pub(crate) type TargetConn = sqlx::pool::PoolConnection<sqlx::Postgres>;
+
+/// A live pool to one customer database, plus the tunnel guard keeping its
+/// loopback bridge open (None for directly-reachable databases).
+struct CachedTarget {
+    pool: PgPool,
+    last_used: std::time::Instant,
+    _tunnel: Option<tunnel::OpenTunnel>,
+}
+
+static TARGET_POOLS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, CachedTarget>>> =
+    std::sync::OnceLock::new();
+
+/// Drop any cached pool for a connection — call after its credentials change or
+/// it is deleted, so the next request dials with the new details.
+pub(crate) fn evict_target_pool(id: &str) {
+    if let Some(m) = TARGET_POOLS.get() {
+        if let Ok(mut c) = m.lock() {
+            c.remove(id);
+        }
+    }
+}
+
 async fn conn_schemas(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let mut c = connect_target(&state, &id, &user.id).await?;
-    Ok(Json(json!({ "schemas": core_schemas(&mut c).await? })))
+    Ok(Json(json!({ "schemas": core_schemas(&mut *c).await? })))
 }
 
 async fn conn_tables(State(state): State<AppState>, user: AuthUser, Path((id, schema)): Path<(String, String)>) -> ApiResult<Json<Value>> {
     let mut c = connect_target(&state, &id, &user.id).await?;
-    Ok(Json(json!({ "tables": core_tables(&mut c, &schema).await? })))
+    Ok(Json(json!({ "tables": core_tables(&mut *c, &schema).await? })))
 }
 
 async fn conn_columns(State(state): State<AppState>, user: AuthUser, Path((id, schema, table)): Path<(String, String, String)>) -> ApiResult<Json<Value>> {
     let mut c = connect_target(&state, &id, &user.id).await?;
-    Ok(Json(json!({ "columns": core_columns(&mut c, &schema, &table).await? })))
+    Ok(Json(json!({ "columns": core_columns(&mut *c, &schema, &table).await? })))
 }
 
 async fn conn_table_rows(State(state): State<AppState>, user: AuthUser, Path((id, schema, table)): Path<(String, String, String)>, Query(params): Query<RowsParams>) -> ApiResult<Json<Value>> {
     let mut c = connect_target(&state, &id, &user.id).await?;
-    if !core_table_exists(&mut c, &schema, &table).await? {
+    if !core_table_exists(&mut *c, &schema, &table).await? {
         return Err(ApiError::bad(format!("Unknown table {schema}.{table}")));
     }
     let limit = params.limit.unwrap_or(100).clamp(1, state.max_rows);
     let offset = params.offset.unwrap_or(0).max(0);
     let (qs, qt) = (quote_ident(&schema), quote_ident(&table));
     let start = Instant::now();
-    let rows_json = core_rows_json(&mut c, &qs, &qt, limit, offset).await?;
+    let rows_json = core_rows_json(&mut *c, &qs, &qt, limit, offset).await?;
     let took = ms(start);
-    let total = core_count(&mut c, &qs, &qt).await.ok();
+    let total = core_count(&mut *c, &qs, &qt).await.ok();
     Ok(Json(rows_response(rows_json, total, limit, offset, took)))
 }
 
 async fn conn_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Json(body): Json<RunBody>) -> ApiResult<Json<Value>> {
     let mut c = connect_target(&state, &id, &user.id).await?;
-    run_on(&mut c, &body.sql, state.max_rows).await.map(Json)
+    run_on(&mut *c, &body.sql, state.max_rows).await.map(Json)
 }
 
 // ---------------------------------------------------------------------------
@@ -2653,7 +2711,7 @@ async fn v1_connection_delete(State(state): State<AppState>, user: AuthUser, Pat
 
 async fn v1_connection_test(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     match connect_target(&state, &id, &user.id).await {
-        Ok(mut c) => match sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&mut c).await {
+        Ok(mut c) => match sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&mut *c).await {
             Ok(_) => Ok(Json(json!({ "ok": true }))),
             Err(e) => Ok(Json(json!({ "ok": false, "error": e.to_string() }))),
         },
@@ -2689,7 +2747,7 @@ async fn row_insert(State(state): State<AppState>, user: AuthUser, Path((id, tab
     require_write(&state.pool, &id, &user.id).await?;
     let mut c = connect_target(&state, &id, &user.id).await?;
     let schema = q.schema.unwrap_or_else(|| "public".into());
-    if !core_table_exists(&mut c, &schema, &table).await? {
+    if !core_table_exists(&mut *c, &schema, &table).await? {
         return Err(ApiError::bad(format!("Unknown table {schema}.{table}")));
     }
     let keys = json_keys(&body.values);
@@ -2701,7 +2759,7 @@ async fn row_insert(State(state): State<AppState>, user: AuthUser, Path((id, tab
     let sql = format!(
         "WITH ins AS (INSERT INTO {qs}.{qt} ({cols}) SELECT {cols} FROM jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) RETURNING *) SELECT to_jsonb(ins) FROM ins",
     );
-    let row: Value = sqlx::query_scalar(&sql).bind(&body.values).fetch_one(&mut c).await?;
+    let row: Value = sqlx::query_scalar(&sql).bind(&body.values).fetch_one(&mut *c).await?;
     Ok(Json(row))
 }
 
@@ -2709,7 +2767,7 @@ async fn row_update(State(state): State<AppState>, user: AuthUser, Path((id, tab
     require_write(&state.pool, &id, &user.id).await?;
     let mut c = connect_target(&state, &id, &user.id).await?;
     let schema = q.schema.unwrap_or_else(|| "public".into());
-    if !core_table_exists(&mut c, &schema, &table).await? {
+    if !core_table_exists(&mut *c, &schema, &table).await? {
         return Err(ApiError::bad(format!("Unknown table {schema}.{table}")));
     }
     let vkeys = json_keys(&body.values);
@@ -2725,7 +2783,7 @@ async fn row_update(State(state): State<AppState>, user: AuthUser, Path((id, tab
          FROM jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) v, jsonb_populate_record(NULL::{qs}.{qt}, $2::jsonb) k \
          WHERE {whr} RETURNING o.*) SELECT to_jsonb(upd) FROM upd",
     );
-    let row: Option<Value> = sqlx::query_scalar(&sql).bind(&body.values).bind(&body.pk).fetch_optional(&mut c).await?;
+    let row: Option<Value> = sqlx::query_scalar(&sql).bind(&body.values).bind(&body.pk).fetch_optional(&mut *c).await?;
     Ok(Json(row.unwrap_or(Value::Null)))
 }
 
@@ -2733,7 +2791,7 @@ async fn row_delete(State(state): State<AppState>, user: AuthUser, Path((id, tab
     require_write(&state.pool, &id, &user.id).await?;
     let mut c = connect_target(&state, &id, &user.id).await?;
     let schema = q.schema.unwrap_or_else(|| "public".into());
-    if !core_table_exists(&mut c, &schema, &table).await? {
+    if !core_table_exists(&mut *c, &schema, &table).await? {
         return Err(ApiError::bad(format!("Unknown table {schema}.{table}")));
     }
     let pkeys = json_keys(&body.pk);
@@ -2745,7 +2803,7 @@ async fn row_delete(State(state): State<AppState>, user: AuthUser, Path((id, tab
     let sql = format!(
         "DELETE FROM {qs}.{qt} AS o USING jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) k WHERE {whr}",
     );
-    let n = sqlx::query(&sql).bind(&body.pk).execute(&mut c).await?.rows_affected();
+    let n = sqlx::query(&sql).bind(&body.pk).execute(&mut *c).await?.rows_affected();
     Ok(Json(json!({ "deleted": n })))
 }
 
@@ -2767,7 +2825,7 @@ async fn row_bulk_delete(State(state): State<AppState>, user: AuthUser, Path((id
     require_write(&state.pool, &id, &user.id).await?;
     let mut c = connect_target(&state, &id, &user.id).await?;
     let schema = q.schema.unwrap_or_else(|| "public".into());
-    if !core_table_exists(&mut c, &schema, &table).await? {
+    if !core_table_exists(&mut *c, &schema, &table).await? {
         return Err(ApiError::bad(format!("Unknown table {schema}.{table}")));
     }
     if body.pks.is_empty() {
@@ -2782,7 +2840,7 @@ async fn row_bulk_delete(State(state): State<AppState>, user: AuthUser, Path((id
     let sql = format!(
         "DELETE FROM {qs}.{qt} AS o USING jsonb_populate_recordset(NULL::{qs}.{qt}, $1::jsonb) k WHERE {whr}",
     );
-    let n = sqlx::query(&sql).bind(Value::Array(body.pks)).execute(&mut c).await?.rows_affected();
+    let n = sqlx::query(&sql).bind(Value::Array(body.pks)).execute(&mut *c).await?.rows_affected();
     Ok(Json(json!({ "affectedRows": n })))
 }
 
@@ -2790,7 +2848,7 @@ async fn row_bulk_update(State(state): State<AppState>, user: AuthUser, Path((id
     require_write(&state.pool, &id, &user.id).await?;
     let mut c = connect_target(&state, &id, &user.id).await?;
     let schema = q.schema.unwrap_or_else(|| "public".into());
-    if !core_table_exists(&mut c, &schema, &table).await? {
+    if !core_table_exists(&mut *c, &schema, &table).await? {
         return Err(ApiError::bad(format!("Unknown table {schema}.{table}")));
     }
     if body.pks.is_empty() {
@@ -2809,7 +2867,7 @@ async fn row_bulk_update(State(state): State<AppState>, user: AuthUser, Path((id
          FROM jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) v, jsonb_populate_recordset(NULL::{qs}.{qt}, $2::jsonb) k \
          WHERE {whr}",
     );
-    let n = sqlx::query(&sql).bind(&body.values).bind(Value::Array(body.pks)).execute(&mut c).await?.rows_affected();
+    let n = sqlx::query(&sql).bind(&body.values).bind(Value::Array(body.pks)).execute(&mut *c).await?.rows_affected();
     Ok(Json(json!({ "affectedRows": n })))
 }
 
@@ -2837,7 +2895,7 @@ async fn v1_definition(State(state): State<AppState>, user: AuthUser, Path((id, 
            LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
           WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped \
           ORDER BY a.attnum",
-    ).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+    ).bind(&schema).bind(&name).fetch_all(&mut *c).await?;
     if cols.is_empty() {
         return Err(ApiError::bad(format!("Unknown table {schema}.{name}")));
     }
@@ -2846,13 +2904,13 @@ async fn v1_definition(State(state): State<AppState>, user: AuthUser, Path((id, 
            FROM pg_constraint con JOIN pg_class c ON c.oid = con.conrelid \
            JOIN pg_namespace n ON n.oid = c.relnamespace \
           WHERE n.nspname = $1 AND c.relname = $2 ORDER BY con.contype DESC, con.conname",
-    ).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+    ).bind(&schema).bind(&name).fetch_all(&mut *c).await?;
     let tablespace: String = sqlx::query_scalar(
         "SELECT COALESCE(t.spcname, 'pg_default')::text FROM pg_class c \
            JOIN pg_namespace n ON n.oid = c.relnamespace \
            LEFT JOIN pg_tablespace t ON t.oid = c.reltablespace \
           WHERE n.nspname = $1 AND c.relname = $2",
-    ).bind(&schema).bind(&name).fetch_optional(&mut c).await?.unwrap_or_else(|| "pg_default".into());
+    ).bind(&schema).bind(&name).fetch_optional(&mut *c).await?.unwrap_or_else(|| "pg_default".into());
     let idx = sqlx::query(
         "SELECT i.relname::text AS name, pg_catalog.pg_get_indexdef(ix.indexrelid, 0, true) AS def, \
                 (con.conname IS NOT NULL) AS is_constraint \
@@ -2861,13 +2919,13 @@ async fn v1_definition(State(state): State<AppState>, user: AuthUser, Path((id, 
            JOIN pg_namespace n ON n.oid = c.relnamespace \
            LEFT JOIN pg_constraint con ON con.conindid = ix.indexrelid \
           WHERE n.nspname = $1 AND c.relname = $2 ORDER BY i.relname",
-    ).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+    ).bind(&schema).bind(&name).fetch_all(&mut *c).await?;
     let trig = sqlx::query(
         "SELECT pg_catalog.pg_get_triggerdef(tg.oid, true) AS def \
            FROM pg_trigger tg JOIN pg_class c ON c.oid = tg.tgrelid \
            JOIN pg_namespace n ON n.oid = c.relnamespace \
           WHERE n.nspname = $1 AND c.relname = $2 AND NOT tg.tgisinternal ORDER BY tg.tgname",
-    ).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+    ).bind(&schema).bind(&name).fetch_all(&mut *c).await?;
 
     let qualified = format!("{}.{}", quote_ident(&schema), quote_ident(&name));
     let mut body: Vec<String> = Vec::new();
@@ -2918,7 +2976,7 @@ async fn v1_er(State(state): State<AppState>, user: AuthUser, Path(id): Path<Str
           WHERE cls.relkind IN ('r','v','m','p') AND n.nspname NOT IN ('pg_catalog','information_schema') \
             AND ($1::text IS NULL OR n.nspname = $1) \
           ORDER BY n.nspname, cls.relname, a.attnum",
-    ).bind(&schema).fetch_all(&mut c).await?;
+    ).bind(&schema).fetch_all(&mut *c).await?;
 
     let mut order: Vec<String> = Vec::new();
     let mut nodes: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
@@ -2952,7 +3010,7 @@ async fn v1_er(State(state): State<AppState>, user: AuthUser, Path(id): Path<Str
            JOIN pg_class rcls ON rcls.oid = con.confrelid JOIN pg_namespace rn ON rn.oid = rcls.relnamespace \
           WHERE con.contype = 'f' AND n.nspname NOT IN ('pg_catalog','information_schema') \
             AND ($1::text IS NULL OR n.nspname = $1)",
-    ).bind(&schema).fetch_all(&mut c).await?;
+    ).bind(&schema).fetch_all(&mut *c).await?;
     let edges: Vec<Value> = fks
         .iter()
         .map(|r| {
@@ -2980,7 +3038,7 @@ async fn v1_functions(State(state): State<AppState>, user: AuthUser, Path(id): P
            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang \
           WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND ($1::text IS NULL OR n.nspname = $1) \
           ORDER BY n.nspname, p.proname",
-    ).bind(&q.schema).fetch_all(&mut c).await?;
+    ).bind(&q.schema).fetch_all(&mut *c).await?;
     let out: Vec<Value> = rows.iter().map(|r| json!({
         "schema": r.try_get::<String, _>("schema").unwrap_or_default(),
         "name": r.try_get::<String, _>("name").unwrap_or_default(),
@@ -2998,7 +3056,7 @@ async fn v1_triggers(State(state): State<AppState>, user: AuthUser, Path(id): Pa
                 action_timing::text AS timing, event_manipulation::text AS event, action_statement::text AS statement \
            FROM information_schema.triggers WHERE ($1::text IS NULL OR trigger_schema = $1) \
           ORDER BY trigger_schema, event_object_table, trigger_name",
-    ).bind(&q.schema).fetch_all(&mut c).await?;
+    ).bind(&q.schema).fetch_all(&mut *c).await?;
     let out: Vec<Value> = rows.iter().map(|r| json!({
         "schema": r.try_get::<String, _>("schema").unwrap_or_default(),
         "table": r.try_get::<String, _>("table").unwrap_or_default(),
@@ -3024,7 +3082,7 @@ async fn v1_indexes(State(state): State<AppState>, user: AuthUser, Path(id): Pat
             AND ($1::text IS NULL OR n.nspname = $1) AND ($2::text IS NULL OR c.relname = $2) \
           GROUP BY n.nspname, c.relname, i.relname, ix.indisunique, ix.indisprimary, am.amname \
           ORDER BY n.nspname, c.relname, i.relname",
-    ).bind(&q.schema).bind(&q.table).fetch_all(&mut c).await?;
+    ).bind(&q.schema).bind(&q.table).fetch_all(&mut *c).await?;
     let out: Vec<Value> = rows.iter().map(|r| json!({
         "name": r.try_get::<String, _>("name").unwrap_or_default(),
         "schema": r.try_get::<String, _>("schema").unwrap_or_default(),
@@ -3371,7 +3429,7 @@ async fn v1_update_me(State(state): State<AppState>, user: AuthUser, Json(body):
 
 async fn v1_schemas(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let mut c = connect_target(&state, &id, &user.id).await?;
-    Ok(Json(json!(core_schemas(&mut c).await?)))
+    Ok(Json(json!(core_schemas(&mut *c).await?)))
 }
 
 async fn v1_tables(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -3381,7 +3439,7 @@ async fn v1_tables(State(state): State<AppState>, user: AuthUser, Path(id): Path
          WHERE table_schema NOT IN ('pg_catalog','information_schema') AND table_schema NOT LIKE 'pg_%' \
          ORDER BY table_schema, table_name",
     )
-    .fetch_all(&mut c)
+    .fetch_all(&mut *c)
     .await?;
     let tables: Vec<Value> = rows
         .iter()
@@ -3472,7 +3530,7 @@ fn column_infos(rows: &[PgRow]) -> Vec<Value> {
 async fn v1_conn_columns(State(state): State<AppState>, user: AuthUser, Path((id, name)): Path<(String, String)>, Query(q): Query<SchemaQ>) -> ApiResult<Json<Value>> {
     let mut c = connect_target(&state, &id, &user.id).await?;
     let schema = q.schema.unwrap_or_else(|| "public".into());
-    let rows = sqlx::query(COLUMN_INFO_SQL).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+    let rows = sqlx::query(COLUMN_INFO_SQL).bind(&schema).bind(&name).fetch_all(&mut *c).await?;
     Ok(Json(json!(column_infos(&rows))))
 }
 
@@ -3652,13 +3710,13 @@ async fn v1_table_data(State(state): State<AppState>, user: AuthUser, Path((id, 
     let estimate: i64 = sqlx::query_scalar(
         "SELECT GREATEST(0, c.reltuples)::bigint FROM pg_class c \
            JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relname = $2",
-    ).bind(&schema).bind(&name).fetch_optional(&mut c).await?.unwrap_or(0);
+    ).bind(&schema).bind(&name).fetch_optional(&mut *c).await?.unwrap_or(0);
 
     let mut total: Option<i64>;
     let mut total_is_estimate = false;
     if where_parts.is_empty() {
         if estimate < EXACT_COUNT_THRESHOLD {
-            total = Some(sqlx::query_scalar::<_, i64>(&format!("SELECT count(*)::bigint FROM {fqtn}")).fetch_one(&mut c).await?);
+            total = Some(sqlx::query_scalar::<_, i64>(&format!("SELECT count(*)::bigint FROM {fqtn}")).fetch_one(&mut *c).await?);
         } else {
             total = Some(estimate);
             total_is_estimate = true;
@@ -3667,7 +3725,7 @@ async fn v1_table_data(State(state): State<AppState>, user: AuthUser, Path((id, 
         let sql = format!("SELECT count(*)::bigint FROM {fqtn} {where_sql}");
         let mut cq = sqlx::query_scalar::<_, i64>(&sql);
         for b in &binds { cq = cq.bind(b.as_deref()); }
-        total = Some(cq.fetch_one(&mut c).await?);
+        total = Some(cq.fetch_one(&mut *c).await?);
     } else {
         total = None;
     }
@@ -3679,10 +3737,10 @@ async fn v1_table_data(State(state): State<AppState>, user: AuthUser, Path((id, 
     );
     let mut rq = sqlx::query_scalar::<_, Value>(&rows_sql);
     for b in &binds { rq = rq.bind(b.as_deref()); }
-    let rows_json: Value = rq.fetch_one(&mut c).await?;
+    let rows_json: Value = rq.fetch_one(&mut *c).await?;
 
     // Columns (ColumnMeta shape) for the response.
-    let colrows = sqlx::query(COLUMN_INFO_SQL).bind(&schema).bind(&name).fetch_all(&mut c).await?;
+    let colrows = sqlx::query(COLUMN_INFO_SQL).bind(&schema).bind(&name).fetch_all(&mut *c).await?;
     let cols = column_infos(&colrows);
 
     // `total: null` when unknown â€” keep the field present.
@@ -3713,7 +3771,7 @@ async fn v1_lookup(State(state): State<AppState>, user: AuthUser, Path((id, name
         "SELECT to_jsonb(t) FROM (SELECT * FROM {qs}.{qt} WHERE {} = CAST($1 AS {cast}) LIMIT 1) t",
         quote_ident(&column),
     );
-    let row: Option<Value> = sqlx::query_scalar(&sql).bind(&value).fetch_optional(&mut c).await?;
+    let row: Option<Value> = sqlx::query_scalar(&sql).bind(&value).fetch_optional(&mut *c).await?;
     Ok(Json(json!({ "row": row })).into_response())
 }
 
@@ -3754,7 +3812,7 @@ async fn v1_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<
         let wrapped = format!(
             "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM (SELECT * FROM ({sql}) _q LIMIT {max}) t",
         );
-        let rows_json: Value = sqlx::query_scalar(&wrapped).fetch_one(&mut c).await?;
+        let rows_json: Value = sqlx::query_scalar(&wrapped).fetch_one(&mut *c).await?;
         let dur = ms(start);
         let row_count = rows_json.as_array().map(|a| a.len()).unwrap_or(0);
         let fields = if fields.is_empty() {
@@ -3772,7 +3830,7 @@ async fn v1_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<
             "appliedLimit": max,
         })))
     } else {
-        let affected = sqlx::query(&sql).execute(&mut c).await?.rows_affected();
+        let affected = sqlx::query(&sql).execute(&mut *c).await?.rows_affected();
         Ok(Json(json!({
             "rows": [],
             "rowCount": affected,

@@ -1,24 +1,24 @@
-//! Realtime table updates — the `/realtime` socket.io namespace.
+﻿//! Realtime table updates â€” the `/realtime` socket.io namespace.
 //!
 //! The frontend speaks socket.io (`io(`${origin}/realtime`)`), so this serves
 //! the real protocol rather than a plain WebSocket. Contract reproduced from
 //! v1's `realtime.gateway.ts`:
 //!
 //!   1. connect with `auth: { token }` (or an `Authorization: Bearer` header)
-//!   2. emit `subscribe` { connectionId, schema, table }  → ack `{ok}` / `{ok:false,error}`
+//!   2. emit `subscribe` { connectionId, schema, table }  â†’ ack `{ok}` / `{ok:false,error}`
 //!   3. receive `change` { schema, table, payload }
 //!
 //! v1 has three change-detection modes and falls back down the list: logical
 //! replication (best), LISTEN/NOTIFY (needs a user-installed trigger), then 5s
-//! COUNT(*) polling. This implements the polling mode — the one v1 always ends
-//! up on for a table with no trigger and no `wal_level=logical` — so the
+//! COUNT(*) polling. This implements the polling mode â€” the one v1 always ends
+//! up on for a table with no trigger and no `wal_level=logical` â€” so the
 //! observable payload matches v1's fallback exactly. Logical replication is a
 //! follow-up; it needs the streaming replication protocol, which sqlx has no
 //! support for.
 //!
 //! SECURITY: subscribing re-checks the caller's role on the connection, so a
 //! socket cannot watch a table the user has no access to. The polling payload
-//! carries only a row COUNT — never row values — so it cannot leak masked
+//! carries only a row COUNT â€” never row values â€” so it cannot leak masked
 //! columns. Any future mode that streams real row images MUST apply this
 //! subscriber's column masks first, exactly as v1 does with `maskDeep`.
 
@@ -36,7 +36,7 @@ struct SubscribeBody {
     table: String,
 }
 
-/// Identifier guard — the table name is interpolated into the COUNT query, so
+/// Identifier guard â€” the table name is interpolated into the COUNT query, so
 /// anything that is not a plain identifier is refused rather than quoted-and-hoped.
 fn ident_ok(s: &str) -> bool {
     !s.is_empty()
@@ -49,13 +49,13 @@ fn ident_ok(s: &str) -> bool {
 pub fn layer(state: AppState) -> socketioxide::layer::SocketIoLayer {
     let (sio_layer, io) = SocketIo::new_layer();
 
-    // State is captured by clone rather than pulled from an extractor — the
+    // State is captured by clone rather than pulled from an extractor â€” the
     // socketioxide state API differs across versions and this is version-proof.
     let ns_state = state.clone();
     io.ns("/realtime", move |socket: SocketRef, Data(handshake): Data<serde_json::Value>| {
         let state = ns_state.clone();
         // Handshake auth. The client sends `auth: { token }`, which socket.io
-        // delivers as the CONNECT packet payload — NOT as a header or query
+        // delivers as the CONNECT packet payload â€” NOT as a header or query
         // param. Reading only the header/query meant every connection was
         // rejected and the session closed, which surfaces to the client as
         // engine.io error 1 "Session ID unknown" on its next poll.
@@ -81,7 +81,7 @@ pub fn layer(state: AppState) -> socketioxide::layer::SocketIoLayer {
             .map(|c| c.sub);
 
         let Some(user_id) = user_id else {
-            tracing::warn!("realtime: WS auth failed — disconnecting");
+            tracing::warn!("realtime: WS auth failed â€” disconnecting");
             let _ = socket.disconnect();
             return;
         };
@@ -129,7 +129,7 @@ pub fn layer(state: AppState) -> socketioxide::layer::SocketIoLayer {
                                 schema.replace('"', ""),
                                 table.replace('"', "")
                             );
-                            if let Ok(c) = sqlx::query_scalar::<_, i64>(&sql).fetch_one(&mut conn).await {
+                            if let Ok(c) = sqlx::query_scalar::<_, i64>(&sql).fetch_one(&mut *conn).await {
                                 if c != last {
                                     last = c;
                                     let _ = sock.emit(

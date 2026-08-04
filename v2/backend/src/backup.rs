@@ -1,4 +1,4 @@
-//! Port of v1's backup endpoints (`backend/src/backup/backup.controller.ts` +
+﻿//! Port of v1's backup endpoints (`backend/src/backup/backup.controller.ts` +
 //! `backup.service.ts`) to Rust.
 //!
 //!   GET /api/connections/:id/backup/estimate?schema=      (VIEWER)
@@ -8,10 +8,10 @@
 //! and handed to axum as the response body, so a multi-GB dump never lands in
 //! the 384 MB container. The `Child` handle rides along inside the reader with
 //! `kill_on_drop(true)`, so a cancelled download kills `pg_dump` (v1 does the
-//! same via `res.on('close')` → SIGTERM; tokio's kill_on_drop is SIGKILL).
+//! same via `res.on('close')` â†’ SIGTERM; tokio's kill_on_drop is SIGKILL).
 //!
-//! Wire-compatibility with v1 is deliberate — same query params, same headers,
-//! same filename, same error strings — so the existing frontend download +
+//! Wire-compatibility with v1 is deliberate â€” same query params, same headers,
+//! same filename, same error strings â€” so the existing frontend download +
 //! progress-bar code works against either backend.
 
 use std::collections::HashMap;
@@ -47,7 +47,7 @@ pub fn routes() -> Router<AppState> {
 // ---------------------------------------------------------------------------
 
 /// Installed pg_dump majors, read from the env var set by the Dockerfile.
-/// Unset (e.g. an image with a single `postgresql-client`) → empty, and we fall
+/// Unset (e.g. an image with a single `postgresql-client`) â†’ empty, and we fall
 /// back to whatever `pg_dump` is on PATH.
 fn installed_pg_dump_majors() -> Vec<u32> {
     let raw = std::env::var("DBSTUDIO_PG_DUMP_MAJORS").unwrap_or_default();
@@ -56,7 +56,7 @@ fn installed_pg_dump_majors() -> Vec<u32> {
         .filter_map(js_parse_int)
         .filter(|n| *n >= 10)
         .collect();
-    majors.sort_unstable_by(|a, b| b.cmp(a)); // descending — "latest" is index 0
+    majors.sort_unstable_by(|a, b| b.cmp(a)); // descending â€” "latest" is index 0
     majors
 }
 
@@ -122,7 +122,7 @@ struct RawCreds {
     password: Option<String>,
     #[serde(default)]
     database: Option<String>,
-    /// SSH tunnel config — v1 opens a local forward and points pg_dump at it.
+    /// SSH tunnel config â€” v1 opens a local forward and points pg_dump at it.
     /// v2 has no tunnel service, so its presence is a hard error (see below).
     #[serde(default)]
     ssh: Option<Value>,
@@ -167,7 +167,7 @@ fn decrypt_creds(state: &AppState, id: &str, ct: &str) -> ApiResult<RawCreds> {
     let crypto = state
         .crypto
         .as_ref()
-        .ok_or_else(|| ApiError::internal("ENCRYPTION_KEY not configured — target connections disabled"))?;
+        .ok_or_else(|| ApiError::internal("ENCRYPTION_KEY not configured â€” target connections disabled"))?;
     let json = crypto
         .decrypt(ct, &crypto::Crypto::conn_purpose(id))
         .map_err(|e| ApiError::bad(format!("credential decrypt failed: {e}")))?;
@@ -199,7 +199,7 @@ async fn estimate(
     Ok(Json(json!({ "bytes": e.bytes, "tables": e.tables, "note": e.note })))
 }
 
-/// On-disk bytes per `pg_total_relation_size` summed over base tables — the
+/// On-disk bytes per `pg_total_relation_size` summed over base tables â€” the
 /// same query, escaping and note strings as v1's `estimateSize`.
 async fn estimate_size(
     state: &AppState,
@@ -227,7 +227,7 @@ async fn estimate_size(
     );
 
     let mut c = connect_target(state, id, user_id).await?;
-    let row = sqlx::query(&sql).fetch_optional(&mut c).await;
+    let row = sqlx::query(&sql).fetch_optional(&mut *c).await;
     let _ = c.close().await;
     let row = row?;
 
@@ -238,11 +238,11 @@ async fn estimate_size(
         ),
         None => (Some(0), 0),
     };
-    Ok(Estimate { bytes, tables, note: "On-disk size; dump output typically 50–200% of this" })
+    Ok(Estimate { bytes, tables, note: "On-disk size; dump output typically 50â€“200% of this" })
 }
 
 /// Cheap probe for the remote server's major so we can pick a matching pg_dump.
-/// `SHOW server_version_num` → 170001 for PG 17.1 → major 17.
+/// `SHOW server_version_num` â†’ 170001 for PG 17.1 â†’ major 17.
 async fn detect_postgres_major(state: &AppState, id: &str, user_id: &str) -> Option<u32> {
     let mut c = match connect_target(state, id, user_id).await {
         Ok(c) => c,
@@ -252,7 +252,7 @@ async fn detect_postgres_major(state: &AppState, id: &str, user_id: &str) -> Opt
         }
     };
     let res: Result<String, sqlx::Error> = sqlx::query_scalar("SHOW server_version_num")
-        .fetch_one(&mut c)
+        .fetch_one(&mut *c)
         .await;
     let _ = c.close().await;
     match res {
@@ -265,7 +265,7 @@ async fn detect_postgres_major(state: &AppState, id: &str, user_id: &str) -> Opt
 }
 
 // ---------------------------------------------------------------------------
-// GET /backup  (OWNER) — streams pg_dump
+// GET /backup  (OWNER) â€” streams pg_dump
 // ---------------------------------------------------------------------------
 
 /// v1's IDENT_RE: `-n` takes a pattern, so schema names are locked to simple idents.
@@ -280,7 +280,7 @@ fn ident_ok(s: &str) -> bool {
     b[1..].iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_')
 }
 
-/// `name.replace(/[^a-z0-9-_]+/gi, '_')` — runs of unsafe chars collapse to one `_`.
+/// `name.replace(/[^a-z0-9-_]+/gi, '_')` â€” runs of unsafe chars collapse to one `_`.
 fn safe_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut in_run = false;
@@ -342,7 +342,7 @@ async fn download(
     };
     if creds.ssh.as_ref().map(|v| !v.is_null()).unwrap_or(false) {
         // v1 opens an SSH forward and points pg_dump at the local endpoint.
-        // v2 has no tunnel service — fail loudly rather than dialling a host
+        // v2 has no tunnel service â€” fail loudly rather than dialling a host
         // that is only reachable through the bastion.
         return Err(ApiError::new(
             StatusCode::NOT_IMPLEMENTED,
@@ -350,7 +350,7 @@ async fn download(
         ));
     }
 
-    // Detect the remote major so we can pick the matching pg_dump binary — a
+    // Detect the remote major so we can pick the matching pg_dump binary â€” a
     // few ms, and it catches the most common backup failure ("server version
     // newer than pg_dump").
     let server_major = detect_postgres_major(&state, &id, &user.id).await;
@@ -389,7 +389,7 @@ async fn download(
     );
 
     // Pre-flight estimate so the client can draw a progress bar. Skipped for
-    // --schema-only (on-disk size includes data → wild overestimate).
+    // --schema-only (on-disk size includes data â†’ wild overestimate).
     let est = if schema_only {
         Estimate { bytes: None, tables: 0, note: "" }
     } else {
@@ -404,7 +404,7 @@ async fn download(
 
     tracing::info!("pg_dump start conn={id} fmt={} schemaOnly={schema_only}", if format_custom { "custom" } else { "sql" });
 
-    // Password via env — never argv (ps would show it). PGCONNECT_TIMEOUT caps
+    // Password via env â€” never argv (ps would show it). PGCONNECT_TIMEOUT caps
     // the hang when the remote is unreachable.
     let mut child = Command::new(&binary.cmd)
         .args(&args)
@@ -463,7 +463,7 @@ async fn download(
             format!("attachment; filename=\"{filename}\""),
         )
         .header("X-Content-Type-Options", "nosniff");
-    // Progress hints — the client subtracts bytes received from the estimate.
+    // Progress hints â€” the client subtracts bytes received from the estimate.
     if let Some(b) = est.bytes {
         res = res.header("X-Dbdash-Estimate-Bytes", b.to_string());
     }
@@ -493,7 +493,7 @@ fn port_str(v: &Value) -> Option<String> {
 // Streaming plumbing
 // ---------------------------------------------------------------------------
 
-/// Keep the tail of stderr — enough for the fatal line, bounded so a chatty
+/// Keep the tail of stderr â€” enough for the fatal line, bounded so a chatty
 /// --verbose dump can't grow it without limit.
 const STDERR_CAP: usize = 8 * 1024;
 
@@ -536,7 +536,7 @@ fn code_str(code: Option<i32>) -> String {
     code.map(|c| c.to_string()).unwrap_or_else(|| "null".into())
 }
 
-/// v1: `tail.split('\n').pop() || 'exit code ' + code`. Note the quirk — stderr
+/// v1: `tail.split('\n').pop() || 'exit code ' + code`. Note the quirk â€” stderr
 /// usually ends with a newline, so the last segment is empty and the message
 /// falls back to the exit code. Reproduced as-is.
 fn last_line(tail: &str, code: Option<i32>) -> String {

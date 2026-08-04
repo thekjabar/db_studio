@@ -1,4 +1,4 @@
-//! CSV import + server-side query cursors — Rust port of the v1 NestJS
+//! CSV import + server-side query cursors â€” Rust port of the v1 NestJS
 //! `src/csv-import/` module and the cursor endpoints of `src/query/`
 //! (`query.controller.ts` + `cursor.service.ts`), wire-compatible with them:
 //! same paths, methods, status codes, error messages and JSON field names.
@@ -11,10 +11,10 @@
 //!   backend/src/drivers/postgres.driver.ts            (`getTableColumns`, `insertRow`)
 //!   backend/src/drivers/quote.util.ts                 (`quotePg`, ident shape)
 //!
-//! ── Why this module owns process-local state ───────────────────────────────
+//! â”€â”€ Why this module owns process-local state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //! Neither feature has a database model: v1 keeps parsed CSV uploads in a
 //! `Map<sessionId, Session>` on the `CsvImportService` singleton, and open
-//! cursors in a `Map<cursorId, CursorSession>` on `CursorService` — each holding
+//! cursors in a `Map<cursorId, CursorSession>` on `CursorService` â€” each holding
 //! a live `pg.Client` with an open `READ ONLY` transaction. v2 is a single pod,
 //! so the same shape works here: two `LazyLock`-style statics below
 //! (`OnceLock<Mutex<HashMap<..>>>`) hold them, which is why `AppState` did not
@@ -27,21 +27,21 @@
 //! for all four/three calls, and a connection it cannot serve (agent tunnel,
 //! non-Postgres, SSH-tunnelled, unreadable credentials) is forwarded to v1 for
 //! all of them, so the session lives entirely in one process either way. A v2
-//! restart drops both maps — exactly as a v1 restart does.
+//! restart drops both maps â€” exactly as a v1 restart does.
 //!
-//! ── Safety notes (csv-import WRITES to the customer database) ──────────────
+//! â”€â”€ Safety notes (csv-import WRITES to the customer database) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //!   * schema / table / target column names are checked against v1's two ident
-//!     regexes — the DTO's `^[A-Za-z_][A-Za-z0-9_]{0,63}$` and, before any
-//!     interpolation, `quotePg`'s stricter `^[A-Za-z_][A-Za-z0-9_]{0,62}$` —
+//!     regexes â€” the DTO's `^[A-Za-z_][A-Za-z0-9_]{0,63}$` and, before any
+//!     interpolation, `quotePg`'s stricter `^[A-Za-z_][A-Za-z0-9_]{0,62}$` â€”
 //!     and quoted, never concatenated raw.
 //!   * cell values are NEVER interpolated. Every coerced cell is bound as a text
 //!     parameter carrying exactly the bytes node-postgres would put on the wire
 //!     (JS `String(value)`), and read back as `CAST($n AS <type>)` where `<type>`
-//!     is `format_type(atttypid, NULL)` from the catalog — the type WITHOUT its
+//!     is `format_type(atttypid, NULL)` from the catalog â€” the type WITHOUT its
 //!     modifier, on purpose. That is precisely what v1 gets: node-postgres sends
 //!     parameters with an unspecified type OID, Postgres infers the column's
 //!     base type, converts with its input function, and the INSERT's own
-//!     assignment coercion then applies the modifier — so `varchar(50)` still
+//!     assignment coercion then applies the modifier â€” so `varchar(50)` still
 //!     raises "value too long" instead of silently truncating, and `numeric(10,2)`
 //!     still rounds the way it does in v1.
 //!   * `readOnly` connections still get `SET SESSION CHARACTERISTICS AS
@@ -49,7 +49,7 @@
 //!     are refused by Postgres exactly as they are in v1.
 //!   * caps are v1's: 500k rows per upload, 100 dry-run errors, 1000 commit
 //!     failures, `stopOnError`, and one autocommitted INSERT per row (no
-//!     wrapping transaction — a partial import stays partial, as in v1).
+//!     wrapping transaction â€” a partial import stays partial, as in v1).
 //!
 //! Prisma has no `@map`, so every app-DB identifier below is the quoted
 //! PascalCase/camelCase name Prisma created (`"ColumnMask"."connectionId"`).
@@ -113,7 +113,7 @@ pub fn routes() -> Router<AppState> {
 }
 
 // ---------------------------------------------------------------------------
-// Constants — copied verbatim from the v1 services.
+// Constants â€” copied verbatim from the v1 services.
 // ---------------------------------------------------------------------------
 
 /// csv-import.service.ts
@@ -162,7 +162,7 @@ fn role_rank(role: &str) -> i32 {
     }
 }
 
-/// `RbacService.require` — same not-found / no-access split and message text.
+/// `RbacService.require` â€” same not-found / no-access split and message text.
 async fn require_role(pool: &PgPool, conn_id: &str, user_id: &str, min: &str) -> ApiResult<String> {
     match conn_role(pool, conn_id, user_id).await? {
         Some(role) => {
@@ -217,7 +217,7 @@ async fn load_conn_meta(state: &AppState, id: &str) -> ApiResult<Option<ConnMeta
     let Some(r) = row else { return Ok(None) };
 
     let ssh_or_unreadable = match state.crypto.as_ref() {
-        // No key at all → `must_proxy` is already true via `crypto.is_none()`.
+        // No key at all â†’ `must_proxy` is already true via `crypto.is_none()`.
         None => false,
         Some(crypto) => {
             let ct: String = r
@@ -248,7 +248,7 @@ async fn load_conn_meta(state: &AppState, id: &str) -> ApiResult<Option<ConnMeta
 
 impl ConnMeta {
     /// Anything v2 cannot execute faithfully goes to the v1 Node API instead of
-    /// failing or — much worse for an importer — writing to the wrong place: the
+    /// failing or â€” much worse for an importer â€” writing to the wrong place: the
     /// agent tunnel, the SSH tunnel and the non-Postgres drivers live only
     /// there, and without ENCRYPTION_KEY no target database is reachable at all.
     fn must_proxy(&self, state: &AppState) -> bool {
@@ -273,7 +273,7 @@ fn rebuild(parts: Parts, bytes: bytes::Bytes) -> Request {
     Request::from_parts(parts, Body::from(bytes))
 }
 
-/// `ColumnMasksService.maskedColumnNames` — every column name masked for this
+/// `ColumnMasksService.maskedColumnNames` â€” every column name masked for this
 /// user anywhere on this connection. Errors propagate: a failed lookup must
 /// never be read as "no masks".
 async fn masked_columns(pool: &PgPool, connection_id: &str, user_id: &str) -> ApiResult<Vec<String>> {
@@ -287,7 +287,7 @@ async fn masked_columns(pool: &PgPool, connection_id: &str, user_id: &str) -> Ap
     .await?)
 }
 
-/// `ColumnMasksService.applyMasks` — null out masked keys in place.
+/// `ColumnMasksService.applyMasks` â€” null out masked keys in place.
 fn mask_row(row: &mut Value, masked: &[String]) {
     if let Some(obj) = row.as_object_mut() {
         for col in masked {
@@ -298,7 +298,7 @@ fn mask_row(row: &mut Value, masked: &[String]) {
     }
 }
 
-/// JS `String.prototype.trim` — like Rust's `trim` but U+FEFF is whitespace too.
+/// JS `String.prototype.trim` â€” like Rust's `trim` but U+FEFF is whitespace too.
 fn is_js_ws(c: char) -> bool {
     c.is_whitespace() || c == '\u{feff}'
 }
@@ -321,7 +321,7 @@ fn is_word_char(c: char) -> bool {
 }
 
 /// `/\b<word>/` (and `/\b<word>\b/` when `trailing`) against an already
-/// lowercased haystack — JS `\b` is ASCII-only, which `is_word_char` mirrors.
+/// lowercased haystack â€” JS `\b` is ASCII-only, which `is_word_char` mirrors.
 fn re_word(hay: &str, word: &str, trailing: bool) -> bool {
     let mut from = 0usize;
     while let Some(rel) = hay[from..].find(word) {
@@ -345,10 +345,10 @@ fn re_any_word(hay: &str, words: &[&str], trailing: bool) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Identifiers — v1 has TWO regexes and both must fire (the DTO's is looser).
+// Identifiers â€” v1 has TWO regexes and both must fire (the DTO's is looser).
 // ---------------------------------------------------------------------------
 
-/// csv-import.controller.ts `IDENT_RE` — `^[A-Za-z_][A-Za-z0-9_]{0,63}$`.
+/// csv-import.controller.ts `IDENT_RE` â€” `^[A-Za-z_][A-Za-z0-9_]{0,63}$`.
 fn dto_ident_ok(s: &str) -> bool {
     let mut it = s.chars();
     match it.next() {
@@ -359,7 +359,7 @@ fn dto_ident_ok(s: &str) -> bool {
     rest.len() <= 63 && rest.iter().all(|c| is_word_char(*c))
 }
 
-/// quote.util.ts `assertIdentShape` + `quotePg` —
+/// quote.util.ts `assertIdentShape` + `quotePg` â€”
 /// `^[A-Za-z_][A-Za-z0-9_]{0,62}$`, then `"` doubling.
 fn quote_pg(ident: &str) -> Result<String, String> {
     let mut it = ident.chars();
@@ -374,7 +374,7 @@ fn quote_pg(ident: &str) -> Result<String, String> {
 }
 
 // ===========================================================================
-// papaparse port — v1 parses uploads with `papaParse(text, { skipEmptyLines: true })`
+// papaparse port â€” v1 parses uploads with `papaParse(text, { skipEmptyLines: true })`
 // ===========================================================================
 //
 // Ported from papaparse 5.5.3 (backend/node_modules/papaparse/papaparse.js):
@@ -433,7 +433,7 @@ fn parse_with(input: &str, delim: &str, newline: &str, preview: Option<usize>) -
         return ParsedCsv { data, errors };
     }
 
-    // fastMode: no quote character anywhere → plain splits.
+    // fastMode: no quote character anywhere â†’ plain splits.
     if !input.contains('"') {
         for (i, line) in input.split(newline).enumerate() {
             data.push(line.split(delim).map(|s| s.to_string()).collect());
@@ -451,7 +451,7 @@ fn parse_with(input: &str, delim: &str, newline: &str, preview: Option<usize>) -
     let mut next_newline = idx_of(b, newline.as_bytes(), cursor as i64);
     let mut quote_search = idx_of(b, b"\"", cursor as i64);
 
-    // `finish(value)` — push the remainder as the last field and return.
+    // `finish(value)` â€” push the remainder as the last field and return.
     macro_rules! finish {
         ($value:expr) => {{
             let v: Option<String> = $value;
@@ -480,7 +480,7 @@ fn parse_with(input: &str, delim: &str, newline: &str, preview: Option<usize>) -
                     let value = input[cursor..quote_search as usize].replace("\"\"", "\"");
                     finish!(Some(value));
                 }
-                // Escaped quote (`""`) — part of the data.
+                // Escaped quote (`""`) â€” part of the data.
                 if b[quote_search as usize + 1] == b'"' {
                     quote_search += 1;
                     continue;
@@ -527,7 +527,7 @@ fn parse_with(input: &str, delim: &str, newline: &str, preview: Option<usize>) -
                     break;
                 }
 
-                // Not a valid closing quote — record and keep scanning.
+                // Not a valid closing quote â€” record and keep scanning.
                 errors.push(CsvErr {
                     message: "Trailing quote on quoted field is malformed".into(),
                     row: Some(data.len()),
@@ -537,7 +537,7 @@ fn parse_with(input: &str, delim: &str, newline: &str, preview: Option<usize>) -
             continue;
         }
 
-        // Next delimiter comes before the next newline → end of field.
+        // Next delimiter comes before the next newline â†’ end of field.
         if next_delim != -1 && (next_delim < next_newline || next_newline == -1) {
             row.push(input[cursor..next_delim as usize].to_string());
             cursor = next_delim as usize + delim_len;
@@ -565,7 +565,7 @@ fn parse_with(input: &str, delim: &str, newline: &str, preview: Option<usize>) -
     finish!(None)
 }
 
-/// papaparse `extraSpaces` — number of whitespace-only characters between the
+/// papaparse `extraSpaces` â€” number of whitespace-only characters between the
 /// closing quote and `index`.
 fn extra_spaces(input: &str, quote_search: i64, index: i64) -> usize {
     if index == -1 {
@@ -587,7 +587,7 @@ fn extra_spaces(input: &str, quote_search: i64, index: i64) -> usize {
 /// papaparse `guessLineEndings`.
 fn guess_line_endings(input: &str) -> String {
     let capped: String = input.chars().take(1024 * 1024).collect();
-    // Strip every non-greedy `"…"` span, as the /"([^]*?)"/gm replace does.
+    // Strip every non-greedy `"â€¦"` span, as the /"([^]*?)"/gm replace does.
     let mut stripped = String::with_capacity(capped.len());
     let bytes = capped.as_bytes();
     let mut i = 0usize;
@@ -677,7 +677,7 @@ fn guess_delimiter(input: &str, newline: &str) -> Option<String> {
 
 /// `papaParse(text, { skipEmptyLines: true })`.
 fn papa_parse(input: &str) -> ParsedCsv {
-    // papaparse's `stripBom` — a leading U+FEFF would otherwise become part of
+    // papaparse's `stripBom` â€” a leading U+FEFF would otherwise become part of
     // the first header name (and of the sample's first key).
     let input = input.strip_prefix('\u{feff}').unwrap_or(input);
     let newline = guess_line_endings(input);
@@ -696,7 +696,7 @@ fn papa_parse(input: &str) -> ParsedCsv {
 }
 
 // ===========================================================================
-// CSV import — session store
+// CSV import â€” session store
 // ===========================================================================
 
 struct CsvSession {
@@ -704,12 +704,12 @@ struct CsvSession {
     user_id: String,
     connection_id: String,
     filename: String,
-    /// v1 stores `headers.map(h => h.trim())` on the session… and then never
+    /// v1 stores `headers.map(h => h.trim())` on the sessionâ€¦ and then never
     /// reads it (`buildMapIndex` takes it and ignores it; mappings address CSV
     /// columns by index). Kept so the stored shape matches v1 exactly.
     #[allow(dead_code)]
     headers: Vec<String>,
-    /// …but responds with the untrimmed header row, and keys the sample by it.
+    /// â€¦but responds with the untrimmed header row, and keys the sample by it.
     raw_headers: Vec<String>,
     sample: Vec<Value>,
     rows: Vec<Vec<String>>,
@@ -721,7 +721,7 @@ fn sessions() -> &'static Mutex<HashMap<String, Arc<CsvSession>>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// `CsvImportService.getSession` — same 404 for missing, expired and
+/// `CsvImportService.getSession` â€” same 404 for missing, expired and
 /// another-user's session (the message must not distinguish them).
 fn get_session(user_id: &str, session_id: &str) -> ApiResult<Arc<CsvSession>> {
     let found = sessions().lock().unwrap().get(session_id).cloned();
@@ -738,7 +738,7 @@ fn get_session(user_id: &str, session_id: &str) -> ApiResult<Arc<CsvSession>> {
     Ok(s)
 }
 
-/// `CsvImportService.sweep` — drop sessions idle for longer than the TTL.
+/// `CsvImportService.sweep` â€” drop sessions idle for longer than the TTL.
 fn sweep_sessions() {
     let cutoff = now_ms() - SESSION_TTL_MS;
     sessions()
@@ -748,7 +748,7 @@ fn sweep_sessions() {
 }
 
 // ===========================================================================
-// CSV import — column metadata + value coercion
+// CSV import â€” column metadata + value coercion
 // ===========================================================================
 
 struct ColumnMeta {
@@ -824,7 +824,7 @@ fn js_number(s: &str) -> f64 {
     if body == "Infinity" {
         return if neg { f64::NEG_INFINITY } else { f64::INFINITY };
     }
-    // StrDecimalLiteral: digits [ . digits ] [ (e|E) [+|-] digits ] | . digits …
+    // StrDecimalLiteral: digits [ . digits ] [ (e|E) [+|-] digits ] | . digits â€¦
     if !is_js_decimal(body) {
         return f64::NAN;
     }
@@ -867,11 +867,11 @@ fn is_js_decimal(s: &str) -> bool {
     i == bytes.len()
 }
 
-/// JS `String(number)` — ECMA-262 `Number::toString`, which is the exact text
+/// JS `String(number)` â€” ECMA-262 `Number::toString`, which is the exact text
 /// node-postgres puts on the wire for a numeric parameter and therefore what
 /// Postgres's input function parses. Rust's own `{}`/`{:.0}` disagree with it on
 /// both ends of the range (`1e21`, `1e-7`, and any integer past 2^53), so the
-/// digits come from `{:e}` — shortest round-trip, same as V8's — and the
+/// digits come from `{:e}` â€” shortest round-trip, same as V8's â€” and the
 /// positional/exponential choice is the spec's.
 fn js_number_to_string(n: f64) -> String {
     if n.is_nan() {
@@ -917,7 +917,7 @@ fn js_number_to_string(n: f64) -> String {
     }
 }
 
-/// node-postgres `prepareValue` — how a JS value becomes a text parameter.
+/// node-postgres `prepareValue` â€” how a JS value becomes a text parameter.
 /// `null`/`undefined` stay NULL, objects and arrays are `JSON.stringify`d,
 /// everything else is `String(value)`. Only the cases `coerce`'s JSON branch can
 /// produce are reachable here.
@@ -925,7 +925,7 @@ fn prepare_value(v: &Value) -> Option<String> {
     match v {
         Value::Null => None,
         // NB: a bare JSON string coerces to its *contents*, so `"x"` reaches
-        // Postgres as `x` and json_in rejects it — exactly as it does in v1.
+        // Postgres as `x` and json_in rejects it â€” exactly as it does in v1.
         Value::String(s) => Some(s.clone()),
         Value::Bool(b) => Some(b.to_string()),
         Value::Number(n) => Some(js_number_to_string(n.as_f64().unwrap_or(f64::NAN))),
@@ -966,7 +966,7 @@ fn js_is_integer(n: f64) -> bool {
     n.is_finite() && n.fract() == 0.0
 }
 
-/// `CsvImportService.coerce` — same branches, same messages. The result is the
+/// `CsvImportService.coerce` â€” same branches, same messages. The result is the
 /// text node-postgres would send for the coerced JS value (`prepareValue`:
 /// numbers and booleans via `toString`, objects via `JSON.stringify`, `null`
 /// stays NULL); Postgres's input function for the column type does the rest.
@@ -1015,13 +1015,13 @@ fn coerce(value: &str, col: &ColumnMeta) -> Result<Option<String>, String> {
 
     if re_word(&t, "json", false) {
         // v1 parses here so the driver serializes it; `prepareValue` then decides
-        // what actually goes on the wire — including `JSON.parse('null')`, which
+        // what actually goes on the wire â€” including `JSON.parse('null')`, which
         // becomes a SQL NULL rather than the JSON value `null`.
         //
         // Two documented differences from `JSON.parse`, both only reachable from
         // a pathological numeric literal in a json/jsonb cell: an out-of-range
         // number (`1e309`) becomes `Infinity` in JS and is then rejected by
-        // `json_in`, while serde_json refuses it here — the row fails either way,
+        // `json_in`, while serde_json refuses it here â€” the row fails either way,
         // only the message differs; and a literal with more than 17 significant
         // digits can land one ULP away from V8's double.
         return match serde_json::from_str::<Value>(value) {
@@ -1033,12 +1033,12 @@ fn coerce(value: &str, col: &ColumnMeta) -> Result<Option<String>, String> {
         };
     }
 
-    // text / varchar / timestamp / uuid / … pass through as a string.
+    // text / varchar / timestamp / uuid / â€¦ pass through as a string.
     Ok(Some(value.to_string()))
 }
 
 // ===========================================================================
-// CSV import — DTOs
+// CSV import â€” DTOs
 // ===========================================================================
 
 #[derive(Deserialize, Default)]
@@ -1067,7 +1067,7 @@ struct ImportDto {
     stop_on_error: bool,
 }
 
-/// `DryRunDto` / `CommitDto` — `@IsString() @Length(1,64) @Matches(IDENT_RE)` on
+/// `DryRunDto` / `CommitDto` â€” `@IsString() @Length(1,64) @Matches(IDENT_RE)` on
 /// schema/table/targetColumn, `@IsArray() @ArrayNotEmpty()` on mappings,
 /// `@IsInt() @Min(0)` on a non-null csvColumn, optional `@IsBoolean()`
 /// stopOnError.
@@ -1140,7 +1140,7 @@ fn parse_import_dto(bytes: &[u8]) -> ApiResult<ImportDto> {
 }
 
 // ===========================================================================
-// CSV import — handlers
+// CSV import â€” handlers
 // ===========================================================================
 
 /// Shared preamble: RBAC (v1's guard runs before validation), then the proxy
@@ -1157,7 +1157,7 @@ async fn csv_preamble(
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Connection not found"))
 }
 
-/// `POST /api/connections/:id/csv-import/upload` — EDITOR, multipart `file`.
+/// `POST /api/connections/:id/csv-import/upload` â€” EDITOR, multipart `file`.
 async fn csv_upload(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1192,10 +1192,10 @@ async fn csv_upload(
             break;
         }
     }
-    // v1: `if (!file) throw new Error('file is required')` → a 500.
+    // v1: `if (!file) throw new Error('file is required')` â†’ a 500.
     let (filename, data) = file.ok_or_else(|| ApiError::internal("file is required"))?;
     if data.len() > MAX_UPLOAD_BYTES {
-        // multer's LIMIT_FILE_SIZE → Nest's PayloadTooLargeException.
+        // multer's LIMIT_FILE_SIZE â†’ Nest's PayloadTooLargeException.
         return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "File too large"));
     }
 
@@ -1273,7 +1273,7 @@ async fn csv_upload(
     .into_response())
 }
 
-/// `GET /api/connections/:id/csv-import/:sessionId` — VIEWER. Not a v1 route
+/// `GET /api/connections/:id/csv-import/:sessionId` â€” VIEWER. Not a v1 route
 /// (v1 has no GET); it reports the stored session in the exact `UploadResult`
 /// shape so a client that lost the upload response can recover it.
 async fn csv_get(
@@ -1297,7 +1297,7 @@ async fn csv_get(
     .into_response())
 }
 
-/// `DELETE /api/connections/:id/csv-import/:sessionId` — VIEWER, 204.
+/// `DELETE /api/connections/:id/csv-import/:sessionId` â€” VIEWER, 204.
 /// `CsvImportService.discard` is silent when the session is missing or owned by
 /// someone else.
 async fn csv_discard(
@@ -1327,17 +1327,17 @@ async fn open_target(
     conn_id: &str,
     user_id: &str,
     meta: &ConnMeta,
-) -> ApiResult<PgConnection> {
+) -> ApiResult<crate::TargetConn> {
     let mut c = connect_target(state, conn_id, user_id).await?;
     let _ = sqlx::query(&format!(
         "SET statement_timeout = {}",
         meta.statement_timeout_ms
     ))
-    .execute(&mut c)
+    .execute(&mut *c)
     .await;
     if meta.read_only {
         let _ = sqlx::query("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
-            .execute(&mut c)
+            .execute(&mut *c)
             .await;
     }
     Ok(c)
@@ -1363,7 +1363,7 @@ async fn target_meta_for(
     })
 }
 
-/// `POST /api/connections/:id/csv-import/:sessionId/dry-run` — EDITOR.
+/// `POST /api/connections/:id/csv-import/:sessionId/dry-run` â€” EDITOR.
 async fn csv_dry_run(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1444,7 +1444,7 @@ async fn csv_dry_run(
     .into_response())
 }
 
-/// `POST /api/connections/:id/csv-import/:sessionId/commit` — EDITOR.
+/// `POST /api/connections/:id/csv-import/:sessionId/commit` â€” EDITOR.
 async fn csv_commit(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1532,7 +1532,7 @@ async fn csv_commit(
                     for c in &insert_cols {
                         q = q.bind(values.get(c.as_str()).cloned().unwrap_or(None));
                     }
-                    match q.execute(&mut conn).await {
+                    match q.execute(&mut *conn).await {
                         Ok(_) => inserted += 1,
                         Err(e) => err = Some(e.to_string()),
                     }
@@ -1564,7 +1564,7 @@ async fn csv_commit(
 
 /// Each column's type WITHOUT its modifier (`format_type(atttypid, NULL)`), e.g.
 /// "integer", "character varying", "public.my_enum", "text[]". Dropping the
-/// modifier is deliberate — see the note at the top of this file.
+/// modifier is deliberate â€” see the note at the top of this file.
 async fn column_cast_types(
     conn: &mut PgConnection,
     schema: &str,
@@ -1591,7 +1591,7 @@ async fn column_cast_types(
         .collect())
 }
 
-/// `PostgresDriver.insertRow` — quoted identifiers, one bound text parameter per
+/// `PostgresDriver.insertRow` â€” quoted identifiers, one bound text parameter per
 /// column read back through the column's own type cast, and `DEFAULT VALUES`
 /// when nothing is mapped (exactly what v1 emits for an empty value object).
 ///
@@ -1642,7 +1642,7 @@ struct CursorSession {
     /// The dedicated connection holding `BEGIN READ ONLY` + the DECLAREd cursor.
     /// The tokio mutex replaces v1's promise `chain`: two concurrent FETCHes
     /// cannot interleave on one connection's protocol state. `None` once closed.
-    conn: tokio::sync::Mutex<Option<PgConnection>>,
+    conn: tokio::sync::Mutex<Option<crate::TargetConn>>,
     st: Mutex<CursorState>,
     created_at: i64,
     /// SECURITY: this opens its own connection instead of going through the
@@ -1667,7 +1667,7 @@ fn cursor_gone() -> ApiError {
 /// v1 starts both sweepers in the service constructors. There is no v2 startup
 /// hook here (main.rs is not touched), so the reaper is spawned the first time
 /// this module creates state. One task drives both: cursors on v1's 30s tick,
-/// CSV sessions on the same tick instead of their own 60s one — the TTL itself
+/// CSV sessions on the same tick instead of their own 60s one â€” the TTL itself
 /// is unchanged, only the granularity of the check.
 fn ensure_reaper() {
     static STARTED: OnceLock<()> = OnceLock::new();
@@ -1682,7 +1682,7 @@ fn ensure_reaper() {
     });
 }
 
-/// `CursorService.sweep` — reap idle and over-aged cursors.
+/// `CursorService.sweep` â€” reap idle and over-aged cursors.
 async fn sweep_cursors() {
     let now = now_ms();
     let doomed: Vec<Arc<CursorSession>> = {
@@ -1702,7 +1702,7 @@ async fn sweep_cursors() {
     }
 }
 
-/// `CursorService.closeSession` — ROLLBACK ends the read-only transaction and
+/// `CursorService.closeSession` â€” ROLLBACK ends the read-only transaction and
 /// drops the cursor, then the connection goes away.
 async fn close_session(s: &Arc<CursorSession>) {
     let mut guard = s.conn.lock().await;
@@ -1771,7 +1771,7 @@ fn parse_cursor_dto(bytes: &[u8], want_sql: bool) -> ApiResult<(String, i64)> {
     Ok((sql, page_size))
 }
 
-/// `POST /api/connections/:id/query/cursor` — VIEWER, 200.
+/// `POST /api/connections/:id/query/cursor` â€” VIEWER, 200.
 async fn cursor_open(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1791,7 +1791,7 @@ async fn cursor_open(
     }
     let (sql, page_size) = parse_cursor_dto(&bytes, true)?;
 
-    // `sql.trim().replace(/;\s*$/, '')` — the trim already ate any whitespace
+    // `sql.trim().replace(/;\s*$/, '')` â€” the trim already ate any whitespace
     // after the semicolon, so stripping one trailing `;` is the same rewrite.
     let t = js_trim(&sql);
     let trimmed = t.strip_suffix(';').unwrap_or(t).to_string();
@@ -1840,7 +1840,7 @@ async fn cursor_open(
     debug_assert!(pg_name.chars().all(|c| is_word_char(c)));
 
     // v1 puts `statement_timeout` in the dedicated client's connection options,
-    // so it caps every statement on this cursor — including a runaway FETCH.
+    // so it caps every statement on this cursor â€” including a runaway FETCH.
     let mut conn = connect_target(&state, &id, &user.id).await?;
     let _ = (&mut conn)
         .execute(
@@ -1861,12 +1861,12 @@ async fn cursor_open(
 
     // The cursor wraps the query in `to_jsonb` so each FETCH comes back as ready
     // JSON objects (v2's rows are shaped by Postgres everywhere else too). A
-    // duplicate column name collapses to the last value — same as v1's
+    // duplicate column name collapses to the last value â€” same as v1's
     // positional-array-to-object mapping.
     let declare = format!(
         "DECLARE {pg_name} NO SCROLL CURSOR FOR SELECT to_jsonb(t) FROM ({trimmed}) t"
     );
-    // Executor::execute on a `&str` takes sqlx's simple-query path — the same
+    // Executor::execute on a `&str` takes sqlx's simple-query path â€” the same
     // protocol node-postgres uses for a parameterless query, and it keeps these
     // one-shot statements out of the prepared-statement cache.
     let opened = async {
@@ -1909,7 +1909,7 @@ async fn cursor_open(
     .into_response())
 }
 
-/// `POST /api/connections/:id/query/cursor/:cursorId/fetch` — VIEWER, 200.
+/// `POST /api/connections/:id/query/cursor/:cursorId/fetch` â€” VIEWER, 200.
 async fn cursor_fetch(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1939,7 +1939,7 @@ async fn cursor_fetch(
     Ok(Json(json!({ "fields": fields, "rows": rows, "done": done })).into_response())
 }
 
-/// `POST /api/connections/:id/query/cursor/:cursorId/close` — VIEWER, 200.
+/// `POST /api/connections/:id/query/cursor/:cursorId/close` â€” VIEWER, 200.
 async fn cursor_close(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1969,7 +1969,7 @@ async fn cursor_close(
     Ok(Json(json!({ "closed": true })).into_response())
 }
 
-/// `CursorService.fetch` — one `FETCH FORWARD n`, masks applied, and the
+/// `CursorService.fetch` â€” one `FETCH FORWARD n`, masks applied, and the
 /// connection freed eagerly the moment the result is drained.
 async fn fetch_page(
     session: &Arc<CursorSession>,
@@ -2010,7 +2010,7 @@ async fn fetch_page(
     let fields = {
         let mut st = session.st.lock().unwrap();
         if st.fields.is_empty() {
-            // describe() gave nothing — fall back to the first row's keys.
+            // describe() gave nothing â€” fall back to the first row's keys.
             st.fields = rows
                 .first()
                 .and_then(|r| r.as_object())

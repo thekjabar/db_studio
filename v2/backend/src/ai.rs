@@ -1,4 +1,4 @@
-//! AI assistant — Rust port of the v1 NestJS `src/ai/` module (controllers,
+﻿//! AI assistant â€” Rust port of the v1 NestJS `src/ai/` module (controllers,
 //! services and the three provider adapters), plus the per-user daily AI quota
 //! from `src/operator/ai-quota.service.ts` (which is a *billing* control, so it
 //! is reproduced here rather than left to v1).
@@ -17,17 +17,17 @@
 //!
 //! The Prisma schema has no `@map`, so every table/column below is the quoted
 //! PascalCase / camelCase identifier Prisma created (`"AiChat"."connectionId"`,
-//! …) and `DateTime` columns are `TIMESTAMP(3)` *without* time zone → they
+//! â€¦) and `DateTime` columns are `TIMESTAMP(3)` *without* time zone â†’ they
 //! decode as `chrono::NaiveDateTime`, never `DateTime<Utc>`.
 //!
-//! NOT PORTED HERE — `src/federated/` (`POST /api/federated/query`,
+//! NOT PORTED HERE â€” `src/federated/` (`POST /api/federated/query`,
 //! `POST /api/federated/explain`). That service runs the whole query inside an
 //! in-process **DuckDB** instance (`@duckdb/node-api`), `ATTACH`-ing every
 //! source through DuckDB's postgres/mysql/sqlite scanner extensions, and parses
 //! DuckDB's `EXPLAIN` output for the pushdown plan. v2 has no DuckDB dependency
 //! (and Cargo.toml is out of scope for this port), so there is nothing to run
 //! the federation on. Both routes therefore fall through to `main.rs`'s
-//! strangler `.fallback(proxy)` and are served by v1 exactly as before —
+//! strangler `.fallback(proxy)` and are served by v1 exactly as before â€”
 //! including its column-mask enforcement over federated results.
 //!
 //! The AI calls reach the provider over HTTPS with `state.http` (reqwest has
@@ -60,7 +60,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         // --- AiChatController (JwtAuthGuard on the whole controller) ---
         // `quota` and `messages` are static segments, so axum's router matches
-        // them ahead of `:id` regardless of registration order — same effective
+        // them ahead of `:id` regardless of registration order â€” same effective
         // precedence as Nest's declaration order.
         .route("/api/ai/chats/quota", get(quota_status))
         .route("/api/ai/chats/messages", post(send_message))
@@ -124,7 +124,7 @@ fn rank(role: &str) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// Provider selection — port of `providers/ai-provider.factory.ts`
+// Provider selection â€” port of `providers/ai-provider.factory.ts`
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq)]
@@ -166,18 +166,18 @@ fn env_opt(name: &str) -> Option<String> {
 /// The primary provider, or `None` when `AI_PROVIDER` pins an id we don't know.
 ///
 /// Resolution order for `AI_PROVIDER=auto` (v1's `resolvePrimary`):
-///   Anthropic → Gemini → OpenAI → Groq → OpenRouter → Ollama
+///   Anthropic â†’ Gemini â†’ OpenAI â†’ Groq â†’ OpenRouter â†’ Ollama
 /// When `AI_PROVIDER` is pinned we return that provider whether or not it is
 /// configured, so the failure is a clear "not configured" rather than a silent
 /// fallback to Anthropic.
 fn primary_provider() -> Option<Provider> {
-    // Default model per provider — chosen for cheap-but-capable SQL work. Each
+    // Default model per provider â€” chosen for cheap-but-capable SQL work. Each
     // can be overridden globally via AI_MODEL.
     let ai_model = env_opt("AI_MODEL");
     let model_for = |fallback: String| ai_model.clone().unwrap_or(fallback);
 
     // ANTHROPIC_MODEL uses `z.string().default(...)`, which (unlike the keys)
-    // does NOT map '' to undefined — an explicitly empty value stays empty.
+    // does NOT map '' to undefined â€” an explicitly empty value stays empty.
     let anthropic_model =
         std::env::var("ANTHROPIC_MODEL").unwrap_or_else(|_| "claude-haiku-4-5-20251001".to_string());
 
@@ -242,13 +242,13 @@ fn primary_provider() -> Option<Provider> {
 }
 
 // ---------------------------------------------------------------------------
-// Provider calls — ports of anthropic-provider.ts / gemini-provider.ts /
+// Provider calls â€” ports of anthropic-provider.ts / gemini-provider.ts /
 // openai-compat-provider.ts.
 // ---------------------------------------------------------------------------
 
 /// v1 lets a provider throw a plain `Error` for transport/shape failures. Nest's
 /// global filter turns any non-`HttpException` into
-/// `500 {"message":"Internal server error"}` — so that (not the raw cause) is
+/// `500 {"message":"Internal server error"}` â€” so that (not the raw cause) is
 /// what the client sees. The real reason is logged instead, exactly as v1's
 /// filter logs it.
 fn unhandled(context: &str) -> ApiError {
@@ -267,7 +267,7 @@ struct Turn {
     content: String,
 }
 
-/// `IAiProvider.generate` — returns the assistant's text reply.
+/// `IAiProvider.generate` â€” returns the assistant's text reply.
 async fn provider_generate(
     state: &AppState,
     p: &Provider,
@@ -298,7 +298,7 @@ async fn anthropic_generate(
         "system": system,
         "messages": messages.iter().map(|m| json!({ "role": m.role, "content": m.content })).collect::<Vec<_>>(),
     });
-    // reqwest is built without the `json` feature — serialize by hand.
+    // reqwest is built without the `json` feature â€” serialize by hand.
     let body = serde_json::to_vec(&payload).map_err(|e| unhandled(&format!("anthropic encode: {e}")))?;
     let url = format!("{}/v1/messages", p.base_url.trim_end_matches('/'));
     let res = state
@@ -313,7 +313,7 @@ async fn anthropic_generate(
         .map_err(|e| unhandled(&format!("anthropic request failed: {e}")))?;
 
     // The official SDK throws an `APIError` on a non-2xx, which is NOT an
-    // HttpException → v1 answers 500. Reproduced by `unhandled`.
+    // HttpException â†’ v1 answers 500. Reproduced by `unhandled`.
     let status = res.status();
     let raw = res.text().await.unwrap_or_default();
     if !status.is_success() {
@@ -344,7 +344,7 @@ async fn gemini_generate(
     let Some(key) = p.api_key.as_ref() else {
         return Err(unhandled("Gemini provider is not configured"));
     };
-    // v1beta `:generateContent` — the sync-text method.
+    // v1beta `:generateContent` â€” the sync-text method.
     let url = format!(
         "{}/models/{}:generateContent?key={}",
         p.base_url.trim_end_matches('/'),
@@ -377,7 +377,7 @@ async fn gemini_generate(
         if status == 429 {
             return Err(ApiError::new(
                 StatusCode::TOO_MANY_REQUESTS,
-                "Gemini quota exceeded — check your plan at aistudio.google.com/apikey, or switch to another provider (AI_PROVIDER=groq/openai/anthropic).",
+                "Gemini quota exceeded â€” check your plan at aistudio.google.com/apikey, or switch to another provider (AI_PROVIDER=groq/openai/anthropic).",
             ));
         }
         if status == 401 || status == 403 {
@@ -465,7 +465,7 @@ async fn openai_generate(
         if status == 429 || status == 413 {
             return Err(ApiError::new(
                 StatusCode::TOO_MANY_REQUESTS,
-                format!("{id} rate limit hit — try again in a minute, ask a more specific question (smaller schema context), or switch provider."),
+                format!("{id} rate limit hit â€” try again in a minute, ask a more specific question (smaller schema context), or switch provider."),
             ));
         }
         if status == 401 || status == 403 {
@@ -510,7 +510,7 @@ fn url_encode(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// AI quota — port of operator/ai-quota.service.ts (+ billing/plan.service.ts)
+// AI quota â€” port of operator/ai-quota.service.ts (+ billing/plan.service.ts)
 //
 // A billing control: without it every user gets unlimited paid-provider calls.
 // Rules:
@@ -528,7 +528,7 @@ struct PlanAi {
     daily_ai_calls: i32,
 }
 
-/// v1 `DEFAULT_PLANS` — used when the operator-editable PlanConfig row is absent.
+/// v1 `DEFAULT_PLANS` â€” used when the operator-editable PlanConfig row is absent.
 fn default_plan(tier: &str) -> PlanAi {
     let (ai, calls) = match tier {
         "PRO" => (true, 50),
@@ -538,12 +538,12 @@ fn default_plan(tier: &str) -> PlanAi {
     PlanAi { tier: tier.to_string(), ai_enabled: ai, daily_ai_calls: calls }
 }
 
-/// v1 `LOCKED_LIMITS` — no active entitlement means no AI at all.
+/// v1 `LOCKED_LIMITS` â€” no active entitlement means no AI at all.
 fn locked_plan() -> PlanAi {
     PlanAi { tier: "FREE".into(), ai_enabled: false, daily_ai_calls: 0 }
 }
 
-/// `TIER_ORDER.indexOf(tier)` — JS returns -1 for an unknown tier.
+/// `TIER_ORDER.indexOf(tier)` â€” JS returns -1 for an unknown tier.
 fn tier_index(tier: &str) -> i32 {
     match tier {
         "FREE" => 0,
@@ -594,7 +594,7 @@ async fn plan_for_user(state: &AppState, user_id: &str) -> ApiResult<PlanAi> {
 
     // v1 `isEntitled`: not SUSPENDED and the period is still open. Both a lapsed
     // trial and a lapsed paid plan drop to LOCKED. Compared in Rust (not `now()`
-    // in SQL) because `periodEnd` is `timestamp WITHOUT time zone` holding UTC —
+    // in SQL) because `periodEnd` is `timestamp WITHOUT time zone` holding UTC â€”
     // letting Postgres coerce `now()` would apply the session TimeZone.
     let now = chrono::Utc::now().naive_utc();
     let mut tiers: Vec<String> = Vec::new();
@@ -649,7 +649,7 @@ async fn compute_allowance(state: &AppState, user_id: &str) -> ApiResult<(i64, &
     let Some(user) = user else {
         return Ok((0, "user-not-found"));
     };
-    // Security-relevant column: never `.ok().flatten()` — a decode error must
+    // Security-relevant column: never `.ok().flatten()` â€” a decode error must
     // not read as "not suspended".
     let suspended_at: Option<chrono::NaiveDateTime> = user
         .try_get("suspendedAt")
@@ -691,9 +691,9 @@ fn today_utc() -> String {
 }
 
 const DAILY_LIMIT_MSG: &str =
-    "Daily limit reached — ask the workspace owner to buy a top-up, or wait until tomorrow.";
+    "Daily limit reached â€” ask the workspace owner to buy a top-up, or wait until tomorrow.";
 
-/// `AiQuotaService.consume` — consume one AI call or throw 402. Call BEFORE any
+/// `AiQuotaService.consume` â€” consume one AI call or throw 402. Call BEFORE any
 /// expensive work so we never pay a provider for a request we'll refuse.
 async fn quota_consume(state: &AppState, user_id: &str) -> ApiResult<()> {
     let (allowance, reason) = compute_allowance(state, user_id).await?;
@@ -752,7 +752,7 @@ async fn quota_consume(state: &AppState, user_id: &str) -> ApiResult<()> {
     Ok(())
 }
 
-/// `GET /api/ai/chats/quota` — read-only view for showing quota in the UI.
+/// `GET /api/ai/chats/quota` â€” read-only view for showing quota in the UI.
 /// Never throws on a zero allowance; the UI renders "0 of 0".
 async fn quota_status(State(state): State<AppState>, user: AuthUser) -> ApiResult<Json<Value>> {
     let (allowance, _) = compute_allowance(&state, &user.id).await?;
@@ -769,7 +769,7 @@ async fn quota_status(State(state): State<AppState>, user: AuthUser) -> ApiResul
 }
 
 // ---------------------------------------------------------------------------
-// Schema context — port of `introspectForER` (postgres.driver.ts) plus
+// Schema context â€” port of `introspectForER` (postgres.driver.ts) plus
 // `renderSchemaContext` / `pickRelevantTables` (ai-chat.service.ts).
 // ---------------------------------------------------------------------------
 
@@ -802,8 +802,8 @@ struct ErDiagram {
 
 /// The subset of `PostgresDriver.introspectForER` the prompt renderer consumes
 /// (name / dataType / isPrimaryKey / nullable, plus FK endpoints). Same
-/// pg_catalog queries, same relkinds, same ordering — so the table order and
-/// the "N other table(s) … omitted" count match v1 exactly.
+/// pg_catalog queries, same relkinds, same ordering â€” so the table order and
+/// the "N other table(s) â€¦ omitted" count match v1 exactly.
 async fn introspect_for_er(c: &mut PgConnection, schema: Option<&str>) -> ApiResult<ErDiagram> {
     let cols = sqlx::query(
         "SELECT n.nspname::text AS schema, cls.relname::text AS tbl, a.attname::text AS name, \
@@ -873,13 +873,13 @@ async fn introspect_for_er(c: &mut PgConnection, schema: Option<&str>) -> ApiRes
 const MAX_TABLES: usize = 60;
 const MAX_COLS_PER_TABLE: usize = 60;
 
-/// `pickRelevantTables` — rank tables by relevance to the conversation text so
+/// `pickRelevantTables` â€” rank tables by relevance to the conversation text so
 /// big schemas stay under provider TPM limits.
 ///   1. Tokenize the hint into stems (>=3 chars, lowercased).
 ///   2. Score: exact table-name hit (100) > substring match (20) > column-name
 ///      match (2).
 ///   3. Expand one FK hop from any seeded table (5).
-///   4. Nothing matched (generic question) → first-N slice.
+///   4. Nothing matched (generic question) â†’ first-N slice.
 fn pick_relevant_tables<'a>(er: &'a ErDiagram, hint: &str, max: usize) -> Vec<&'a ErTable> {
     if er.tables.len() <= max {
         return er.tables.iter().collect();
@@ -949,7 +949,7 @@ fn pick_relevant_tables<'a>(er: &'a ErDiagram, hint: &str, max: usize) -> Vec<&'
 
 /// `renderSchemaContext`. The one-shot (`ai.service.ts`) and chat
 /// (`ai-chat.service.ts`) renderers are identical except for two strings, which
-/// `chat` selects — they go into the prompt verbatim, so both are reproduced.
+/// `chat` selects â€” they go into the prompt verbatim, so both are reproduced.
 fn render_schema_context(er: &ErDiagram, hint: &str, chat: bool) -> String {
     let tables = pick_relevant_tables(er, hint, MAX_TABLES);
     let included: HashSet<String> =
@@ -987,7 +987,7 @@ fn render_schema_context(er: &ErDiagram, hint: &str, chat: bool) -> String {
         });
     }
 
-    // Only FKs where both endpoints are in the included set — dangling
+    // Only FKs where both endpoints are in the included set â€” dangling
     // references would just confuse the model.
     let relevant: Vec<&ErFk> = er
         .foreign_keys
@@ -1043,9 +1043,9 @@ async fn load_conn(state: &AppState, conn_id: &str) -> ApiResult<Option<ConnInfo
     }))
 }
 
-/// Anything Rust can't introspect faithfully — the agent tunnel (which lives
+/// Anything Rust can't introspect faithfully â€” the agent tunnel (which lives
 /// only in the Node backend), a non-Postgres dialect (v2 has no MySQL/MSSQL/
-/// SQLite driver), or a missing ENCRYPTION_KEY — is handed to v1 instead of
+/// SQLite driver), or a missing ENCRYPTION_KEY â€” is handed to v1 instead of
 /// erroring. Mirrors `main.rs::agent_guard` and `docs.rs::run_saved_query`.
 fn must_proxy(state: &AppState, c: &ConnInfo) -> bool {
     // NOTE: no viaAgent check here. `agent_guard` in main.rs already forwards
@@ -1054,7 +1054,7 @@ fn must_proxy(state: &AppState, c: &ConnInfo) -> bool {
     !c.dialect.to_lowercase().contains("postgres") || state.crypto.is_none()
 }
 
-/// v1 introspects with `buildDriverForRole(id, Role.VIEWER)` — "Viewer → always
+/// v1 introspects with `buildDriverForRole(id, Role.VIEWER)` â€” "Viewer â†’ always
 /// read-only", so the assistant can never trigger a side-effecting statement
 /// while reading the schema. Reproduced with a read-only session plus the
 /// connection's statement timeout, exactly as the Node Postgres driver sets
@@ -1062,15 +1062,15 @@ fn must_proxy(state: &AppState, c: &ConnInfo) -> bool {
 ///
 /// The caller has already passed `require_role(..., "VIEWER")`, which honours
 /// workspace membership; `connect_target`'s own access check is narrower (owner
-/// or direct ConnectionMember only), so we hand it the connection's ownerId —
+/// or direct ConnectionMember only), so we hand it the connection's ownerId â€”
 /// it is fetching *credentials*, not authorizing the request.
-async fn viewer_connection(state: &AppState, conn_id: &str, c: &ConnInfo) -> ApiResult<PgConnection> {
+async fn viewer_connection(state: &AppState, conn_id: &str, c: &ConnInfo) -> ApiResult<crate::TargetConn> {
     let mut conn = connect_target(state, conn_id, &c.owner_id).await?;
     let _ = sqlx::query(&format!("SET statement_timeout = {}", c.statement_timeout_ms))
-        .execute(&mut conn)
+        .execute(&mut *conn)
         .await;
     let _ = sqlx::query("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
-        .execute(&mut conn)
+        .execute(&mut *conn)
         .await;
     Ok(conn)
 }
@@ -1100,7 +1100,7 @@ async fn generate_sql(
         return Ok(crate::proxy(State(state), req).await);
     }
 
-    // RbacGuard @RequireRole('VIEWER') — runs before the body pipe in Nest, and
+    // RbacGuard @RequireRole('VIEWER') â€” runs before the body pipe in Nest, and
     // is what turns an unknown id into 404 "Connection not found".
     require_role(&state, &id, &user.id, "VIEWER").await?;
 
@@ -1128,7 +1128,7 @@ async fn generate_sql(
         _ => {
             return Err(ApiError::new(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "AI is disabled on this server — configure at least one provider (ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, …).",
+                "AI is disabled on this server â€” configure at least one provider (ANTHROPIC_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, â€¦).",
             ))
         }
     };
@@ -1188,7 +1188,7 @@ No markdown fences, no prose before/after."#
     Ok(Json(json!({ "sql": parsed.0, "explanation": parsed.1, "tables": parsed.2 })).into_response())
 }
 
-/// `AiService.parseResponse` → `(sql, explanation, tables)`.
+/// `AiService.parseResponse` â†’ `(sql, explanation, tables)`.
 fn parse_response(raw: &str) -> (String, String, Vec<String>) {
     // Strip code fences if the model ignored the instruction:
     //   raw.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
@@ -1202,7 +1202,7 @@ fn parse_response(raw: &str) -> (String, String, Vec<String>) {
     }
     let mut txt = txt.trim();
     // If it returned prose + a JSON block, pick the JSON block:
-    // /\{[\s\S]*\}/ is greedy → first '{' through last '}'.
+    // /\{[\s\S]*\}/ is greedy â†’ first '{' through last '}'.
     if let (Some(a), Some(z)) = (txt.find('{'), txt.rfind('}')) {
         if z > a {
             txt = &txt[a..=z];
@@ -1241,7 +1241,7 @@ fn js_to_string(v: &Value) -> String {
     }
 }
 
-/// JS `String(value ?? '')` — null/undefined collapse to the empty string.
+/// JS `String(value ?? '')` â€” null/undefined collapse to the empty string.
 fn js_coalesce_string(v: Option<&Value>) -> String {
     match v {
         None | Some(Value::Null) => String::new(),
@@ -1250,7 +1250,7 @@ fn js_coalesce_string(v: Option<&Value>) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// AiChatController — /api/ai/chats
+// AiChatController â€” /api/ai/chats
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -1260,7 +1260,7 @@ struct ListQuery {
     connection_id: Option<String>,
 }
 
-/// `GET /api/ai/chats?connectionId=…` — `AiChatService.list`.
+/// `GET /api/ai/chats?connectionId=â€¦` â€” `AiChatService.list`.
 async fn chat_list(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1303,7 +1303,7 @@ fn message_json(r: &PgRow) -> Value {
     })
 }
 
-/// `GET /api/ai/chats/:id` — `AiChatService.get` (chat + messages, oldest first).
+/// `GET /api/ai/chats/:id` â€” `AiChatService.get` (chat + messages, oldest first).
 async fn chat_get(
     State(state): State<AppState>,
     user: AuthUser,
@@ -1341,7 +1341,7 @@ async fn chat_get(
     })))
 }
 
-/// `DELETE /api/ai/chats/:id` — `AiChatService.remove`. Messages go with it via
+/// `DELETE /api/ai/chats/:id` â€” `AiChatService.remove`. Messages go with it via
 /// the `AiMessage_chatId_fkey ON DELETE CASCADE`.
 async fn chat_remove(
     State(state): State<AppState>,
@@ -1377,7 +1377,7 @@ struct SendMessageDto {
     content: Option<String>,
 }
 
-/// `POST /api/ai/chats/messages` — `AiChatService.sendMessage`. Appends the user
+/// `POST /api/ai/chats/messages` â€” `AiChatService.sendMessage`. Appends the user
 /// turn, calls the model with the full history + schema context, persists the
 /// assistant turn, and returns it. Auto-creates the chat on the first call.
 async fn send_message(
@@ -1420,7 +1420,7 @@ async fn send_message(
     let provider = primary_provider().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
-            "AI is disabled on this server — set an API key for one of: Anthropic, Gemini, OpenAI, Groq, OpenRouter, or Ollama.",
+            "AI is disabled on this server â€” set an API key for one of: Anthropic, Gemini, OpenAI, Groq, OpenRouter, or Ollama.",
         )
     })?;
 
@@ -1479,7 +1479,7 @@ async fn send_message(
     .execute(&state.pool)
     .await?;
 
-    // Assemble history — v1 caps it at 60 rows to stay under context limits.
+    // Assemble history â€” v1 caps it at 60 rows to stay under context limits.
     let history = sqlx::query(
         r#"SELECT "role","content" FROM "AiMessage" WHERE "chatId" = $1
             ORDER BY "createdAt" ASC LIMIT 60"#,
@@ -1495,7 +1495,7 @@ async fn send_message(
         })
         .collect();
 
-    // Schema context — one-time per call, not persisted. The conversation text
+    // Schema context â€” one-time per call, not persisted. The conversation text
     // is the relevance hint so only schema-relevant tables are sent.
     let info = info.ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Connection not found"))?;
     let schema_ctx = {
@@ -1511,12 +1511,12 @@ async fn send_message(
     let system = format!(
         r#"You are a careful SQL assistant for a {dialect} database.
 
-Rules — follow these strictly:
-- Use ONLY the exact table and column names listed under "Schema" below. Do NOT invent, pluralize, singularize, or guess identifiers. If a table the user asks about is not in the schema, say so explicitly and list the closest matches by name from the schema — do not fabricate a query.
+Rules â€” follow these strictly:
+- Use ONLY the exact table and column names listed under "Schema" below. Do NOT invent, pluralize, singularize, or guess identifiers. If a table the user asks about is not in the schema, say so explicitly and list the closest matches by name from the schema â€” do not fabricate a query.
 - When appropriate, include exactly one executable SQL statement in a ```sql fenced block.
 - Prefer SELECT. Only propose DDL/DML when the user explicitly asks for one.
 - For row-limiting SELECTs, include a LIMIT of 100 unless the user asked otherwise.
-- Use the FOREIGN KEYS section to choose JOIN conditions — prefer FK-backed joins over guessing column names.
+- Use the FOREIGN KEYS section to choose JOIN conditions â€” prefer FK-backed joins over guessing column names.
 - You may answer follow-up questions without generating SQL when the user is asking for explanation or clarification.
 
 Schema:
@@ -1548,7 +1548,7 @@ Schema:
     Ok(Json(json!({ "chatId": chat_id, "message": message_json(&saved) })).into_response())
 }
 
-/// `extractLastSqlBlock` — /```sql\s*\n([\s\S]*?)```/gi, keeping the LAST match.
+/// `extractLastSqlBlock` â€” /```sql\s*\n([\s\S]*?)```/gi, keeping the LAST match.
 /// The capture is trimmed, so starting the content at the first newline of the
 /// whitespace run is equivalent to the regex's backtracked last-newline split.
 fn extract_last_sql_block(t: &str) -> Option<String> {
@@ -1561,7 +1561,7 @@ fn extract_last_sql_block(t: &str) -> Option<String> {
             i += 1;
             continue;
         }
-        // `\s*\n` — the whitespace run must contain a newline for the regex to
+        // `\s*\n` â€” the whitespace run must contain a newline for the regex to
         // match at all.
         let mut j = i + 6;
         let mut start: Option<usize> = None;
@@ -1575,7 +1575,7 @@ fn extract_last_sql_block(t: &str) -> Option<String> {
             i += 6;
             continue;
         };
-        // Lazy `[\s\S]*?` up to the closing fence; no fence → no match at all.
+        // Lazy `[\s\S]*?` up to the closing fence; no fence â†’ no match at all.
         match t[start..].find("```") {
             Some(rel) => {
                 let end = start + rel;

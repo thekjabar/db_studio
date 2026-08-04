@@ -22,6 +22,9 @@ redis = { version = "0.27", default-features = false, features = ["tokio-comp", 
 # exactly on the stacked-statement / CTE-hiding-a-write cases that gate exists
 # for, so a real parser is required.
 sqlparser = "0.52"
+# Realtime: the frontend speaks socket.io (namespace /realtime), so a plain
+# WebSocket won't do — this serves the actual socket.io/engine.io protocol.
+socketioxide = "0.15"
 # BullMQ repeatable jobs: cron -> next-run millis in the schedule's timezone,
 # and msgpack for the three packed ARGV slots its Lua scripts expect.
 cron = "0.12"

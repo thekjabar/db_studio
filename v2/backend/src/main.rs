@@ -18,6 +18,7 @@ mod totp;
 mod importer;
 mod oauth;
 mod queue;
+mod realtime;
 mod tunnel;
 mod backup;
 mod collab;
@@ -290,6 +291,9 @@ async fn main() -> anyhow::Result<()> {
         // Agent-backed connections bypass Rust entirely (tunnel lives in v1).
         .layer(middleware::from_fn_with_state(state.clone(), agent_guard))
         .layer(CorsLayer::permissive())
+        // socket.io (/socket.io/*) serving the /realtime namespace the frontend
+        // connects to. Added last so it wraps the finished router.
+        .layer(realtime::layer(state.clone()))
         .with_state(state);
 
     let addr = format!("0.0.0.0:{port}");

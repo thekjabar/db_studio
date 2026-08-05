@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { Sidebar } from "./sidebar";
 import { TopBar } from "./topbar";
+import { TabBar } from "./tab-bar";
 import { useViewport } from "@/lib/use-viewport";
 import { FeedbackWidget } from "@/components/feedback-widget";
 import { AnnouncementBanner } from "@/components/announcements";
@@ -134,6 +135,9 @@ export function AppShell() {
           crumbs={crumbs}
           onMenuClick={isMobile ? () => setMobileOpen(true) : undefined}
         />
+        {/* Browser-style tabs. Mirrors navigation, so every existing link
+            (sidebar, command palette, deep links) opens or focuses a tab. */}
+        <TabBar />
         {/*
           overflow-y-auto lets static form/list pages (migration export,
           permissions, backup, etc.) scroll naturally. The fixed-height

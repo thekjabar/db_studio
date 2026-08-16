@@ -32,10 +32,7 @@ mod query_tools;
 mod sharing;
 mod workspaces;
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+use std::time::Instant;
 
 use axum::{
     extract::{Path, Query, State},
@@ -76,9 +73,6 @@ struct AppState {
     /// HTTP client + origin for the strangler proxy to the v1 Node API.
     http: reqwest::Client,
     v1_origin: String,
-    /// Open "Stream all" reads, keyed by cursor id. In memory: a stream is a
-    /// position in a result, not something worth surviving a restart.
-    streams: Streams,
     /// Refresh-token lifetime in seconds (JWT_REFRESH_TTL, default 7d).
     refresh_ttl_secs: i64,
     /// Refresh-cookie attributes (mirror v1's setRefreshCookie).
@@ -196,7 +190,6 @@ async fn main() -> anyhow::Result<()> {
     }
     let state = AppState {
         pool, jwt_secret, jwt_ttl, max_rows, crypto, http, v1_origin,
-        streams: Streams::default(),
         refresh_ttl_secs, cookie_domain, cookie_secure, require_email_verification, cooldown,
         resend_key, mail_from, app_base_url,
     };
@@ -260,10 +253,6 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/connections/:id/tables/:name/rows/bulk-delete", post(row_bulk_delete))
         .route("/api/connections/:id/tables/:name/rows/bulk-update", post(row_bulk_update))
         .route("/api/connections/:id/query", post(v1_query))
-        // "Stream all": page through a large result instead of buffering it.
-        .route("/api/connections/:id/query/cursor", post(stream_open))
-        .route("/api/connections/:id/query/cursor/:cursor_id/fetch", post(stream_fetch))
-        .route("/api/connections/:id/query/cursor/:cursor_id/close", post(stream_close))
         .route("/api/connections/:id/saved-queries", get(sq_list).post(sq_create))
         .route(
             "/api/connections/:id/saved-queries/:queryId",
@@ -3800,174 +3789,6 @@ struct V1QueryBody {
     max_rows: Option<i64>,
 }
 
-// ---------------------------------------------------------------------------
-// "Stream all" — paged reads of a large result
-// ---------------------------------------------------------------------------
-
-/// One open stream: the statement, who may pull from it, and how far it has got.
-///
-/// Deliberately NOT a Postgres `DECLARE CURSOR`. A real cursor lives inside a
-/// transaction, so holding one between HTTP requests means holding a pooled
-/// connection open for as long as the user leaves the tab alone — a handful of
-/// abandoned streams would exhaust the pool for everyone. Paging costs a
-/// re-scan on deep offsets; a stuck pool costs the whole app.
-struct StreamState {
-    sql: String,
-    connection_id: String,
-    user_id: String,
-    offset: i64,
-    opened: Instant,
-}
-
-/// Abandoned streams are swept after this long. The UI closes its stream when
-/// it finishes or the user stops it, but a closed laptop never sends that.
-const STREAM_TTL: Duration = Duration::from_secs(30 * 60);
-const STREAM_PAGE_MAX: i64 = 5_000;
-
-type Streams = Arc<Mutex<HashMap<String, StreamState>>>;
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StreamOpenBody {
-    sql: String,
-    page_size: Option<i64>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StreamFetchBody {
-    page_size: Option<i64>,
-}
-
-/// Read one page and say whether that was the last.
-///
-/// Asks for one row more than requested: without the extra row you cannot tell
-/// a full final page from a page with more behind it, and the stream would
-/// either stop one page early or make a pointless empty round trip.
-async fn stream_page(
-    c: &mut PgConnection,
-    sql: &str,
-    offset: i64,
-    page_size: i64,
-) -> ApiResult<(Vec<Value>, Vec<Value>, bool)> {
-    let fields: Vec<Value> = match (&mut *c).describe(sql).await {
-        Ok(d) => d
-            .columns()
-            .iter()
-            .map(|col| json!({ "name": col.name(), "dataType": col.type_info().name() }))
-            .collect(),
-        Err(_) => vec![],
-    };
-    let probe = page_size.saturating_add(1);
-    let wrapped = format!(
-        "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM \
-         (SELECT * FROM ({sql}) _q OFFSET {offset} LIMIT {probe}) t",
-    );
-    let value: Value = sqlx::query_scalar(&wrapped).fetch_one(&mut *c).await?;
-    let mut rows = value.as_array().cloned().unwrap_or_default();
-    let done = (rows.len() as i64) <= page_size;
-    if !done {
-        rows.truncate(page_size as usize);
-    }
-    let fields = if fields.is_empty() {
-        derive_columns(&Value::Array(rows.clone())).into_iter().map(|n| json!({ "name": n })).collect()
-    } else {
-        fields
-    };
-    Ok((fields, rows, done))
-}
-
-/// POST /api/connections/:id/query/cursor — open a stream, return page one.
-async fn stream_open(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path(id): Path<String>,
-    Json(body): Json<StreamOpenBody>,
-) -> ApiResult<Json<Value>> {
-    let sql = body.sql.trim().trim_end_matches(';').trim().to_string();
-    if sql.is_empty() {
-        return Err(ApiError::bad("Empty SQL"));
-    }
-    if !is_select(&sql) {
-        return Err(ApiError::bad("Only SELECT statements can be streamed."));
-    }
-    let page_size = body.page_size.unwrap_or(1_000).clamp(1, STREAM_PAGE_MAX);
-
-    let mut c = connect_target(&state, &id, &user.id).await?;
-    let (fields, rows, done) = stream_page(&mut c, &sql, 0, page_size).await?;
-
-    let cursor_id = gen_id();
-    {
-        let mut map = state.streams.lock().await;
-        // Sweep expired streams on every open, so an idle server does not hold
-        // rows nobody is coming back for.
-        map.retain(|_, s| s.opened.elapsed() < STREAM_TTL);
-        map.insert(
-            cursor_id.clone(),
-            StreamState {
-                sql,
-                connection_id: id,
-                user_id: user.id.clone(),
-                offset: rows.len() as i64,
-                opened: Instant::now(),
-            },
-        );
-    }
-
-    Ok(Json(json!({
-        "cursorId": cursor_id,
-        "fields": fields,
-        "rows": rows,
-        "done": done,
-    })))
-}
-
-/// POST /api/connections/:id/query/cursor/:cursorId/fetch — the next page.
-async fn stream_fetch(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path((id, cursor_id)): Path<(String, String)>,
-    Json(body): Json<StreamFetchBody>,
-) -> ApiResult<Json<Value>> {
-    let page_size = body.page_size.unwrap_or(1_000).clamp(1, STREAM_PAGE_MAX);
-
-    // Copy what is needed and release the lock before touching the database —
-    // holding it across an await would serialise every stream in the process.
-    let (sql, offset) = {
-        let map = state.streams.lock().await;
-        let s = map
-            .get(&cursor_id)
-            .filter(|s| s.user_id == user.id && s.connection_id == id)
-            .ok_or_else(|| ApiError::bad("That stream is no longer open."))?;
-        (s.sql.clone(), s.offset)
-    };
-
-    let mut c = connect_target(&state, &id, &user.id).await?;
-    let (fields, rows, done) = stream_page(&mut c, &sql, offset, page_size).await?;
-
-    {
-        let mut map = state.streams.lock().await;
-        if done {
-            map.remove(&cursor_id);
-        } else if let Some(s) = map.get_mut(&cursor_id) {
-            s.offset += rows.len() as i64;
-        }
-    }
-
-    Ok(Json(json!({ "fields": fields, "rows": rows, "done": done })))
-}
-
-/// POST /api/connections/:id/query/cursor/:cursorId/close
-async fn stream_close(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Path((id, cursor_id)): Path<(String, String)>,
-) -> ApiResult<Json<Value>> {
-    let mut map = state.streams.lock().await;
-    map.retain(|k, s| !(k == &cursor_id && s.user_id == user.id && s.connection_id == id));
-    Ok(Json(json!({ "closed": true })))
-}
-
 async fn v1_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Json(body): Json<V1QueryBody>) -> ApiResult<Json<Value>> {
     let mut c = connect_target(&state, &id, &user.id).await?;
     let sql = body.sql.trim().trim_end_matches(';').trim().to_string();
@@ -3976,8 +3797,9 @@ async fn v1_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<
     }
     // The editor sends 0 for "No cap". Clamping that to 1 turned the loosest
     // setting into the tightest one: every no-cap query came back with a single
-    // row and a banner saying the rest was truncated. Silent, and the wrong way
-    // round, so 0 is resolved before the clamp rather than by it.
+    // row, under a banner saying the rest had been truncated. A count(*) hid it
+    // — a count returns one row anyway — but SELECT * did not. So 0 is resolved
+    // to the ceiling BEFORE the clamp rather than by it.
     const CEILING: i64 = 100_000;
     let requested = body.max_rows.unwrap_or(state.max_rows);
     let max = if requested <= 0 { CEILING } else { requested.min(CEILING) };
@@ -3994,16 +3816,17 @@ async fn v1_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<
                 .collect(),
             Err(_) => vec![],
         };
-        // Fetch one more than the cap. Asking for exactly `max` cannot tell
-        // "there were exactly this many" from "there were more", so a table of
-        // precisely 1,000 rows read under a 1,000 cap used to claim it had been
-        // truncated. The extra row is the evidence, and is dropped below.
+        // One row beyond the cap, purely as evidence of whether more exist.
         let probe = max.saturating_add(1);
         let wrapped = format!(
             "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM (SELECT * FROM ({sql}) _q LIMIT {probe}) t",
         );
         let mut rows_json: Value = sqlx::query_scalar(&wrapped).fetch_one(&mut *c).await?;
         let dur = ms(start);
+        // Asking for exactly `max` cannot tell "there were exactly this many"
+        // from "there were more", so a table of precisely 1,000 rows read under
+        // a 1,000 cap used to claim it had been truncated. The probe row above
+        // is the evidence, and is dropped here.
         let fetched = rows_json.as_array().map(|a| a.len()).unwrap_or(0) as i64;
         let truncated = fetched > max;
         if truncated {

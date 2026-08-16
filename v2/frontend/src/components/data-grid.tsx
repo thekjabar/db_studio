@@ -86,6 +86,20 @@ function detectKind(type: string | undefined, value: unknown): CellKind {
   return "text";
 }
 
+/**
+ * Is this column numeric, judged from its declared type alone?
+ *
+ * The header renders before any row is examined, so it cannot use detectKind,
+ * which needs a value. Kept next to that function so the two lists of numeric
+ * types are edited together — if they drift, a column's header and its values
+ * align to opposite edges.
+ */
+function isNumericType(type: string | undefined): boolean {
+  return /^(?:int|numeric|decimal|real|double|serial|float|bigint|smallint|money)/.test(
+    (type ?? "").toLowerCase(),
+  );
+}
+
 function formatValue(v: unknown, kind: CellKind): string {
   if (kind === "null") return "";
   if (kind === "json") {
@@ -397,13 +411,26 @@ export function DataGrid({
             )}
             {columns.map((col) => {
               const w = widths[col.name] ?? DEFAULT_WIDTH;
+              // Numeric values are right-aligned so their digits line up. The
+              // header was left-aligned regardless, so on a wide column the name
+              // sat at one edge and the number at the other, looking unrelated.
+              // The header follows its column.
+              const numeric = isNumericType(col.type);
               return (
                 <th
                   key={col.name}
                   style={{ width: w, minWidth: w, maxWidth: w }}
-                  className="group/th relative bg-card/95 backdrop-blur border-b border-r border-border px-3 py-2 text-left font-medium whitespace-nowrap"
+                  className={cn(
+                    "group/th relative bg-card/95 backdrop-blur border-b border-r border-border px-3 py-2 font-medium whitespace-nowrap",
+                    numeric ? "text-right" : "text-left",
+                  )}
                 >
-                  <div className="flex items-center gap-2 min-w-0">
+                  <div
+                    className={cn(
+                      "flex items-center gap-2 min-w-0",
+                      numeric && "justify-end",
+                    )}
+                  >
                     {col.pk ? (
                       <Key className="h-3 w-3 text-amber-400 shrink-0" />
                     ) : (

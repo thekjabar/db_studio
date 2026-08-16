@@ -255,13 +255,14 @@ pub fn routes() -> Router<AppState> {
     let c = cfg();
     let mut r = Router::new();
 
-    // `providers` drives the login page's buttons. Registered only when this
-    // process serves at least one provider, so an OAuth-less v2 keeps
-    // reporting v1's answer instead of hiding working buttons.
-    let can_serve_oauth = c.callback_base.is_some() && (c.google.is_some() || c.github.is_some());
-    if can_serve_oauth {
-        r = r.route("/api/auth/oauth/providers", get(providers));
-    }
+    // `providers` drives the login page's buttons, and is ALWAYS registered.
+    //
+    // It used to be conditional so that an OAuth-less v2 fell through to v1
+    // rather than hiding buttons v1 could still serve. v1 was removed on
+    // 2026-08-03, so that fallthrough now lands on the 501 stub and the login
+    // page's provider check fails on every load. Answering "no providers" is
+    // both true and useful; staying silent is neither.
+    r = r.route("/api/auth/oauth/providers", get(providers));
     if c.callback_base.is_some() && c.google.is_some() {
         r = r
             .route("/api/auth/oauth/google", get(google_start))

@@ -3925,7 +3925,21 @@ async fn agent_guard(State(state): State<AppState>, req: Request, next: Next) ->
     let id = conn_id_from_path(path).map(|s| s.to_string());
     if let Some(id) = id {
         if via_agent(&state.pool, &id).await {
-            return proxy(State(state), req).await;
+            // Reached only when the connection is agent-routed AND its agent is
+            // offline. This used to fall through to the v1 proxy, which since
+            // 2026-08-03 answers "served by the legacy backend, which has been
+            // removed" — true of the backend, and completely misleading about
+            // the cause. The agent is what is missing, and that is something the
+            // user can actually fix.
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({
+                    "statusCode": 503,
+                    "error": "Agent offline",
+                    "message": "This connection reaches its database through a local agent, and that agent is not connected right now. Start the agent on the machine that can see the database, then try again.",
+                })),
+            )
+                .into_response();
         }
     }
     next.run(req).await

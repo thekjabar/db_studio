@@ -32,8 +32,10 @@
 //!     `{"t":"close","streamId":..}`, `{"t":"ping"}`
 //! * Data frames are **binary**: `[u32 BE streamId length N][N bytes streamId
 //!   (utf8)][raw TCP payload]`, both directions.
-//! * Keepalive: the server WS-pings every 30s and terminates a socket that missed
-//!   the previous pong. The agent additionally sends `{"t":"ping"}` every 30s and
+//! * Keepalive: the server WS-pings every 30s and terminates a socket that has
+//!   sent NOTHING since the previous ping — any frame counts, because the point
+//!   is to detect a silent peer, not to demand one specific reply. The agent
+//!   additionally sends `{"t":"ping"}` every 30s and
 //!   **requires a `{"t":"pong"}` text frame back** — gorilla only refreshes its
 //!   90s read deadline on a *data* message, so a silent server (WS pings alone)
 //!   would be dropped by every agent after 90 seconds.
@@ -771,6 +773,16 @@ async fn session(mut socket: WebSocket, state: AppState, token: Option<String>) 
             }
             incoming = socket.recv() => {
                 let Some(Ok(msg)) = incoming else { break };
+                // ANY frame proves the socket is alive.
+                //
+                // Liveness used to be credited only for a WS Pong or a
+                // `{"t":"pong"}`. But the agent's own keepalive is `{"t":"ping"}`
+                // every 30s, and tunnel data is binary — so an agent that was
+                // demonstrably talking to us still failed the check and had its
+                // socket terminated mid-session, roughly a minute after
+                // connecting. The ping exists to detect a SILENT peer; a peer
+                // sending frames is not silent.
+                alive = true;
                 match msg {
                     // Binary frames are tunnel data.
                     Message::Binary(bytes) => {

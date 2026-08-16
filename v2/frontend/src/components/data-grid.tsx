@@ -79,25 +79,11 @@ function detectKind(type: string | undefined, value: unknown): CellKind {
     if (t === "date") return "date";
     if (t.startsWith("time")) return "datetime";
     if (/^(?:int|numeric|decimal|real|double|serial|float)/.test(t)) {
-      // Server may serialize bigint as string — still render right-aligned.
+      // Server may serialize bigint as string — still treat it as a number.
       if (/^-?\d+(?:\.\d+)?$/.test(value)) return "number";
     }
   }
   return "text";
-}
-
-/**
- * Is this column numeric, judged from its declared type alone?
- *
- * The header renders before any row is examined, so it cannot use detectKind,
- * which needs a value. Kept next to that function so the two lists of numeric
- * types are edited together — if they drift, a column's header and its values
- * align to opposite edges.
- */
-function isNumericType(type: string | undefined): boolean {
-  return /^(?:int|numeric|decimal|real|double|serial|float|bigint|smallint|money)/.test(
-    (type ?? "").toLowerCase(),
-  );
 }
 
 function formatValue(v: unknown, kind: CellKind): string {
@@ -411,26 +397,13 @@ export function DataGrid({
             )}
             {columns.map((col) => {
               const w = widths[col.name] ?? DEFAULT_WIDTH;
-              // Numeric values are right-aligned so their digits line up. The
-              // header was left-aligned regardless, so on a wide column the name
-              // sat at one edge and the number at the other, looking unrelated.
-              // The header follows its column.
-              const numeric = isNumericType(col.type);
               return (
                 <th
                   key={col.name}
                   style={{ width: w, minWidth: w, maxWidth: w }}
-                  className={cn(
-                    "group/th relative bg-card/95 backdrop-blur border-b border-r border-border px-3 py-2 font-medium whitespace-nowrap",
-                    numeric ? "text-right" : "text-left",
-                  )}
+                  className="group/th relative bg-card/95 backdrop-blur border-b border-r border-border px-3 py-2 text-left font-medium whitespace-nowrap"
                 >
-                  <div
-                    className={cn(
-                      "flex items-center gap-2 min-w-0",
-                      numeric && "justify-end",
-                    )}
-                  >
+                  <div className="flex items-center gap-2 min-w-0">
                     {col.pk ? (
                       <Key className="h-3 w-3 text-amber-400 shrink-0" />
                     ) : (
@@ -715,7 +688,9 @@ const GridRow = React.memo(function GridRow({
             style={{ width: w, minWidth: w, maxWidth: w }}
             className={cn(
               "group/cell relative border-b border-r border-border px-3 py-1.5 whitespace-nowrap overflow-hidden",
-              kind === "number" && "text-right tabular-nums",
+              // tabular-nums still keeps digits the same width, so figures line up
+              // down the column even left-aligned.
+              kind === "number" && "tabular-nums",
               fkClickable && "cursor-pointer",
               isActive && "ring-1 ring-inset ring-primary bg-primary/5",
             )}
@@ -1068,7 +1043,10 @@ function Cell({ kind, value }: { kind: CellKind; value: unknown }) {
   }
   if (kind === "number") {
     return (
-      <span className="font-mono text-sky-700 dark:text-sky-400 block text-right tabular-nums">
+      {/* Left, like every other column, so a value sits under its own header
+          instead of at the far edge of a wide one. tabular-nums keeps digits
+          a fixed width, so figures still line up down the column. */}
+      <span className="font-mono text-sky-700 dark:text-sky-400 block tabular-nums">
         {formatValue(value, kind)}
       </span>
     );

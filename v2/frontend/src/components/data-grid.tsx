@@ -1042,10 +1042,10 @@ function Cell({ kind, value }: { kind: CellKind; value: unknown }) {
     );
   }
   if (kind === "number") {
+    // Left, like every other column, so a value sits under its own header
+    // instead of at the far edge of a wide one. tabular-nums keeps digits a
+    // fixed width, so figures still line up down the column.
     return (
-      {/* Left, like every other column, so a value sits under its own header
-          instead of at the far edge of a wide one. tabular-nums keeps digits
-          a fixed width, so figures still line up down the column. */}
       <span className="font-mono text-sky-700 dark:text-sky-400 block tabular-nums">
         {formatValue(value, kind)}
       </span>

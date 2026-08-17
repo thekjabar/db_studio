@@ -71,7 +71,7 @@ export function TabBar() {
     <div className="relative border-b border-border bg-muted/30">
       <div
         ref={stripRef}
-        className="flex items-stretch gap-px overflow-x-auto scrollbar-thin"
+        className="flex items-stretch gap-px overflow-x-auto scroll-no-bar"
         role="tablist"
       >
         {list.map((t) => {

@@ -226,12 +226,20 @@ body {
   100% { stroke-dashoffset: 0; opacity: 0; }
 }
 
-/* SQL editor toolbar's scrollable zone: keep it scrollable (trackpad swipe,
-   shift+wheel, keyboard arrows) but hide the scrollbar visually. Firefox
-   uses `scrollbar-width: none`; WebKit uses the pseudo-element. */
+/* A strip that scrolls but shows no scrollbar — chrome, not content.
+   Scrolling still works every other way (trackpad swipe, shift+wheel, keyboard
+   arrows, dragging a tab past the edge); only the bar is hidden. Firefox uses
+   `scrollbar-width`, WebKit the pseudo-element, so both are needed.
+
+   Used by the SQL editor toolbar and the tab bar. One class rather than one per
+   strip: the tab bar previously asked for `scrollbar-thin`, which this project
+   never defined and Tailwind does not ship, so it silently fell back to the
+   global 10px bar and looked nothing like the rest of the app. */
+.scroll-no-bar,
 .sql-toolbar-scroll {
   scrollbar-width: none;
 }
+.scroll-no-bar::-webkit-scrollbar,
 .sql-toolbar-scroll::-webkit-scrollbar {
   display: none;
   height: 0;

@@ -98,6 +98,69 @@ export default function DbHealthRoute() {
           </div>
         )}
 
+        {/* "The database is 34 GB" is not a number anyone can act on. Which
+            table is 34 GB is the question actually being asked. */}
+        {snap.tables && snap.tables.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold mb-2 flex items-center gap-2">
+              Table sizes
+              <span className="text-muted-foreground font-normal">
+                largest {snap.tables.length}
+                {snap.tables.length === 50 ? " shown" : ""}
+              </span>
+            </div>
+            <div className="rounded-md border border-border bg-card overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30">
+                    <th className="text-left px-2 py-1 font-medium">Table</th>
+                    <th className="text-right px-2 py-1 font-medium">Total</th>
+                    <th className="text-right px-2 py-1 font-medium">Data</th>
+                    <th className="text-right px-2 py-1 font-medium">Indexes</th>
+                    <th className="text-right px-2 py-1 font-medium">Rows (est.)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {snap.tables.map((t, i) => {
+                    // Relative to the biggest table, which is the first row —
+                    // the list is ordered by size. A bar makes "one table is
+                    // most of the database" visible without reading every
+                    // figure.
+                    const largest = snap.tables?.[0]?.totalBytes ?? 0;
+                    const pct = largest > 0 ? (t.totalBytes / largest) * 100 : 0;
+                    return (
+                      <tr key={i} className="border-b border-border last:border-b-0">
+                        <td className="px-2 py-1">
+                          <span className="font-mono">{t.name ?? "—"}</span>
+                          {t.schema && t.schema !== "public" && (
+                            <span className="text-muted-foreground"> · {t.schema}</span>
+                          )}
+                          <div className="mt-1 h-1 rounded-full bg-muted overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-foreground/40"
+                              style={{ width: `${Math.max(pct, 1)}%` }}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-2 py-1 text-right font-mono tabular-nums">{t.total}</td>
+                        <td className="px-2 py-1 text-right font-mono tabular-nums text-muted-foreground">
+                          {t.table}
+                        </td>
+                        <td className="px-2 py-1 text-right font-mono tabular-nums text-muted-foreground">
+                          {t.indexes}
+                        </td>
+                        <td className="px-2 py-1 text-right font-mono tabular-nums text-muted-foreground">
+                          {t.estRows.toLocaleString()}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         <div>
           <div className="text-xs font-semibold mb-2 flex items-center gap-2">
             Long-running queries

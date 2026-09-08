@@ -1608,6 +1608,42 @@ async fn db_health(
         }));
     }
 
+    // Per-table sizes.
+    //
+    // "The database is 34 GB" is a number nobody can act on. Which TABLE is 34
+    // GB is the question actually being asked, and the answer is one query away.
+    //
+    // pg_total_relation_size is the whole story for a table — heap, indexes and
+    // TOAST — so the parts are reported alongside it rather than leaving someone
+    // to wonder why the total dwarfs the row count. reltuples is the planner's
+    // estimate, not a count: exact counts mean scanning every table on a health
+    // page that auto-refreshes, and an estimate is what this is for.
+    //
+    // Ordered biggest-first and capped: on a schema with thousands of tables the
+    // tail is noise, and the top of the list is the whole point.
+    let tables = run_safe_ordered(
+        &mut c,
+        "SELECT n.nspname AS schema,\n            c.relname  AS name,\n            pg_total_relation_size(c.oid) AS total_bytes,\n            pg_table_size(c.oid)          AS table_bytes,\n            pg_indexes_size(c.oid)        AS index_bytes,\n            GREATEST(c.reltuples, 0)::bigint AS est_rows\n     FROM pg_class c\n     JOIN pg_namespace n ON n.oid = c.relnamespace\n     WHERE c.relkind IN ('r', 'p', 'm')\n       AND n.nspname NOT IN ('pg_catalog', 'information_schema')\n       AND n.nspname NOT LIKE 'pg_toast%'\n     ORDER BY pg_total_relation_size(c.oid) DESC\n     LIMIT 50",
+        "t.total_bytes DESC",
+        &mut errors,
+    )
+    .await;
+    let table_sizes: Vec<Value> = tables
+        .iter()
+        .map(|r| {
+            let total = jnum(r, "total_bytes");
+            json!({
+                "schema": jstr(r, "schema"),
+                "name": jstr(r, "name"),
+                "totalBytes": total as i64,
+                "total": format_bytes(total),
+                "table": format_bytes(jnum(r, "table_bytes")),
+                "indexes": format_bytes(jnum(r, "index_bytes")),
+                "estRows": jnum(r, "est_rows") as i64,
+            })
+        })
+        .collect();
+
     // Lifetime rollback ratio.
     let tx = run_safe(
         &mut c,
@@ -1662,6 +1698,7 @@ async fn db_health(
         "metrics": metrics,
         "errors": errors,
         "longRunning": long_running,
+        "tables": table_sizes,
     }))
     .into_response())
 }

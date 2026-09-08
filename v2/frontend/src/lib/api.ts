@@ -2154,6 +2154,24 @@ export const api = {
           query: string | null;
           waitEvent?: string | null;
         }[];
+        /**
+         * Biggest tables first, capped at 50.
+         *
+         * Only Postgres reports these today — the other dialects are served by
+         * the Node driver layer, which does not, so this is optional rather
+         * than something every caller must handle.
+         */
+        tables?: {
+          schema: string | null;
+          name: string | null;
+          /** Heap + indexes + TOAST, the number the list is ordered by. */
+          totalBytes: number;
+          total: string;
+          table: string;
+          indexes: string;
+          /** The planner's estimate, not a count. */
+          estRows: number;
+        }[];
       }>(`/connections/${connectionId}/db-health`)
       .then((r) => r.data),
 

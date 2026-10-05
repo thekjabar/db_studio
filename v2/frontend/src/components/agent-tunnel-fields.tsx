@@ -89,7 +89,7 @@ export function AgentTunnelFields({ enabled, onEnabledChange, agentId, onAgentId
 
   const online = statusQ.data?.online ?? false;
   const command = pairing
-    ? `agent.exe --token ${pairing.token} --server ${AGENT_SERVER_HOST}`
+    ? `QuerySchemaAgent.exe --token ${pairing.token} --server ${AGENT_SERVER_HOST}`
     : "";
 
   return (

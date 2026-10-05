@@ -161,6 +161,12 @@ export default function DownloadPage() {
                 ? "Detected your system automatically. Not right? Pick another below."
                 : `We detected ${primary.label} — that build is on the way. Grab another platform below in the meantime.`}
             </p>
+            {primary.family === "windows" && primary.available && (
+              <p className="text-center text-[11px] text-muted-foreground">
+                A normal installer: it adds the agent to your Start menu and Installed apps, and
+                starts it automatically when you sign in.
+              </p>
+            )}
           </div>
 
           {/* Other platforms */}
@@ -190,8 +196,8 @@ export default function DownloadPage() {
                   1
                 </span>
                 <span>
-                  Download and run the agent on a computer that can reach your database's
-                  network.
+                  Install it on a computer that can reach your database's network. On Windows
+                  that is the installer below; on macOS and Linux, run the downloaded file.
                 </span>
               </li>
               <li className="flex gap-2.5">
@@ -232,9 +238,12 @@ export default function DownloadPage() {
                   <div className="font-medium text-foreground">Windows</div>
                   Windows may show a blue{" "}
                   <span className="font-medium text-foreground">"Windows protected your PC"</span>{" "}
-                  screen. Click{" "}
+                  screen when you start the installer. Click{" "}
                   <span className="font-medium text-foreground">More info</span> →{" "}
-                  <span className="font-medium text-foreground">Run anyway</span>.
+                  <span className="font-medium text-foreground">Run anyway</span>. It installs for
+                  your account only, so it never asks for administrator rights, and you can remove
+                  it any time from{" "}
+                  <span className="font-medium text-foreground">Settings → Installed apps</span>.
                 </div>
               </div>
               <div className="flex gap-2.5">

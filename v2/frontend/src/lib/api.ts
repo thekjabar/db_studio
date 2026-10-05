@@ -21,9 +21,12 @@ export const BACKEND_ORIGIN = import.meta.env.VITE_BACKEND_ORIGIN || API_ORIGIN;
 /** Per-platform links to the local agent binaries. Built elsewhere and served
  *  by nginx from the backend origin; we only wire the download hrefs. */
 export const AGENT_DOWNLOADS = {
-  // `-v6` = WebView2 windowed app, fully rebranded "Query Schema" + embedded
-  // taskbar icon and file-properties metadata. Versioned URL busts caches.
-  windows: `${BACKEND_ORIGIN}/downloads/agent-windows-amd64-v6.exe`,
+  // Windows ships as a real installer (Inno Setup, per-user, no UAC): it puts
+  // the agent in its own folder, Start menu and Installed apps, and starts it
+  // at sign-in. The bare .exe is still served for anyone who wants it, but it
+  // must not be the advertised download — deleting that one file from the
+  // Downloads folder used to uninstall the agent by accident.
+  windows: `${BACKEND_ORIGIN}/downloads/QuerySchemaAgentSetup.exe`,
   macIntel: `${BACKEND_ORIGIN}/downloads/agent-macos-amd64`,
   macArm: `${BACKEND_ORIGIN}/downloads/agent-macos-arm64`,
   linux: `${BACKEND_ORIGIN}/downloads/agent-linux-amd64-v3`,

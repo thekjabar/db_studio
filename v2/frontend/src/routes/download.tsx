@@ -180,10 +180,12 @@ export default function DownloadPage() {
               ))}
             </div>
             <p className="text-[11px] text-muted-foreground leading-relaxed pt-1">
-              On macOS or Linux, make the file executable with{" "}
-              <code className="rounded bg-muted px-1 py-0.5 font-mono">chmod +x</code> after
-              downloading. macOS may block it the first time — right-click the file and choose{" "}
-              <span className="font-medium text-foreground">Open</span> to get past Gatekeeper.
+              The macOS and Linux downloads are command-line programs — start them from a
+              terminal, not by double-clicking. In Finder, macOS blocks the agent outright
+              (&ldquo;Apple could not verify…&rdquo;) because the build isn&rsquo;t signed yet, and
+              offers only{" "}
+              <span className="font-medium text-foreground">Move to Trash</span>. The three
+              commands that get past it are below.
             </p>
           </div>
 

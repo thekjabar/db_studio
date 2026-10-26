@@ -25,11 +25,12 @@ use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures_util::StreamExt;
 use serde_json::{json, Value};
 use sqlx::{Connection, Row};
-use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, ReadBuf};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio_util::io::ReaderStream;
 
@@ -40,6 +41,10 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/connections/:id/backup/estimate", get(estimate))
         .route("/api/connections/:id/backup", get(download))
+        .route(
+            "/api/connections/:id/restore",
+            post(restore).layer(axum::extract::DefaultBodyLimit::disable()),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -132,13 +137,15 @@ struct ConnRow {
     name: String,
     dialect: String,
     credentials_ct: String,
+    /// A read-only connection may be dumped, but never restored into.
+    read_only: bool,
 }
 
 /// Load name/dialect/ciphertext with the same owner-or-member visibility rule
 /// `connect_target` uses, so both agree on who can see a connection.
 async fn load_conn(state: &AppState, id: &str, user_id: &str) -> ApiResult<ConnRow> {
     let row = sqlx::query(
-        r#"SELECT c."name", c."dialect"::text AS dialect, c."credentialsCt"
+        r#"SELECT c."name", c."dialect"::text AS dialect, c."credentialsCt", c."readOnly"
            FROM "Connection" c
            WHERE c."id" = $1 AND (
              c."ownerId" = $2
@@ -158,6 +165,7 @@ async fn load_conn(state: &AppState, id: &str, user_id: &str) -> ApiResult<ConnR
         credentials_ct: row
             .try_get("credentialsCt")
             .map_err(|e| ApiError::internal(e.to_string()))?,
+        read_only: row.try_get("readOnly").unwrap_or(false),
     })
 }
 
@@ -176,6 +184,47 @@ fn decrypt_creds(state: &AppState, id: &str, ct: &str) -> ApiResult<RawCreds> {
 
 fn is_postgres(dialect: &str) -> bool {
     dialect.eq_ignore_ascii_case("POSTGRES")
+}
+
+/// What a dump tool needs on its command line, pulled out of the stored
+/// credentials. Shared with `autobackup`, which runs the same tools on a
+/// schedule and must not reimplement the decrypt-and-validate step.
+pub(crate) struct DumpCreds {
+    pub host: String,
+    pub port: String,
+    pub user: String,
+    pub password: String,
+    pub database: String,
+}
+
+pub(crate) fn creds_for_dump(
+    state: &AppState,
+    id: &str,
+    ct: &str,
+) -> Result<DumpCreds, String> {
+    let c = decrypt_creds(state, id, ct).map_err(|e| e.message)?;
+    if c.ssh.as_ref().map(|v| !v.is_null()).unwrap_or(false) {
+        return Err("Backup over an SSH tunnel is not supported".into());
+    }
+    Ok(DumpCreds {
+        host: c
+            .host
+            .clone()
+            .filter(|h| !h.is_empty())
+            .ok_or("Connection is missing a host")?,
+        port: c
+            .port
+            .as_ref()
+            .and_then(port_str)
+            .ok_or("Connection is missing a port")?,
+        user: c.user.clone().unwrap_or_else(|| "postgres".into()),
+        password: c.password.clone().unwrap_or_default(),
+        database: c
+            .database
+            .clone()
+            .filter(|d| !d.is_empty())
+            .ok_or("Connection is missing a database name")?,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +330,7 @@ fn ident_ok(s: &str) -> bool {
 }
 
 /// `name.replace(/[^a-z0-9-_]+/gi, '_')` â€” runs of unsafe chars collapse to one `_`.
-fn safe_name(name: &str) -> String {
+pub(crate) fn safe_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut in_run = false;
     for ch in name.chars() {
@@ -317,14 +366,21 @@ async fn download(
     let schema = q.get("schema").filter(|s| !s.is_empty()).cloned();
 
     let conn = load_conn(&state, &id, &user.id).await?;
-    if !is_postgres(&conn.dialect) {
+    let mysql = conn.dialect.eq_ignore_ascii_case("MYSQL");
+    if !is_postgres(&conn.dialect) && !mysql {
         return Err(ApiError::new(
             StatusCode::NOT_IMPLEMENTED,
             format!(
-                "Backup is only supported for PostgreSQL connections right now (got {}). \
-                 mysqldump / sqlcmd wrappers can be added in a later release.",
+                "Backup supports PostgreSQL and MySQL connections (got {}). \
+                 SQL Server needs sqlcmd, which is not installed.",
                 conn.dialect
             ),
+        ));
+    }
+    if mysql && format_custom {
+        // mysqldump has no equivalent of pg_dump's custom archive.
+        return Err(ApiError::bad(
+            "MySQL dumps are plain SQL — drop format=custom",
         ));
     }
     if let Some(s) = &schema {
@@ -353,6 +409,29 @@ async fn download(
     // Detect the remote major so we can pick the matching pg_dump binary â€” a
     // few ms, and it catches the most common backup failure ("server version
     // newer than pg_dump").
+    // MySQL takes a different binary and a different flag vocabulary, so it
+    // forks here. Streaming, cancellation and the wait-for-first-byte rule are
+    // the same on both paths.
+    if mysql {
+        return mysql_dump(
+            MysqlDump {
+                host,
+                port,
+                user: creds.user.clone().unwrap_or_else(|| "root".into()),
+                password: creds.password.clone().unwrap_or_default(),
+                database: creds
+                    .database
+                    .clone()
+                    .filter(|d| !d.is_empty())
+                    .ok_or_else(|| ApiError::bad("Connection is missing a database name"))?,
+                schema_only,
+                name: conn.name.clone(),
+            },
+            id,
+        )
+        .await;
+    }
+
     let server_major = detect_postgres_major(&state, &id, &user.id).await;
     let binary = pick_pg_dump_binary(server_major)?;
     if let Some(note) = &binary.note {
@@ -477,6 +556,330 @@ async fn download(
     );
 
     res.body(Body::from_stream(ReaderStream::new(reader)))
+        .map_err(|e| ApiError::internal(format!("failed to build response: {e}")))
+}
+
+// ---------------------------------------------------------------------------
+// Restore — replay a dump into a connection
+//
+// The dangerous direction, so it is fenced:
+//   * OWNER only, like taking the dump.
+//   * `?confirm=true` must be explicit. A restore is not undoable and usually
+//     drops what is there first; a stray request must not be enough.
+//   * A read-only connection refuses outright.
+//   * It is audited before it starts, so there is a record even if it fails
+//     halfway.
+//
+// The upload is streamed straight into the child's stdin — a multi-GB dump
+// never lands on this server's disk and never sits in its memory.
+// ---------------------------------------------------------------------------
+
+/// First bytes of a pg_dump custom archive. Plain SQL dumps start with `--`.
+const PGDMP_MAGIC: &[u8] = b"PGDMP";
+
+async fn restore(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Path(id): Path<String>,
+    Query(q): Query<HashMap<String, String>>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Body,
+) -> ApiResult<Json<Value>> {
+    require_conn_owner(&state, &id, &user.id).await?;
+    if q.get("confirm").map(String::as_str) != Some("true") {
+        return Err(ApiError::bad(
+            "Restoring overwrites data and cannot be undone — resend with confirm=true",
+        ));
+    }
+
+    let conn = load_conn(&state, &id, &user.id).await?;
+    if conn.read_only {
+        return Err(ApiError::bad("Connection is read-only"));
+    }
+    let mysql = conn.dialect.eq_ignore_ascii_case("MYSQL");
+    if !is_postgres(&conn.dialect) && !mysql {
+        return Err(ApiError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            format!("Restore supports PostgreSQL and MySQL connections (got {})", conn.dialect),
+        ));
+    }
+
+    let creds = decrypt_creds(&state, &id, &conn.credentials_ct)?;
+    let host = creds
+        .host
+        .clone()
+        .filter(|h| !h.is_empty())
+        .ok_or_else(|| ApiError::bad("Connection is missing host/port"))?;
+    let port = creds
+        .port
+        .as_ref()
+        .and_then(port_str)
+        .ok_or_else(|| ApiError::bad("Connection is missing host/port"))?;
+    let database = creds
+        .database
+        .clone()
+        .filter(|d| !d.is_empty())
+        .ok_or_else(|| ApiError::bad("Connection is missing a database name"))?;
+
+    crate::audit_row(
+        &state,
+        &user.id,
+        &id,
+        "CONNECTION_UPDATED",
+        0,
+        &crate::req_meta(&headers),
+        json!({ "restore": true, "database": database }),
+    )
+    .await;
+
+    // Peek at the first chunk: a custom-format archive needs pg_restore, plain
+    // SQL needs psql, and the only way to tell is the magic at the front.
+    let mut stream = body.into_data_stream();
+    let first = match stream.next().await {
+        Some(Ok(b)) => b,
+        Some(Err(e)) => return Err(ApiError::bad(format!("Upload failed: {e}"))),
+        None => return Err(ApiError::bad("Empty upload — attach a dump file")),
+    };
+    let custom = first.starts_with(PGDMP_MAGIC);
+
+    let started = std::time::Instant::now();
+    let mut child = if mysql {
+        Command::new("mysql")
+            .args([
+                format!("--host={host}"),
+                format!("--port={port}"),
+                format!("--user={}", creds.user.clone().unwrap_or_else(|| "root".into())),
+                "--default-character-set=utf8mb4".into(),
+                database.clone(),
+            ])
+            .env("MYSQL_PWD", creds.password.clone().unwrap_or_default())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+    } else if custom {
+        Command::new("pg_restore")
+            .args([
+                "--host".into(),
+                host.clone(),
+                "--port".into(),
+                port.clone(),
+                "--username".into(),
+                creds.user.clone().unwrap_or_else(|| "postgres".into()),
+                "--dbname".into(),
+                database.clone(),
+                "--no-password".into(),
+                // Replace what is there rather than failing on every existing
+                // object, and do not try to reassign ownership to roles that
+                // may not exist on this server.
+                "--clean".into(),
+                "--if-exists".into(),
+                "--no-owner".into(),
+                "--no-acl".into(),
+            ])
+            .env("PGPASSWORD", creds.password.clone().unwrap_or_default())
+            .env("PGCONNECT_TIMEOUT", "30")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+    } else {
+        Command::new("psql")
+            .args([
+                "--host".into(),
+                host.clone(),
+                "--port".into(),
+                port.clone(),
+                "--username".into(),
+                creds.user.clone().unwrap_or_else(|| "postgres".into()),
+                "--dbname".into(),
+                database.clone(),
+                "--no-password".into(),
+                // Stop at the first error instead of plastering a half-applied
+                // dump over the database and reporting success.
+                "--set".into(),
+                "ON_ERROR_STOP=1".into(),
+                "--quiet".into(),
+            ])
+            .env("PGPASSWORD", creds.password.clone().unwrap_or_default())
+            .env("PGCONNECT_TIMEOUT", "30")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+    }
+    .map_err(|e| {
+        tracing::error!("restore spawn error: {e}");
+        ApiError::internal("Failed to start the restore tool (is it installed?)")
+    })?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| ApiError::internal("restore stdin unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ApiError::internal("restore stderr unavailable"))?;
+    let stderr_tail = spawn_stderr_drain(stderr);
+
+    let mut bytes: u64 = 0;
+    bytes += first.len() as u64;
+    if let Err(e) = stdin.write_all(&first).await {
+        return Err(ApiError::internal(format!("restore write failed: {e}")));
+    }
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| ApiError::bad(format!("Upload failed: {e}")))?;
+        bytes += chunk.len() as u64;
+        if let Err(e) = stdin.write_all(&chunk).await {
+            // A broken pipe means the tool exited early; report its own words.
+            tracing::warn!("restore stdin closed after {bytes} bytes: {e}");
+            break;
+        }
+    }
+    drop(stdin); // EOF — the tool finishes and exits
+
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::internal(format!("restore wait failed: {e}")))?;
+    let tail = stderr_tail_string(&stderr_tail);
+    let took = started.elapsed().as_millis() as u64;
+
+    if !status.success() {
+        tracing::warn!("restore conn={id} exited {}: {tail}", code_str(status.code()));
+        return Err(ApiError::internal(format!(
+            "Restore failed: {}",
+            last_line(&tail, status.code())
+        )));
+    }
+    tracing::info!("restore ok conn={id} bytes={bytes} ms={took}");
+    Ok(Json(json!({
+        "ok": true,
+        "bytes": bytes,
+        "durationMs": took,
+        "format": if mysql { "mysql" } else if custom { "pg_restore" } else { "psql" },
+        // pg_restore reports recoverable problems here and still exits 0.
+        "warnings": tail.lines().rev().take(20).collect::<Vec<_>>().join("\n"),
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// MySQL
+// ---------------------------------------------------------------------------
+
+struct MysqlDump {
+    host: String,
+    port: String,
+    user: String,
+    password: String,
+    database: String,
+    schema_only: bool,
+    name: String,
+}
+
+/// `mysqldump` equivalent of the Postgres path above.
+///
+/// The password goes in through `MYSQL_PWD` rather than `--password=`, for the
+/// same reason `PGPASSWORD` does: argv is world-readable in `ps`.
+/// `--single-transaction` takes a consistent snapshot of InnoDB tables without
+/// locking the database, which is what makes dumping a live server safe.
+async fn mysql_dump(cfg: MysqlDump, id: String) -> ApiResult<Response> {
+    let mut args: Vec<String> = vec![
+        format!("--host={}", cfg.host),
+        format!("--port={}", cfg.port),
+        format!("--user={}", cfg.user),
+        "--single-transaction".into(),
+        "--quick".into(),
+        "--routines".into(),
+        "--triggers".into(),
+        "--events".into(),
+        "--default-character-set=utf8mb4".into(),
+        // Without this the dump is a DEFINER-bound restore that only the
+        // original user can replay.
+        "--set-gtid-purged=OFF".into(),
+    ];
+    if cfg.schema_only {
+        args.push("--no-data".into());
+    }
+    args.push(cfg.database.clone());
+
+    let filename = format!(
+        "{}-{}.sql",
+        safe_name(&cfg.name),
+        chrono::Utc::now().format("%Y-%m-%d")
+    );
+
+    tracing::info!("mysqldump start conn={id} schemaOnly={}", cfg.schema_only);
+    let mut child = Command::new("mysqldump")
+        .args(&args)
+        .env("MYSQL_PWD", &cfg.password)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| {
+            tracing::error!("mysqldump spawn error: {e}");
+            ApiError::internal("Failed to start mysqldump (is it installed?)")
+        })?;
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ApiError::internal("mysqldump stdout unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ApiError::internal("mysqldump stderr unavailable"))?;
+    let stderr_tail = spawn_stderr_drain(stderr);
+
+    // Same contract as pg_dump: no bytes means it died before producing a
+    // dump, and the client gets a JSON error instead of a truncated file.
+    let mut first = vec![0u8; 64 * 1024];
+    let n = stdout
+        .read(&mut first)
+        .await
+        .map_err(|e| ApiError::internal(format!("mysqldump read failed: {e}")))?;
+    if n == 0 {
+        let status = child.wait().await.ok();
+        let code = status.and_then(|s| s.code());
+        if !status.map(|s| s.success()).unwrap_or(false) {
+            let tail = stderr_tail_string(&stderr_tail);
+            tracing::warn!("mysqldump exited {}: {tail}", code_str(code));
+            return Err(ApiError::internal(format!(
+                "mysqldump failed: {}",
+                last_line(&tail, code)
+            )));
+        }
+    }
+    first.truncate(n);
+
+    let reader = DumpReader {
+        prefix: first,
+        pos: 0,
+        stdout,
+        child: Some(child),
+        stderr_tail,
+        conn_id: id,
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(axum::http::header::CONTENT_TYPE, "application/sql")
+        .header(
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{filename}\""),
+        )
+        .header("X-Content-Type-Options", "nosniff")
+        .header(
+            axum::http::header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            "Content-Disposition",
+        )
+        .body(Body::from_stream(ReaderStream::new(reader)))
         .map_err(|e| ApiError::internal(format!("failed to build response: {e}")))
 }
 

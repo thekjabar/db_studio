@@ -31,7 +31,9 @@ mod permissions;
 mod query_tools;
 mod scheduler;
 mod schedules;
+mod autobackup;
 mod publicapi;
+mod s3;
 mod schemadiff;
 mod sqlparams;
 mod transpile;
@@ -284,6 +286,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(transpile::routes())
         .merge(schemadiff::routes())
         .merge(publicapi::routes())
+        .merge(autobackup::routes())
         .merge(conns::routes())
         .merge(ai::routes())
         .merge(billing::routes())
@@ -325,7 +328,9 @@ async fn main() -> anyhow::Result<()> {
     // Scheduled queries and alerts. v1 ran these from a BullMQ worker inside
     // the Node process; this is its replacement and it polls Postgres, so the
     // feature no longer depends on Redis being reachable.
-    scheduler::spawn(state);
+    scheduler::spawn(state.clone());
+    // Automatic backups run on the same pattern as scheduled queries.
+    autobackup::spawn(state);
 
     let addr = format!("0.0.0.0:{port}");
     tracing::info!("queryschema-v2 listening on {addr}");

@@ -10,9 +10,14 @@
       name="description"
       content="Query Schema is an online database studio: connect to PostgreSQL, MySQL, SQL Server & SQLite to browse tables, run SQL, build queries, schedule reports, and visualize schemas — with a schema-aware AI assistant."
     />
+    <!-- Google has ignored this tag since 2009 and Bing treats it as a spam
+         signal at best; it is kept only because it costs nothing. What actually
+         ranks a page is the title, the visible text (see the static hero in
+         <body>, which exists so crawlers get content without executing JS) and
+         links pointing here. -->
     <meta
       name="keywords"
-      content="database client, online database, SQL editor, database management tool, database GUI, PostgreSQL client, MySQL client, SQL Server client, SQLite browser, run SQL online, query builder, database schema, ER diagram, database explorer, SQL query tool"
+      content="query schema, queryschema, database client, online database client, SQL editor online, database management tool, database GUI, PostgreSQL client, MySQL client, SQL Server client, SQLite browser, run SQL online, query builder, database schema viewer, ER diagram tool, database explorer, SQL query tool, schedule SQL query, database alerts"
     />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <meta name="author" content="Query Schema" />
@@ -29,9 +34,14 @@
       property="og:description"
       content="Browse, query, schedule, and share across PostgreSQL, MySQL, SQL Server & SQLite — role-aware, with an AI that actually knows your schema."
     />
-    <meta property="og:image" content="https://queryschema.com/og-image.svg" />
+    <!-- PNG, not SVG: Facebook, LinkedIn, X and WhatsApp all refuse to render
+         an SVG preview, so the old og-image.svg produced a blank card
+         everywhere the link was shared. -->
+    <meta property="og:image" content="https://queryschema.com/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Query Schema — online database client and SQL editor for PostgreSQL, MySQL, SQL Server and SQLite" />
     <meta property="og:locale" content="en_US" />
 
     <!-- Twitter / X -->
@@ -41,7 +51,7 @@
       name="twitter:description"
       content="Browse, query, schedule, and share across PostgreSQL, MySQL, SQL Server & SQLite — with a schema-aware AI assistant."
     />
-    <meta name="twitter:image" content="https://queryschema.com/og-image.svg" />
+    <meta name="twitter:image" content="https://queryschema.com/og-image.png" />
 
     <!-- Brand mark: the database cylinder, matching the in-app logo and the desktop agent's icon.
          These must be REAL files at crawlable URLs — Google cannot use a data: URI
@@ -60,34 +70,148 @@
             "@id": "https://queryschema.com/#website",
             "url": "https://queryschema.com/",
             "name": "Query Schema",
-            "description": "Online database client and SQL editor for PostgreSQL, MySQL, SQL Server and SQLite."
+            "alternateName": ["QuerySchema", "Query Schema DB", "Query Schema database client"],
+            "description": "Online database client and SQL editor for PostgreSQL, MySQL, SQL Server and SQLite.",
+            "publisher": { "@id": "https://queryschema.com/#org" }
           },
           {
             "@type": "Organization",
             "@id": "https://queryschema.com/#org",
             "name": "Query Schema",
-            "url": "https://queryschema.com/"
+            "alternateName": "QuerySchema",
+            "url": "https://queryschema.com/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "https://queryschema.com/favicon.svg"
+            },
+            "description": "Query Schema builds an online database studio for engineering teams."
           },
           {
             "@type": "SoftwareApplication",
             "name": "Query Schema",
+            "alternateName": "QuerySchema",
             "operatingSystem": "Web, Windows, macOS, Linux",
             "applicationCategory": "DeveloperApplication",
+            "applicationSubCategory": "Database client",
             "description": "Query Schema is an online database studio to connect, browse, query, schedule and share PostgreSQL, MySQL, SQL Server and SQLite databases, with a schema-aware AI assistant.",
             "url": "https://queryschema.com/",
+            "softwareHelp": "https://queryschema.com/download",
+            "featureList": [
+              "SQL editor with schema-aware autocomplete",
+              "Browse and edit table data with undo from the audit log",
+              "Visual query builder for people who do not write SQL",
+              "ER diagrams and schema documentation",
+              "Scheduled queries, emailed reports and threshold alerts",
+              "pg_dump backups and migration export",
+              "Row-level filters, column masking and per-table roles",
+              "Local agent for databases that are not exposed to the internet"
+            ],
             "offers": {
               "@type": "Offer",
               "price": "0",
               "priceCurrency": "IQD",
               "description": "7-day free trial, then paid monthly plans."
             }
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://queryschema.com/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "What is Query Schema?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Query Schema is an online database client: you connect a PostgreSQL, MySQL, SQL Server or SQLite database and work with it in the browser — browse and edit tables, run SQL, build queries visually, read the schema as an ER diagram, schedule reports, and share results with your team."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Do I have to expose my database to the internet?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. A small local agent runs on a machine inside your own network and opens an outbound connection to Query Schema, so a database that only listens on a private network stays reachable without opening a port or allow-listing an IP address."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I schedule a query or be alerted when one returns something?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. Any query can run on a cron schedule in a timezone you choose, and the result is emailed as a table plus a CSV attachment. Add a condition — a row count, or a numeric column crossing a threshold — and it notifies only when that condition is met, with a cooldown. Slack webhooks work alongside email."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which databases does Query Schema support?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "PostgreSQL, MySQL, SQL Server and SQLite."
+                }
+              }
+            ]
           }
         ]
       }
     </script>
   </head>
   <body class="bg-background text-foreground antialiased">
-    <div id="root"></div>
+    <!--
+      The markup inside #root is the page a crawler (and a human on a slow
+      connection) gets before the bundle runs. React wipes it on mount, so it is
+      never shown for long — but until it existed, the HTML served from this
+      origin contained no words at all beyond the <meta> tags, and a search
+      engine had nothing to rank except the title. It deliberately says the same
+      things the rendered landing page says: it is a fallback, not a cloak.
+    -->
+    <div id="root">
+      <main style="max-width: 760px; margin: 0 auto; padding: 72px 24px; font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #e6e9ef;">
+        <p style="color: #3ECF8E; font-weight: 700; letter-spacing: .02em; margin: 0 0 18px;">Query Schema</p>
+        <h1 style="font-size: 40px; line-height: 1.15; font-weight: 700; margin: 0 0 18px;">
+          Query Schema — one studio for your entire database
+        </h1>
+        <p style="font-size: 18px; line-height: 1.6; color: #95a1b2; margin: 0 0 16px;">
+          Query Schema is an online database client and SQL editor. Connect a PostgreSQL, MySQL,
+          SQL Server or SQLite database and work with it from the browser: browse and edit table
+          data, run SQL with schema-aware autocomplete, build queries visually, read your schema as
+          an ER diagram, schedule reports, and share results with your team.
+        </p>
+        <p style="font-size: 18px; line-height: 1.6; color: #95a1b2; margin: 0 0 28px;">
+          Databases that are not exposed to the internet stay reachable through a small local agent
+          that runs inside your own network, so you never open a port or allow-list an IP address.
+        </p>
+        <p style="margin: 0 0 32px;">
+          <a href="/signup" style="color: #3ECF8E;">Create an account</a> ·
+          <a href="/login" style="color: #3ECF8E;">Sign in</a> ·
+          <a href="/download" style="color: #3ECF8E;">Download the agent</a> ·
+          <a href="/status" style="color: #3ECF8E;">Service status</a>
+        </p>
+        <h2 style="font-size: 22px; margin: 0 0 12px;">What you can do with it</h2>
+        <ul style="color: #95a1b2; line-height: 1.8; margin: 0 0 28px; padding-left: 20px;">
+          <li>Browse, filter and edit table data, and undo a change from the audit log</li>
+          <li>Write SQL with autocomplete that knows your tables and columns</li>
+          <li>Build a query visually when you would rather not write SQL</li>
+          <li>See relationships as an ER diagram and document the schema</li>
+          <li>Schedule a query, email the result as CSV, or alert on a threshold</li>
+          <li>Take pg_dump backups and export migrations</li>
+          <li>Give teammates per-table roles, row filters and masked columns</li>
+        </ul>
+        <h2 style="font-size: 22px; margin: 0 0 12px;">Questions</h2>
+        <h3 style="font-size: 17px; margin: 0 0 6px;">Which databases are supported?</h3>
+        <p style="color: #95a1b2; line-height: 1.6; margin: 0 0 18px;">PostgreSQL, MySQL, SQL Server and SQLite.</p>
+        <h3 style="font-size: 17px; margin: 0 0 6px;">Do I have to expose my database to the internet?</h3>
+        <p style="color: #95a1b2; line-height: 1.6; margin: 0 0 18px;">
+          No — the local agent connects outward from your own network, so a database on a private
+          network needs no open port and no IP allow-list.
+        </p>
+        <h3 style="font-size: 17px; margin: 0 0 6px;">Can a query run on a schedule?</h3>
+        <p style="color: #95a1b2; line-height: 1.6; margin: 0;">
+          Yes — on a cron schedule in the timezone you pick, emailed as a table plus a CSV
+          attachment, and optionally only when a condition is met, with a cooldown so a flapping
+          check cannot spam you.
+        </p>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -85,10 +85,39 @@ function Protected({ children }: { children: React.ReactNode }) {
 // Don't fire more than once per this window when the tab regains focus.
 const FOCUS_REFRESH_MIN_INTERVAL_MS = 5 * 60_000;
 
+/** Title per route.
+ *
+ * A single-page app keeps whatever <title> index.html shipped with, so every
+ * URL — sign-in, the download page, a connection — was presenting itself to
+ * search engines, browser history and shared bookmarks as the landing page.
+ * Only public routes are listed: the rest are behind a login and carry the
+ * plain brand title. */
+const TITLES: Array<[RegExp, string]> = [
+  [/^\/$/, "Query Schema — Online Database Client & SQL Editor"],
+  [/^\/login$/, "Sign in · Query Schema"],
+  [/^\/signup$/, "Create your account · Query Schema"],
+  [/^\/download$/, "Download the Query Schema agent · Query Schema"],
+  [/^\/status$/, "Service status · Query Schema"],
+  [/^\/forgot-password$/, "Reset your password · Query Schema"],
+  [/^\/connections$/, "Connections · Query Schema"],
+  [/^\/schedules$/, "Scheduled queries · Query Schema"],
+  [/^\/notebooks/, "Notebooks · Query Schema"],
+  [/^\/dashboards/, "Dashboards · Query Schema"],
+];
+
+function useDocumentTitle() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    const hit = TITLES.find(([re]) => re.test(pathname));
+    document.title = hit ? hit[1] : "Query Schema";
+  }, [pathname]);
+}
+
 export default function App() {
   const { accessToken, setAccessToken, setUser, setBootstrapping } = useAuth();
   const didBootstrap = useRef(false);
   const lastFocusRefresh = useRef(0);
+  useDocumentTitle();
 
   // Try to silently refresh on first load so an existing cookie restores session.
   // Guard against StrictMode's double-invoke — the refresh token rotates on

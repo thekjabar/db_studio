@@ -90,7 +90,7 @@ export default function LandingPage() {
             className="hero-rise landing-float inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/5 px-3.5 py-1.5 text-xs text-foreground/80 mb-7 backdrop-blur-sm"
             style={{ animationDelay: "0ms" }}
           >
-            Every tool a DB team actually needs — in one studio
+            Query Schema — the online database client for Postgres, MySQL, SQL Server &amp; SQLite
           </div>
 
           <h1

@@ -375,8 +375,20 @@ fn strip_top(sql: &str) -> Option<(String, String)> {
 mod tests {
     use super::*;
 
+    /// `ApiError` deliberately has no `Debug` (it is an HTTP response shape,
+    /// not a diagnostic), so these unwrap by hand and report `message`.
     fn out(sql: &str, from: &str, to: &str) -> Value {
-        transpile(sql, from, to).expect("transpiles")
+        match transpile(sql, from, to) {
+            Ok(v) => v,
+            Err(e) => panic!("expected {sql:?} to transpile, got: {}", e.message),
+        }
+    }
+
+    fn err(sql: &str, from: &str, to: &str) -> String {
+        match transpile(sql, from, to) {
+            Ok(v) => panic!("expected {sql:?} to be refused, got: {v}"),
+            Err(e) => e.message,
+        }
     }
 
     #[test]
@@ -450,13 +462,13 @@ mod tests {
 
     #[test]
     fn non_select_and_unparseable_sql_are_refused() {
-        let err = transpile("DELETE FROM t", "POSTGRES", "MYSQL").unwrap_err();
-        assert!(err.message.contains("Only SELECT"));
+        let m = err("DELETE FROM t", "POSTGRES", "MYSQL");
+        assert!(m.contains("Only SELECT"), "{m}");
 
-        let err = transpile("SELECT FROM WHERE", "POSTGRES", "MYSQL").unwrap_err();
-        assert!(err.message.contains("Could not parse"), "{}", err.message);
+        let m = err("SELECT FROM WHERE", "POSTGRES", "MYSQL");
+        assert!(m.contains("Could not parse"), "{m}");
 
-        let err = transpile("SELECT 1; SELECT 2", "POSTGRES", "MYSQL").unwrap_err();
-        assert!(err.message.contains("single statement"), "{}", err.message);
+        let m = err("SELECT 1; SELECT 2", "POSTGRES", "MYSQL");
+        assert!(m.contains("single statement"), "{m}");
     }
 }

@@ -215,6 +215,7 @@ export function Sidebar({ connectionId, collapsed, onToggleCollapse, currentSche
           <NavItem to={`/c/${connectionId}/db-health`} icon={<Activity className="h-3.5 w-3.5" />} label="DB health" />
           <NavItem to={`/c/${connectionId}/reviews`} icon={<ShieldCheck className="h-3.5 w-3.5" />} label="Query reviews" />
           <NavItem to={`/c/${connectionId}/diff`} icon={<GitCompare className="h-3.5 w-3.5" />} label="Compare results" />
+          <NavItem to={`/c/${connectionId}/schema-diff`} icon={<GitCompare className="h-3.5 w-3.5" />} label="Compare schema" />
         </NavSection>
 
         <NavSection

@@ -31,6 +31,9 @@ mod permissions;
 mod query_tools;
 mod scheduler;
 mod schedules;
+mod publicapi;
+mod schemadiff;
+mod sqlparams;
 mod transpile;
 mod sharing;
 mod workspaces;
@@ -279,6 +282,8 @@ async fn main() -> anyhow::Result<()> {
         // what actually fires them.
         .merge(schedules::routes())
         .merge(transpile::routes())
+        .merge(schemadiff::routes())
+        .merge(publicapi::routes())
         .merge(conns::routes())
         .merge(ai::routes())
         .merge(billing::routes())
@@ -3979,6 +3984,10 @@ struct V1QueryBody {
     sql: String,
     #[serde(rename = "maxRows")]
     max_rows: Option<i64>,
+    /// Named parameters for `:placeholders` in the SQL. Values are BOUND, never
+    /// pasted into the statement — see `sqlparams`.
+    #[serde(default)]
+    params: Option<std::collections::HashMap<String, Value>>,
 }
 
 async fn v1_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Json(body): Json<V1QueryBody>) -> ApiResult<Json<Value>> {
@@ -3987,6 +3996,16 @@ async fn v1_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<
     if sql.is_empty() {
         return Err(ApiError::bad("Empty SQL"));
     }
+
+    // Named parameters. The statement keeps `$n` placeholders and the values
+    // travel beside it, so a value can never be read as SQL. Queries with no
+    // `:name` in them take the same path with an empty bind list.
+    let params = body.params.unwrap_or_default();
+    let prepared = sqlparams::prepare(&sql, &params).map_err(|missing| {
+        ApiError::bad(format!("Missing a value for parameter :{missing}"))
+    })?;
+    let sql = prepared.sql;
+    let binds = prepared.binds;
     // The editor sends 0 for "No cap". Clamping that to 1 turned the loosest
     // setting into the tightest one: every no-cap query came back with a single
     // row, under a banner saying the rest had been truncated. A count(*) hid it
@@ -4013,7 +4032,11 @@ async fn v1_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<
         let wrapped = format!(
             "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM (SELECT * FROM ({sql}) _q LIMIT {probe}) t",
         );
-        let mut rows_json: Value = sqlx::query_scalar(&wrapped).fetch_one(&mut *c).await?;
+        let mut q = sqlx::query_scalar::<_, Value>(&wrapped);
+        for b in &binds {
+            q = q.bind(b.value.clone());
+        }
+        let mut rows_json: Value = q.fetch_one(&mut *c).await?;
         let dur = ms(start);
         // Asking for exactly `max` cannot tell "there were exactly this many"
         // from "there were more", so a table of precisely 1,000 rows read under
@@ -4042,7 +4065,11 @@ async fn v1_query(State(state): State<AppState>, user: AuthUser, Path(id): Path<
             "appliedLimit": max,
         })))
     } else {
-        let affected = sqlx::query(&sql).execute(&mut *c).await?.rows_affected();
+        let mut q = sqlx::query(&sql);
+        for b in &binds {
+            q = q.bind(b.value.clone());
+        }
+        let affected = q.execute(&mut *c).await?.rows_affected();
         Ok(Json(json!({
             "rows": [],
             "rowCount": affected,

@@ -670,6 +670,30 @@ export interface TranspileWarning {
   severity: "info" | "warn";
   message: string;
 }
+/** One column as the catalog declares it, on one side of a schema diff. */
+export interface DiffColumn {
+  type: string;
+  nullable: boolean;
+  default: string | null;
+}
+
+export interface SchemaDiff {
+  schema: string;
+  identical: boolean;
+  tablesOnlyInA: string[];
+  tablesOnlyInB: string[];
+  tablesChanged: {
+    table: string;
+    columnsOnlyInA: { name: string; a?: DiffColumn }[];
+    columnsOnlyInB: { name: string; b?: DiffColumn }[];
+    columnsChanged: { name: string; a: DiffColumn; b: DiffColumn }[];
+    indexesOnlyInA: { name: string; def: string }[];
+    indexesOnlyInB: { name: string; def: string }[];
+    indexesChanged: { name: string; a: string; b: string }[];
+  }[];
+  counts: { a: number; b: number };
+}
+
 export interface TranspileResult {
   from: Dialect;
   to: Dialect;
@@ -1083,6 +1107,11 @@ export const api = {
       .then((r) => r.data),
 
   listSchemas: (id: string) => http.get<string[]>(`/connections/${id}/schemas`).then((r) => r.data),
+  /** Structural diff against another connection — tables, columns, indexes. */
+  schemaDiff: (id: string, target: string, schema: string) =>
+    http
+      .get<SchemaDiff>(`/connections/${id}/schema-diff`, { params: { target, schema } })
+      .then((r) => r.data),
   listTables: (id: string, schema: string) =>
     http.get<TableInfo[]>(`/connections/${id}/tables`, { params: { schema } }).then((r) => r.data),
   getTableColumns: (id: string, table: string, schema: string) =>
@@ -1173,6 +1202,9 @@ export const api = {
       confirmDestructive?: boolean;
       maxRows?: number;
       reviewRequestId?: string;
+      /** Values for `:named` placeholders. Bound by the API, never pasted
+       *  into the statement, so a value can't become SQL. */
+      params?: Record<string, string | number | boolean | null>;
     },
   ) =>
     http.post<QueryResult>(`/connections/${id}/query`, body).then((r) => r.data),

@@ -34,6 +34,7 @@ import { SendResultDialog } from "@/components/send-result-dialog";
 import { TranspileDialog } from "@/components/transpile-dialog";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { registerSqlCompletions } from "@/lib/sql-completions";
+import { buildParams, sqlParamNames } from "@/lib/sql-params";
 import type { ErGraph } from "@/lib/api";
 import { useOutletContext } from "react-router-dom";
 import {
@@ -240,7 +241,13 @@ export default function SqlRoute() {
 
   const run = useMutation({
     mutationFn: async (body: { sql: string; confirmDestructive?: boolean }) =>
-      api.runQuery(id!, { ...body, maxRows }),
+      api.runQuery(id!, {
+        ...body,
+        maxRows,
+        // Values for whatever `:name` the statement being run refers to — not
+        // `sql`, which may have moved on while the request was in flight.
+        params: buildParams(sqlParamNames(body.sql), paramValues),
+      }),
     onSuccess: (r, body) => {
       setResult(r);
       setRanSql(body.sql);
@@ -403,9 +410,15 @@ export default function SqlRoute() {
     try {
       localStorage.setItem(`qparams:${id}`, JSON.stringify(paramValues));
     } catch { /* ignore */ }
-    const substituted = substituteParams(paramRun.sql, paramValues);
+    const toRun = paramRun.sql;
     setParamRun(null);
-    run.mutate({ sql: substituted, confirmDestructive: paramRun.confirmDestructive });
+    // The SQL goes to the server with its `:name` tokens intact and the values
+    // beside it (see `run`'s mutationFn), where they are bound as real
+    // parameters. This used to paste escaped literals into the statement — safe
+    // enough for a quoted string, but it meant the database never saw a
+    // parameter, so types were guessed from how the value looked and a value
+    // containing `:other` could be re-scanned as another parameter.
+    run.mutate({ sql: toRun, confirmDestructive: paramRun.confirmDestructive });
   };
 
   // ---- Server-side cursor streaming ----
@@ -1176,20 +1189,16 @@ export default function SqlRoute() {
   );
 }
 
-/** Find `:name` parameter tokens, skipping `::casts` and quoted strings. */
+/** Find `:name` parameter tokens.
+ *
+ * Delegates to the shared scanner, which is the same algorithm the API binds
+ * with — the two must agree exactly, or the editor prompts for a value the
+ * server will not bind. (The regex this replaced also missed comments and
+ * dollar-quoted bodies.) */
 export function extractQueryParams(sql: string): string[] {
-  // Blank out quoted strings/identifiers so tokens inside them are ignored.
-  const stripped = sql.replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"/g, (m) => " ".repeat(m.length));
-  const out: string[] = [];
-  const re = /(^|[^:\w]):([a-zA-Z_][a-zA-Z0-9_]*)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(stripped))) {
-    if (!out.includes(m[2])) out.push(m[2]);
-  }
-  return out;
+  return sqlParamNames(sql);
 }
 
-/** Replace :name tokens with escaped SQL literals. */
 /**
  * Does this statement modify or destroy data? Conservative leading-keyword
  * match (after stripping comments/whitespace) covering DELETE / DROP /
@@ -1202,18 +1211,6 @@ function isDestructiveSql(sql: string): boolean {
     .replace(/--[^\n]*/g, " ")
     .trim();
   return /^\s*(delete\s+from|delete|drop|truncate|update|alter)\b/i.test(cleaned);
-}
-
-function substituteParams(sql: string, values: Record<string, string>): string {
-  return sql.replace(/(^|[^:\w]):([a-zA-Z_][a-zA-Z0-9_]*)/g, (full, pre: string, name: string) => {
-    if (!(name in values)) return full;
-    const raw = values[name];
-    let lit: string;
-    if (raw === "") lit = "NULL";
-    else if (/^-?\d+(\.\d+)?$/.test(raw.trim())) lit = raw.trim();
-    else lit = `'${raw.replace(/'/g, "''")}'`;
-    return `${pre}${lit}`;
-  });
 }
 
 /**

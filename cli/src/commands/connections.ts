@@ -1,42 +1,30 @@
 import { Command } from 'commander';
-import { apiFetch } from '../index.js';
+import { apiFetch, printCsv, printTable } from '../index.js';
 
-export const connections = new Command('connections').description('List + inspect database connections');
-
-interface ConnSummary {
+interface Conn {
   id: string;
   name: string;
   dialect: string;
   readOnly?: boolean;
+  viaAgent?: boolean;
 }
 
+export const connections = new Command('connections')
+  .alias('conn')
+  .description('List the connections this API key can use');
+
 connections
-  .command('ls')
+  .command('ls', { isDefault: true })
   .description('List connections')
-  .option('--json', 'Emit raw JSON')
-  .action(async (opts: { json?: boolean }) => {
-    const rows = (await apiFetch('GET', '/connections')) as ConnSummary[];
-    if (opts.json) {
+  .option('--format <fmt>', 'Output: table | json | csv', 'table')
+  .action(async (opts: { format?: string }) => {
+    const rows = (await apiFetch('GET', '/connections')) as Conn[];
+    if (opts.format === 'json') {
       process.stdout.write(JSON.stringify(rows, null, 2) + '\n');
       return;
     }
-    if (rows.length === 0) {
-      process.stdout.write('(no connections)\n');
-      return;
-    }
-    const pad = (s: string, n: number) => s.padEnd(n).slice(0, n);
-    process.stdout.write(`${pad('ID', 26)} ${pad('DIALECT', 10)} ${pad('NAME', 40)}\n`);
-    for (const r of rows) {
-      process.stdout.write(
-        `${pad(r.id, 26)} ${pad(r.dialect, 10)} ${pad(r.name, 40)}\n`,
-      );
-    }
-  });
-
-connections
-  .command('get <id>')
-  .description('Show one connection')
-  .action(async (id: string) => {
-    const row = await apiFetch('GET', `/connections/${id}`);
-    process.stdout.write(JSON.stringify(row, null, 2) + '\n');
+    const cols = ['id', 'name', 'dialect', 'readOnly', 'viaAgent'];
+    const data = rows.map((r) => ({ ...r, readOnly: !!r.readOnly, viaAgent: !!r.viaAgent }));
+    if (opts.format === 'csv') printCsv(cols, data as unknown as Record<string, unknown>[]);
+    else printTable(cols, data as unknown as Record<string, unknown>[]);
   });

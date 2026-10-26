@@ -149,6 +149,7 @@ export function titleForPath(path: string): { title: string; subtitle?: string }
     sql: "SQL Editor",
     builder: "Query builder",
     diff: "Diff",
+    "schema-diff": "Schema diff",
     dictionary: "Data dictionary",
     sensitive: "Sensitive scan",
     er: "ER Diagram",

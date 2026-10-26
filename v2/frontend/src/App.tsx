@@ -25,6 +25,7 @@ const TableRoute = lazy(() => import("@/routes/connection/table"));
 const SqlRoute = lazy(() => import("@/routes/connection/sql"));
 const QueryBuilderRoute = lazy(() => import("@/routes/connection/query-builder"));
 const DiffRoute = lazy(() => import("@/routes/connection/diff"));
+const SchemaDiffRoute = lazy(() => import("@/routes/connection/schema-diff"));
 const DictionaryRoute = lazy(() => import("@/routes/connection/dictionary"));
 const SensitiveScanRoute = lazy(() => import("@/routes/connection/sensitive"));
 const ErRoute = lazy(() => import("@/routes/connection/er"));
@@ -287,6 +288,7 @@ export default function App() {
         <Route path="sql" element={<SqlRoute />} />
         <Route path="builder" element={<QueryBuilderRoute />} />
         <Route path="diff" element={<DiffRoute />} />
+        <Route path="schema-diff" element={<SchemaDiffRoute />} />
         <Route path="dictionary" element={<DictionaryRoute />} />
         <Route path="sensitive" element={<SensitiveScanRoute />} />
         <Route path="er" element={<ErRoute />} />

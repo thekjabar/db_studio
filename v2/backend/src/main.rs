@@ -2759,7 +2759,7 @@ fn json_keys(v: &Value) -> Vec<String> {
     v.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default()
 }
 
-async fn row_insert(State(state): State<AppState>, user: AuthUser, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<RowInsert>) -> ApiResult<Json<Value>> {
+async fn row_insert(State(state): State<AppState>, user: AuthUser, headers: axum::http::HeaderMap, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<RowInsert>) -> ApiResult<Json<Value>> {
     require_write(&state.pool, &id, &user.id).await?;
     let mut c = connect_target(&state, &id, &user.id).await?;
     let schema = q.schema.unwrap_or_else(|| "public".into());
@@ -2776,10 +2776,20 @@ async fn row_insert(State(state): State<AppState>, user: AuthUser, Path((id, tab
         "WITH ins AS (INSERT INTO {qs}.{qt} ({cols}) SELECT {cols} FROM jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) RETURNING *) SELECT to_jsonb(ins) FROM ins",
     );
     let row: Value = sqlx::query_scalar(&sql).bind(&body.values).fetch_one(&mut *c).await?;
+    audit_row(
+        &state,
+        &user.id,
+        &id,
+        "ROW_INSERT",
+        1,
+        &req_meta(&headers),
+        json!({ "table": format!("{schema}.{table}"), "schema": schema, "tableName": table, "after": row }),
+    )
+    .await;
     Ok(Json(row))
 }
 
-async fn row_update(State(state): State<AppState>, user: AuthUser, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<RowUpdate>) -> ApiResult<Json<Value>> {
+async fn row_update(State(state): State<AppState>, user: AuthUser, headers: axum::http::HeaderMap, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<RowUpdate>) -> ApiResult<Json<Value>> {
     require_write(&state.pool, &id, &user.id).await?;
     let mut c = connect_target(&state, &id, &user.id).await?;
     let schema = q.schema.unwrap_or_else(|| "public".into());
@@ -2799,11 +2809,27 @@ async fn row_update(State(state): State<AppState>, user: AuthUser, Path((id, tab
          FROM jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) v, jsonb_populate_record(NULL::{qs}.{qt}, $2::jsonb) k \
          WHERE {whr} RETURNING o.*) SELECT to_jsonb(upd) FROM upd",
     );
+    // Snapshot first: after the UPDATE the old values are gone, and they are
+    // the whole point of being able to revert it.
+    let before = fetch_row_by_pk(&mut c, &schema, &table, &body.pk).await;
     let row: Option<Value> = sqlx::query_scalar(&sql).bind(&body.values).bind(&body.pk).fetch_optional(&mut *c).await?;
+    audit_row(
+        &state,
+        &user.id,
+        &id,
+        "ROW_UPDATE",
+        1,
+        &req_meta(&headers),
+        json!({
+            "table": format!("{schema}.{table}"), "schema": schema, "tableName": table,
+            "pk": body.pk, "before": before, "after": row,
+        }),
+    )
+    .await;
     Ok(Json(row.unwrap_or(Value::Null)))
 }
 
-async fn row_delete(State(state): State<AppState>, user: AuthUser, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<RowDelete>) -> ApiResult<Json<Value>> {
+async fn row_delete(State(state): State<AppState>, user: AuthUser, headers: axum::http::HeaderMap, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<RowDelete>) -> ApiResult<Json<Value>> {
     require_write(&state.pool, &id, &user.id).await?;
     let mut c = connect_target(&state, &id, &user.id).await?;
     let schema = q.schema.unwrap_or_else(|| "public".into());
@@ -2819,7 +2845,22 @@ async fn row_delete(State(state): State<AppState>, user: AuthUser, Path((id, tab
     let sql = format!(
         "DELETE FROM {qs}.{qt} AS o USING jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) k WHERE {whr}",
     );
+    // The full row, captured before it stops existing, so revert can put it back.
+    let before = fetch_row_by_pk(&mut c, &schema, &table, &body.pk).await;
     let n = sqlx::query(&sql).bind(&body.pk).execute(&mut *c).await?.rows_affected();
+    audit_row(
+        &state,
+        &user.id,
+        &id,
+        "ROW_DELETE",
+        n,
+        &req_meta(&headers),
+        json!({
+            "table": format!("{schema}.{table}"), "schema": schema, "tableName": table,
+            "pk": body.pk, "before": before,
+        }),
+    )
+    .await;
     Ok(Json(json!({ "deleted": n })))
 }
 
@@ -2837,7 +2878,112 @@ fn pk_keys(pks: &[Value]) -> Vec<String> {
     pks.first().map(json_keys).unwrap_or_default()
 }
 
-async fn row_bulk_delete(State(state): State<AppState>, user: AuthUser, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<BulkDelete>) -> ApiResult<Json<Value>> {
+/// Record a data change in the audit log, the way v1's introspection
+/// controller did (`AuditService.log` with a `ROW_*` action).
+///
+/// This stopped happening when row editing moved to Rust: the handlers below
+/// mutated the target database and wrote nothing, so the audit page has shown
+/// no data edits since that cutover, and revert had nothing to work from. The
+/// snapshot shape is v1's and is what `audit_log::audit_revert` reads back:
+/// `after` for an insert, `pk` + `before` + `after` for an update, `pk` +
+/// `before` for a delete, and `bulk` + `beforeRows` for the bulk pair.
+///
+/// Never fails the request: the row change already happened, and a failed log
+/// write must not be reported to the caller as a failed edit.
+async fn audit_row(
+    state: &AppState,
+    user_id: &str,
+    conn_id: &str,
+    action: &str,
+    affected: u64,
+    meta: &ReqMeta,
+    metadata: Value,
+) {
+    let _ = sqlx::query(
+        r#"INSERT INTO "AuditLog"
+             ("id","userId","connectionId","action","affectedRows","ip","userAgent","metadata","createdAt")
+           VALUES ($1,$2,$3,$4::"AuditAction",$5,$6,$7,$8, now())"#,
+    )
+    .bind(gen_id())
+    .bind(user_id)
+    .bind(conn_id)
+    .bind(action)
+    .bind(affected as i32)
+    .bind(meta.ip.as_deref())
+    .bind(meta.user_agent.as_deref())
+    .bind(metadata)
+    .execute(&state.pool)
+    .await;
+}
+
+/// The row as it currently stands, by primary key — the "before" snapshot.
+/// `None` when it cannot be read; v1 also swallows that (`.catch(() => null)`)
+/// rather than refusing the edit.
+async fn fetch_row_by_pk(
+    conn: &mut TargetConn,
+    schema: &str,
+    table: &str,
+    pk: &Value,
+) -> Option<Value> {
+    let keys = json_keys(pk);
+    if keys.is_empty() {
+        return None;
+    }
+    let (qs, qt) = (quote_ident(schema), quote_ident(table));
+    let whr = keys
+        .iter()
+        .map(|k| {
+            let q = quote_ident(k);
+            format!("o.{q} = k.{q}")
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let sql = format!(
+        "SELECT to_jsonb(o) FROM {qs}.{qt} AS o, jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) k WHERE {whr} LIMIT 1"
+    );
+    sqlx::query_scalar::<_, Value>(&sql)
+        .bind(pk)
+        .fetch_optional(&mut **conn)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Same, for a set of primary keys (the bulk snapshot).
+async fn fetch_rows_by_pks(
+    conn: &mut TargetConn,
+    schema: &str,
+    table: &str,
+    pks: &[Value],
+) -> Vec<Value> {
+    let keys = pk_keys(pks);
+    if keys.is_empty() {
+        return vec![];
+    }
+    let (qs, qt) = (quote_ident(schema), quote_ident(table));
+    let whr = keys
+        .iter()
+        .map(|k| {
+            let q = quote_ident(k);
+            format!("o.{q} = k.{q}")
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let sql = format!(
+        "SELECT COALESCE(jsonb_agg(to_jsonb(o)), '[]'::jsonb) \
+           FROM {qs}.{qt} AS o, jsonb_populate_recordset(NULL::{qs}.{qt}, $1::jsonb) k WHERE {whr}"
+    );
+    match sqlx::query_scalar::<_, Value>(&sql)
+        .bind(Value::Array(pks.to_vec()))
+        .fetch_one(&mut **conn)
+        .await
+    {
+        Ok(Value::Array(a)) => a,
+        _ => vec![],
+    }
+}
+
+async fn row_bulk_delete(State(state): State<AppState>, user: AuthUser, headers: axum::http::HeaderMap, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<BulkDelete>) -> ApiResult<Json<Value>> {
     require_write(&state.pool, &id, &user.id).await?;
     let mut c = connect_target(&state, &id, &user.id).await?;
     let schema = q.schema.unwrap_or_else(|| "public".into());
@@ -2856,11 +3002,26 @@ async fn row_bulk_delete(State(state): State<AppState>, user: AuthUser, Path((id
     let sql = format!(
         "DELETE FROM {qs}.{qt} AS o USING jsonb_populate_recordset(NULL::{qs}.{qt}, $1::jsonb) k WHERE {whr}",
     );
+    let before_rows = fetch_rows_by_pks(&mut c, &schema, &table, &body.pks).await;
+    let bulk = body.pks.len();
     let n = sqlx::query(&sql).bind(Value::Array(body.pks)).execute(&mut *c).await?.rows_affected();
+    audit_row(
+        &state,
+        &user.id,
+        &id,
+        "ROW_DELETE",
+        n,
+        &req_meta(&headers),
+        json!({
+            "table": format!("{schema}.{table}"), "schema": schema, "tableName": table,
+            "bulk": bulk, "beforeRows": before_rows,
+        }),
+    )
+    .await;
     Ok(Json(json!({ "affectedRows": n })))
 }
 
-async fn row_bulk_update(State(state): State<AppState>, user: AuthUser, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<BulkUpdate>) -> ApiResult<Json<Value>> {
+async fn row_bulk_update(State(state): State<AppState>, user: AuthUser, headers: axum::http::HeaderMap, Path((id, table)): Path<(String, String)>, Query(q): Query<SchemaQ>, Json(body): Json<BulkUpdate>) -> ApiResult<Json<Value>> {
     require_write(&state.pool, &id, &user.id).await?;
     let mut c = connect_target(&state, &id, &user.id).await?;
     let schema = q.schema.unwrap_or_else(|| "public".into());
@@ -2883,7 +3044,22 @@ async fn row_bulk_update(State(state): State<AppState>, user: AuthUser, Path((id
          FROM jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) v, jsonb_populate_recordset(NULL::{qs}.{qt}, $2::jsonb) k \
          WHERE {whr}",
     );
+    let before_rows = fetch_rows_by_pks(&mut c, &schema, &table, &body.pks).await;
+    let bulk = body.pks.len();
     let n = sqlx::query(&sql).bind(&body.values).bind(Value::Array(body.pks)).execute(&mut *c).await?.rows_affected();
+    audit_row(
+        &state,
+        &user.id,
+        &id,
+        "ROW_UPDATE",
+        n,
+        &req_meta(&headers),
+        json!({
+            "table": format!("{schema}.{table}"), "schema": schema, "tableName": table,
+            "bulk": bulk, "beforeRows": before_rows,
+        }),
+    )
+    .await;
     Ok(Json(json!({ "affectedRows": n })))
 }
 

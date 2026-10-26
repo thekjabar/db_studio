@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Archive, Download, Loader2, X } from "lucide-react";
-import { api } from "@/lib/api";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { Archive, CalendarClock, Download, Loader2, Upload, X } from "lucide-react";
+import { api, extractErrorMessage } from "@/lib/api";
 import { ErrorCard } from "@/components/error-card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useModal } from "@/components/modal-provider";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useBackupJob, type BackupJob } from "@/components/backup-job-provider";
@@ -167,15 +170,328 @@ function BackupInner({ connectionId }: { connectionId: string }) {
 
       {myJob && <ProgressCard job={myJob} onDismiss={clear} onCancel={cancel} />}
 
+      <AutoBackups connectionId={connectionId} />
+      <RestorePanel connectionId={connectionId} />
+
       <div className="rounded-md border border-border bg-card p-4 text-xs text-muted-foreground space-y-1">
         <div className="font-medium text-foreground">Heads up</div>
-        <div>• Backup is supported for PostgreSQL connections today. MySQL/MSSQL return 501.</div>
-        <div>• Only connection owners can run backups.</div>
+        <div>• PostgreSQL and MySQL can be dumped and restored. SQL Server needs sqlcmd, which isn't installed.</div>
+        <div>• Only connection owners can back up or restore.</div>
         <div>
-          • If the remote Postgres major version is newer than the server's bundled pg_dump, the
-          dump may fail. Install a matching client binary on the API host when upgrading.
+          • Dumps use the PostgreSQL 17 client, which can read older servers — a server newer than
+          that would need a newer client on the API host.
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Scheduled backups to an S3-compatible bucket.
+ *
+ * The credentials go to the server once, are encrypted there, and are never
+ * sent back — so the form shows them only while creating a schedule.
+ */
+function AutoBackups({ connectionId }: { connectionId: string }) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({
+    cron: "0 3 * * *",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+    bucket: "",
+    prefix: "",
+    endpoint: "",
+    region: "auto",
+    accessKeyId: "",
+    secretAccessKey: "",
+    keepLast: 7,
+    format: "custom" as "custom" | "plain",
+    schemaOnly: false,
+  });
+
+  const listQ = useQuery({
+    queryKey: ["backup-schedules", connectionId],
+    queryFn: () => api.listBackupSchedules(connectionId),
+  });
+
+  const create = useMutation({
+    mutationFn: () => api.createBackupSchedule(connectionId, form),
+    onSuccess: () => {
+      toast.success("Scheduled");
+      setOpen(false);
+      setForm((f) => ({ ...f, accessKeyId: "", secretAccessKey: "" }));
+      qc.invalidateQueries({ queryKey: ["backup-schedules", connectionId] });
+    },
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
+  const runNow = useMutation({
+    mutationFn: (id: string) => api.runBackupSchedule(id),
+    onSuccess: (r) => toast.success(`Uploaded ${formatBytes(r.sizeBytes)} → ${r.objectKey}`),
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
+  const toggle = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api.updateBackupSchedule(id, { enabled }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["backup-schedules", connectionId] }),
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteBackupSchedule(id),
+    onSuccess: () => {
+      toast.success("Schedule removed");
+      qc.invalidateQueries({ queryKey: ["backup-schedules", connectionId] });
+    },
+    onError: (e) => toast.error(extractErrorMessage(e)),
+  });
+
+  const schedules = listQ.data ?? [];
+
+  return (
+    <div className="rounded-md border border-border bg-card p-4 space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold flex items-center gap-2">
+            <CalendarClock className="h-4 w-4" /> Automatic backups
+          </h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            Dump on a schedule and push it to your own S3-compatible bucket — Cloudflare R2,
+            Backblaze B2, MinIO or AWS. Plain SQL is gzipped on the way out.
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={() => setOpen((o) => !o)}>
+          {open ? "Cancel" : "Add schedule"}
+        </Button>
+      </div>
+
+      {open && (
+        <div className="space-y-3 rounded-md border border-border bg-background/60 p-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Cron" hint="minute hour day month weekday">
+              <Input value={form.cron} onChange={(e) => setForm({ ...form, cron: e.target.value })} />
+            </Field>
+            <Field label="Timezone" hint="Leave as is to use your own">
+              <Input
+                value={form.timezone}
+                onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+              />
+            </Field>
+            <Field label="Bucket">
+              <Input
+                value={form.bucket}
+                onChange={(e) => setForm({ ...form, bucket: e.target.value })}
+                placeholder="my-backups"
+              />
+            </Field>
+            <Field label="Prefix" hint="Folder inside the bucket (optional)">
+              <Input
+                value={form.prefix}
+                onChange={(e) => setForm({ ...form, prefix: e.target.value })}
+                placeholder="queryschema/prod"
+              />
+            </Field>
+            <Field label="Endpoint" hint="Blank for AWS S3">
+              <Input
+                value={form.endpoint}
+                onChange={(e) => setForm({ ...form, endpoint: e.target.value })}
+                placeholder="https://<account>.r2.cloudflarestorage.com"
+              />
+            </Field>
+            <Field label="Region" hint="R2 uses auto">
+              <Input
+                value={form.region}
+                onChange={(e) => setForm({ ...form, region: e.target.value })}
+              />
+            </Field>
+            <Field label="Access key id">
+              <Input
+                value={form.accessKeyId}
+                onChange={(e) => setForm({ ...form, accessKeyId: e.target.value })}
+                autoComplete="off"
+              />
+            </Field>
+            <Field label="Secret access key">
+              <Input
+                type="password"
+                value={form.secretAccessKey}
+                onChange={(e) => setForm({ ...form, secretAccessKey: e.target.value })}
+                autoComplete="off"
+              />
+            </Field>
+            <Field label="Keep last" hint="Older dumps are deleted after a successful run">
+              <Input
+                type="number"
+                min={0}
+                value={form.keepLast}
+                onChange={(e) => setForm({ ...form, keepLast: Number(e.target.value) })}
+              />
+            </Field>
+            <Field label="Format">
+              <Select
+                value={form.format}
+                onValueChange={(v) => setForm({ ...form, format: v as "custom" | "plain" })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="custom">Postgres custom (.dump)</SelectItem>
+                  <SelectItem value="plain">Plain SQL, gzipped (.sql.gz)</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={form.schemaOnly}
+              onCheckedChange={(v) => setForm({ ...form, schemaOnly: v })}
+              id="auto-schema-only"
+            />
+            <Label htmlFor="auto-schema-only" className="text-xs">
+              Schema only (no data)
+            </Label>
+          </div>
+          <Button size="sm" onClick={() => create.mutate()} disabled={create.isPending}>
+            {create.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            Create schedule
+          </Button>
+          <p className="text-[11px] text-muted-foreground">
+            The keys are encrypted on the server and never sent back to the browser. Give them
+            write access to this bucket only.
+          </p>
+        </div>
+      )}
+
+      {schedules.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No automatic backups yet.</p>
+      ) : (
+        <div className="divide-y divide-border rounded-md border border-border">
+          {schedules.map((s) => (
+            <div key={s.id} className="flex flex-wrap items-center gap-3 p-3 text-xs">
+              <code className="font-mono">{s.cron}</code>
+              <span className="text-muted-foreground">{s.timezone ?? "UTC"}</span>
+              <span className="text-muted-foreground">
+                {s.bucket}
+                {s.prefix ? `/${s.prefix}` : ""}
+              </span>
+              <span className="text-muted-foreground">keep {s.keepLast}</span>
+              {s.lastStatus && (
+                <span
+                  className={
+                    s.lastStatus === "SUCCESS"
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-destructive"
+                  }
+                  title={s.lastError ?? undefined}
+                >
+                  last: {s.lastStatus.toLowerCase()}
+                  {s.lastSizeBytes ? ` · ${formatBytes(s.lastSizeBytes)}` : ""}
+                </span>
+              )}
+              <div className="ml-auto flex items-center gap-2">
+                <Switch
+                  checked={s.enabled}
+                  onCheckedChange={(v) => toggle.mutate({ id: s.id, enabled: v })}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => runNow.mutate(s.id)}
+                  disabled={runNow.isPending}
+                >
+                  {runNow.isPending ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    "Run now"
+                  )}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => remove.mutate(s.id)}>
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Replay a dump into this connection. */
+function RestorePanel({ connectionId }: { connectionId: string }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const modal = useModal();
+
+  const go = async () => {
+    if (!file) return;
+    const ok = await modal.confirm({
+      title: "Restore into this database?",
+      description: `${file.name} will be replayed into the connection. Existing objects it touches are replaced, and this cannot be undone.`,
+      confirmLabel: "Restore",
+      destructive: true,
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const r = await api.restoreBackup(connectionId, file);
+      toast.success(`Restored ${formatBytes(r.bytes)} in ${(r.durationMs / 1000).toFixed(1)}s`);
+      if (r.warnings) console.warn(r.warnings);
+      setFile(null);
+    } catch (e) {
+      toast.error(extractErrorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-md border border-border bg-card p-4 space-y-3">
+      <h2 className="text-sm font-semibold flex items-center gap-2">
+        <Upload className="h-4 w-4" /> Restore
+      </h2>
+      <p className="text-xs text-muted-foreground">
+        Replay a dump taken from here (or anywhere else) into this connection. A{" "}
+        <code className="rounded bg-muted px-1">.dump</code> goes through pg_restore, a{" "}
+        <code className="rounded bg-muted px-1">.sql</code> through psql, and MySQL through its own
+        client. The upload is streamed — it never lands on our disk.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="file"
+          accept=".sql,.dump,.backup,text/plain,application/octet-stream"
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          className="text-xs file:mr-3 file:rounded-md file:border file:border-border file:bg-muted file:px-3 file:py-1.5 file:text-xs"
+        />
+        <Button size="sm" variant="destructive" onClick={go} disabled={!file || busy}>
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+          Restore
+        </Button>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Owner only. A read-only connection refuses. The restore is recorded in the audit log before
+        it starts.
+      </p>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs">{label}</Label>
+      {children}
+      {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
     </div>
   );
 }

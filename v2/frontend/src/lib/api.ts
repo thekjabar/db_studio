@@ -670,6 +670,39 @@ export interface TranspileWarning {
   severity: "info" | "warn";
   message: string;
 }
+export interface BackupSchedule {
+  id: string;
+  connectionId: string;
+  cron: string;
+  timezone: string | null;
+  schemaName: string | null;
+  format: string;
+  schemaOnly: boolean;
+  keepLast: number;
+  enabled: boolean;
+  bucket: string;
+  prefix: string;
+  endpoint: string;
+  region: string;
+  lastRunAt: string | null;
+  lastStatus: string | null;
+  lastError: string | null;
+  lastSizeBytes: number | null;
+  nextRunAt: string | null;
+  createdAt: string | null;
+}
+
+export interface BackupRun {
+  id: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  status: string;
+  sizeBytes: number | null;
+  durationMs: number | null;
+  objectKey: string | null;
+  errorMessage: string | null;
+}
+
 /** One column as the catalog declares it, on one side of a schema diff. */
 export interface DiffColumn {
   type: string;
@@ -1107,6 +1140,55 @@ export const api = {
       .then((r) => r.data),
 
   listSchemas: (id: string) => http.get<string[]>(`/connections/${id}/schemas`).then((r) => r.data),
+
+  // --- Automatic backups -------------------------------------------------
+  listBackupSchedules: (connectionId: string) =>
+    http
+      .get<BackupSchedule[]>(`/connections/${connectionId}/backup-schedules`)
+      .then((r) => r.data),
+  createBackupSchedule: (
+    connectionId: string,
+    body: {
+      cron: string;
+      timezone?: string;
+      bucket: string;
+      prefix?: string;
+      endpoint?: string;
+      region?: string;
+      /** Sent once, encrypted server-side, never returned. */
+      accessKeyId: string;
+      secretAccessKey: string;
+      keepLast?: number;
+      format?: "custom" | "plain";
+      schemaOnly?: boolean;
+    },
+  ) =>
+    http
+      .post<BackupSchedule>(`/connections/${connectionId}/backup-schedules`, body)
+      .then((r) => r.data),
+  updateBackupSchedule: (
+    id: string,
+    body: { cron?: string; timezone?: string; enabled?: boolean; keepLast?: number },
+  ) => http.patch<BackupSchedule>(`/backup-schedules/${id}`, body).then((r) => r.data),
+  deleteBackupSchedule: (id: string) => http.delete(`/backup-schedules/${id}`).then((r) => r.data),
+  runBackupSchedule: (id: string) =>
+    http
+      .post<{ ok: true; objectKey: string; sizeBytes: number; durationMs: number }>(
+        `/backup-schedules/${id}/run`,
+      )
+      .then((r) => r.data),
+  listBackupRuns: (id: string) =>
+    http.get<BackupRun[]>(`/backup-schedules/${id}/runs`).then((r) => r.data),
+
+  /** Stream a dump file into the connection. Owner only, and not undoable. */
+  restoreBackup: (connectionId: string, file: File) =>
+    http
+      .post<{ ok: true; bytes: number; durationMs: number; format: string; warnings: string }>(
+        `/connections/${connectionId}/restore?confirm=true`,
+        file,
+        { headers: { "Content-Type": "application/octet-stream" }, timeout: 0 },
+      )
+      .then((r) => r.data),
   /** Structural diff against another connection — tables, columns, indexes. */
   schemaDiff: (id: string, target: string, schema: string) =>
     http

@@ -29,6 +29,9 @@ mod docs;
 mod ops;
 mod permissions;
 mod query_tools;
+mod scheduler;
+mod schedules;
+mod transpile;
 mod sharing;
 mod workspaces;
 
@@ -272,6 +275,10 @@ async fn main() -> anyhow::Result<()> {
         .merge(dbadmin::routes())
         .merge(datamove::routes())
         .merge(query_tools::routes())
+        // Schedule writes. The read side lives in ops.rs; `scheduler.rs` is
+        // what actually fires them.
+        .merge(schedules::routes())
+        .merge(transpile::routes())
         .merge(conns::routes())
         .merge(ai::routes())
         .merge(billing::routes())
@@ -308,7 +315,12 @@ async fn main() -> anyhow::Result<()> {
                 .allow_headers(tower_http::cors::AllowHeaders::mirror_request())
                 .allow_credentials(true),
         )
-        .with_state(state);
+        .with_state(state.clone());
+
+    // Scheduled queries and alerts. v1 ran these from a BullMQ worker inside
+    // the Node process; this is its replacement and it polls Postgres, so the
+    // feature no longer depends on Redis being reachable.
+    scheduler::spawn(state);
 
     let addr = format!("0.0.0.0:{port}");
     tracing::info!("queryschema-v2 listening on {addr}");
@@ -2706,6 +2718,10 @@ async fn v1_connection_delete(State(state): State<AppState>, user: AuthUser, Pat
         .bind(&user.id)
         .execute(&state.pool)
         .await?;
+    // The row is gone but its pool — and, for an agent connection, its open
+    // tunnel — would otherwise sit in TARGET_POOLS holding sockets to a
+    // database nobody can reach through this app any more.
+    evict_target_pool(&id);
     Ok(StatusCode::NO_CONTENT)
 }
 

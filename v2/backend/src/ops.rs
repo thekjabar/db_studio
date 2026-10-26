@@ -61,12 +61,12 @@ pub fn routes() -> Router<AppState> {
         .route("/api/agents/:id", get(agent_get).delete(agent_delete))
         .route("/api/agents/:id/pairing-token", post(agent_pairing_token))
         // ---- schedules (SchedulerController, @UseGuards(JwtAuthGuard)) ----
-        .route("/api/schedules", get(schedules_list).post(crate::proxy))
-        .route(
-            "/api/schedules/:id",
-            get(schedule_get).patch(crate::proxy).delete(crate::proxy),
-        )
-        .route("/api/schedules/:id/run", post(crate::proxy))
+        // Read side only: POST/PATCH/DELETE and /run are served by
+        // `schedules.rs`, merged separately. They used to sit on the proxy
+        // here; leaving the stubs in place would now collide with the real
+        // handlers at router-build time.
+        .route("/api/schedules", get(schedules_list))
+        .route("/api/schedules/:id", get(schedule_get))
         .route("/api/schedules/:id/runs", get(schedule_runs))
         // ---- status (PublicStatusController, @Public) ----
         .route("/api/status", get(public_status))

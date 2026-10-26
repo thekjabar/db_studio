@@ -40,9 +40,10 @@ pub fn routes() -> Router<AppState> {
             "/api/connections/:id/audit/:entryId/revert-preview",
             get(audit_revert_preview),
         )
-    // NOTE: POST "/api/connections/:id/audit/:entryId/revert" is registered by
-    // `lastmile::routes()` (same `:id` / `:entryId` param names, so the merge
-    // does not conflict).
+        .route(
+            "/api/connections/:id/audit/:entryId/revert",
+            axum::routing::post(audit_revert),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -541,9 +542,8 @@ async fn audit_export_csv(
 // ---------------------------------------------------------------------------
 // GET /api/connections/:id/audit/:entryId/revert-preview — @RequireRole('EDITOR')
 //
-// Pure metadata inspection — v1's `AuditRevertService.buildPreview` never
-// touches the target database, so it ports cleanly. (The sibling POST /revert
-// does, and is not ported.)
+// Preview is pure metadata inspection; the sibling POST /revert replays the
+// snapshot against the target database.
 // ---------------------------------------------------------------------------
 
 /// JS truthiness, for the `metadata.x && ...` guards in v1's `preview`.
@@ -643,4 +643,261 @@ async fn audit_revert_preview(
     Err(ApiError::bad(
         "This audit entry is not revertable (missing snapshot data).",
     ))
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/connections/:id/audit/:entryId/revert
+//
+// v1 source: backend/src/audit/audit-revert.service.ts `revert()`.
+//
+// Undo one recorded row change by replaying its snapshot backwards: an insert
+// is deleted by primary key, an update is set back to `before`, a delete is
+// re-inserted, and the two bulk shapes repeat that per row. The revert is
+// itself audited (`revertedFrom` points at the original entry), so an undo is
+// as visible in the log as the change it undid.
+//
+// v1 builds an EDITOR-role driver, which is also the role this endpoint
+// requires; `connect_target` performs its own owner/member credential check on
+// top, exactly as the row-editing endpoints in main.rs do.
+// ---------------------------------------------------------------------------
+
+/// Primary-key column names, in table order. v1 reads them off
+/// `getTableColumns(...).filter(isPrimaryKey)`.
+async fn pk_columns(
+    conn: &mut crate::TargetConn,
+    schema: &str,
+    table: &str,
+) -> ApiResult<Vec<String>> {
+    let cols = crate::core_columns(&mut **conn, schema, table).await?;
+    Ok(cols
+        .iter()
+        .filter(|c| c.get("isPrimaryKey").and_then(Value::as_bool).unwrap_or(false))
+        .filter_map(|c| c.get("name").and_then(Value::as_str).map(str::to_string))
+        .collect())
+}
+
+/// `pickPk` in v1: the primary-key subset of a snapshot row.
+fn pick_pk(sample: &Value, keys: &[String]) -> Value {
+    let mut out = serde_json::Map::new();
+    for k in keys {
+        out.insert(k.clone(), sample.get(k).cloned().unwrap_or(Value::Null));
+    }
+    Value::Object(out)
+}
+
+/// A snapshot row minus the primary-key columns — what an UPDATE may set.
+fn without_keys(row: &Value, keys: &[String]) -> Value {
+    let mut out = row.as_object().cloned().unwrap_or_default();
+    for k in keys {
+        out.remove(k);
+    }
+    Value::Object(out)
+}
+
+async fn restore_insert(
+    conn: &mut crate::TargetConn,
+    schema: &str,
+    table: &str,
+    row: &Value,
+) -> ApiResult<u64> {
+    let keys = crate::json_keys(row);
+    if keys.is_empty() {
+        return Err(ApiError::bad("Snapshot row is empty — nothing to re-insert."));
+    }
+    let (qs, qt) = (crate::quote_ident(schema), crate::quote_ident(table));
+    let cols = keys.iter().map(|k| crate::quote_ident(k)).collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "INSERT INTO {qs}.{qt} ({cols}) SELECT {cols} FROM jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb)"
+    );
+    Ok(sqlx::query(&sql).bind(row).execute(&mut **conn).await?.rows_affected())
+}
+
+async fn restore_update(
+    conn: &mut crate::TargetConn,
+    schema: &str,
+    table: &str,
+    pk: &Value,
+    values: &Value,
+) -> ApiResult<u64> {
+    let vkeys = crate::json_keys(values);
+    let pkeys = crate::json_keys(pk);
+    if vkeys.is_empty() || pkeys.is_empty() {
+        return Err(ApiError::bad("Snapshot has no values or no primary key to restore."));
+    }
+    let (qs, qt) = (crate::quote_ident(schema), crate::quote_ident(table));
+    let set = vkeys
+        .iter()
+        .map(|k| {
+            let q = crate::quote_ident(k);
+            format!("{q} = v.{q}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let whr = pkeys
+        .iter()
+        .map(|k| {
+            let q = crate::quote_ident(k);
+            format!("o.{q} = k.{q}")
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let sql = format!(
+        "UPDATE {qs}.{qt} AS o SET {set} \
+         FROM jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) v, \
+              jsonb_populate_record(NULL::{qs}.{qt}, $2::jsonb) k \
+         WHERE {whr}"
+    );
+    Ok(sqlx::query(&sql)
+        .bind(values)
+        .bind(pk)
+        .execute(&mut **conn)
+        .await?
+        .rows_affected())
+}
+
+async fn restore_delete(
+    conn: &mut crate::TargetConn,
+    schema: &str,
+    table: &str,
+    pk: &Value,
+) -> ApiResult<u64> {
+    let pkeys = crate::json_keys(pk);
+    if pkeys.is_empty() {
+        return Err(ApiError::bad(
+            "No primary key in the snapshot — cannot delete the inserted row.",
+        ));
+    }
+    let (qs, qt) = (crate::quote_ident(schema), crate::quote_ident(table));
+    let whr = pkeys
+        .iter()
+        .map(|k| {
+            let q = crate::quote_ident(k);
+            format!("o.{q} = k.{q}")
+        })
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let sql = format!(
+        "DELETE FROM {qs}.{qt} AS o USING jsonb_populate_record(NULL::{qs}.{qt}, $1::jsonb) k WHERE {whr}"
+    );
+    Ok(sqlx::query(&sql).bind(pk).execute(&mut **conn).await?.rows_affected())
+}
+
+async fn audit_revert(
+    State(state): State<AppState>,
+    user: AuthUser,
+    headers: axum::http::HeaderMap,
+    Path((id, entry_id)): Path<(String, String)>,
+) -> ApiResult<Json<Value>> {
+    audit_require_role(&state, &id, &user.id, "EDITOR").await?;
+
+    let row = sqlx::query(
+        r#"SELECT "connectionId", "action"::text AS "action", "metadata"
+           FROM "AuditLog" WHERE "id" = $1 LIMIT 1"#,
+    )
+    .bind(&entry_id)
+    .fetch_optional(&state.pool)
+    .await?
+    .filter(|r| {
+        r.try_get::<Option<String>, _>("connectionId").ok().flatten().as_deref() == Some(id.as_str())
+    })
+    .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "Audit entry not found"))?;
+
+    let action = row.try_get::<String, _>("action").unwrap_or_default();
+    let metadata = row
+        .try_get::<Option<Value>, _>("metadata")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| json!({}));
+
+    let schema = metadata.get("schema").and_then(Value::as_str).unwrap_or("").to_string();
+    let table = metadata.get("tableName").and_then(Value::as_str).unwrap_or("").to_string();
+    if schema.is_empty() || table.is_empty() {
+        return Err(ApiError::bad(
+            "Audit entry predates revert support and cannot be reverted.",
+        ));
+    }
+
+    let mut conn = crate::connect_target(&state, &id, &user.id).await?;
+    if !crate::core_table_exists(&mut *conn, &schema, &table).await? {
+        return Err(ApiError::bad(format!(
+            "{schema}.{table} no longer exists — nothing to revert into."
+        )));
+    }
+
+    let bulk = truthy_key(&metadata, "bulk");
+    let before_rows = metadata
+        .get("beforeRows")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut affected: u64 = 0;
+    let revert_action: &str;
+
+    if bulk && !before_rows.is_empty() && action == "ROW_DELETE" {
+        for r in &before_rows {
+            affected += restore_insert(&mut conn, &schema, &table, r).await?;
+        }
+        revert_action = "ROW_INSERT";
+    } else if bulk && !before_rows.is_empty() && action == "ROW_UPDATE" {
+        let pk_cols = pk_columns(&mut conn, &schema, &table).await?;
+        if pk_cols.is_empty() {
+            return Err(ApiError::bad("Table has no primary key — cannot revert."));
+        }
+        for r in &before_rows {
+            let pk = pick_pk(r, &pk_cols);
+            let values = without_keys(r, &pk_cols);
+            affected += restore_update(&mut conn, &schema, &table, &pk, &values).await?;
+        }
+        revert_action = "ROW_UPDATE";
+    } else if action == "ROW_INSERT" && truthy_key(&metadata, "after") {
+        let pk_cols = pk_columns(&mut conn, &schema, &table).await?;
+        if pk_cols.is_empty() {
+            return Err(ApiError::bad("Table has no primary key — cannot revert."));
+        }
+        let after = metadata.get("after").cloned().unwrap_or(Value::Null);
+        let pk = pick_pk(&after, &pk_cols);
+        affected = restore_delete(&mut conn, &schema, &table, &pk).await?;
+        revert_action = "ROW_DELETE";
+    } else if action == "ROW_UPDATE" && truthy_key(&metadata, "before") && truthy_key(&metadata, "pk")
+    {
+        let before = metadata.get("before").cloned().unwrap_or(Value::Null);
+        let pk = metadata.get("pk").cloned().unwrap_or(Value::Null);
+        let pk_cols = crate::json_keys(&pk);
+        let values = without_keys(&before, &pk_cols);
+        affected = restore_update(&mut conn, &schema, &table, &pk, &values).await?;
+        revert_action = "ROW_UPDATE";
+    } else if action == "ROW_DELETE" && truthy_key(&metadata, "before") {
+        let before = metadata.get("before").cloned().unwrap_or(Value::Null);
+        affected = restore_insert(&mut conn, &schema, &table, &before).await?;
+        revert_action = "ROW_INSERT";
+    } else {
+        return Err(ApiError::bad("This audit entry is not revertable."));
+    }
+
+    let meta = crate::req_meta(&headers);
+    let _ = sqlx::query(
+        r#"INSERT INTO "AuditLog"
+             ("id","userId","connectionId","action","affectedRows","ip","userAgent","metadata","createdAt")
+           VALUES ($1,$2,$3,$4::"AuditAction",$5,$6,$7,$8, now())"#,
+    )
+    .bind(crate::gen_id())
+    .bind(&user.id)
+    .bind(&id)
+    .bind(revert_action)
+    .bind(affected as i32)
+    .bind(meta.ip.as_deref())
+    .bind(meta.user_agent.as_deref())
+    .bind(json!({
+        "table": format!("{schema}.{table}"),
+        "schema": schema,
+        "tableName": table,
+        "revertedFrom": entry_id,
+        "bulk": metadata.get("bulk").cloned().unwrap_or(Value::Null),
+    }))
+    .execute(&state.pool)
+    .await;
+
+    // v1 returns `{ affected }`; the UI shows it as the number of rows restored.
+    Ok(Json(json!({ "affected": affected })))
 }

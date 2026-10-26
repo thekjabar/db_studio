@@ -46,7 +46,11 @@ const PlanRegressionsRoute = lazy(() => import("@/routes/connection/plan-regress
 const MigrationExportRoute = lazy(() => import("@/routes/connection/migration-export"));
 const WebhooksRoute = lazy(() => import("@/routes/connection/webhooks"));
 const SchedulesRoute = lazy(() => import("@/routes/schedules"));
-const FederatedRoute = lazy(() => import("@/routes/federated"));
+// NOTE: no /federated route. Cross-connection joins ran on DuckDB inside the
+// Node backend (attaching each source and pushing filters down); nothing in the
+// Rust API can do that, so the endpoints answer 501. The page is unrouted
+// rather than left linked — a screen whose only outcome is an error is worse
+// than no screen. `routes/federated.tsx` stays for when the engine exists.
 const ApiKeysRoute = lazy(() => import("@/routes/api-keys"));
 const BillingRoute = lazy(() => import("@/routes/billing"));
 const WorkspaceSsoRoute = lazy(() => import("@/routes/workspace-sso"));
@@ -169,14 +173,6 @@ export default function App() {
         element={
           <Protected>
             <SchedulesRoute />
-          </Protected>
-        }
-      />
-      <Route
-        path="/federated"
-        element={
-          <Protected>
-            <FederatedRoute />
           </Protected>
         }
       />

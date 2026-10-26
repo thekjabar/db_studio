@@ -8,7 +8,7 @@ import { CountUpOnReveal, ScrollReveal } from "./scroll-reveal";
 const STATS = [
   { value: 4, suffix: "", label: "Dialects supported", hint: "Postgres · MySQL · SQL Server · SQLite" },
   { value: 99.95, suffix: "%", label: "Typical query latency p95", hint: "on indexed reads under 100ms" },
-  { value: 10_000, suffix: "+", label: "Rows streamed per second", hint: "federated joins across connections" },
+  { value: 10_000, suffix: "+", label: "Rows streamed per second", hint: "cursor-paged reads, no full-table load" },
   { value: 50, suffix: "ms", label: "Median round-trip time", hint: "editor → driver → result" },
 ] as const;
 

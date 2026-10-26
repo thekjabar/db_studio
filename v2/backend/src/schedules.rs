@@ -88,12 +88,13 @@ fn cron_shape_ok(s: &str) -> bool {
 }
 
 pub fn routes() -> Router<AppState> {
-    // No Redis configured for *this* process → leave every mutating route on
-    // the v1 proxy. Registering them would make them fail closed against a
-    // backend that is, from v1's point of view, working fine.
-    if redis_url().is_none() {
-        return Router::new();
-    }
+    // These used to be withheld unless Redis was configured, because without it
+    // the BullMQ mirror below could not be written and v1 — which owned the
+    // queue — was still there to serve them. v1 is gone, and so is the worker
+    // that drained the queue: `scheduler.rs` now fires schedules straight off
+    // `ScheduledQuery.nextRunAt`. The BullMQ writes stayed, byte-identical, so
+    // a Node worker could be reattached without a migration, but they are no
+    // longer load-bearing — see `mirror_bull`.
     Router::new()
         .route("/api/schedules", post(create))
         .route(
@@ -107,6 +108,24 @@ fn redis_url() -> Option<&'static str> {
     static URL: OnceLock<Option<String>> = OnceLock::new();
     URL.get_or_init(|| std::env::var("REDIS_URL").ok().filter(|s| !s.trim().is_empty()))
         .as_deref()
+}
+
+/// Mirror a schedule change into BullMQ when a Redis is configured.
+///
+/// Nothing in this deployment consumes those jobs — `scheduler.rs` is the only
+/// consumer and it reads Postgres — so a Redis that is missing or briefly down
+/// must not fail the request. The mirror is kept because it is exact: point a
+/// Node worker at the same Redis and it picks the schedules up unchanged.
+async fn mirror_bull<F>(what: &str, id: &str, op: F)
+where
+    F: std::future::Future<Output = ApiResult<()>>,
+{
+    if redis_url().is_none() {
+        return;
+    }
+    if let Err(e) = op.await {
+        tracing::warn!("schedule {id}: BullMQ {what} mirror failed ({}); the schedule itself is unaffected", e.message);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -603,7 +622,12 @@ async fn create(
 
     if enabled {
         let id: String = row.try_get("id").unwrap_or_default();
-        bull::upsert_cron(&id, &body.cron, body.timezone.as_deref(), bull::wall_clock).await?;
+        mirror_bull(
+            "upsert",
+            &id,
+            bull::upsert_cron(&id, &body.cron, body.timezone.as_deref(), bull::wall_clock),
+        )
+        .await;
     }
     Ok((StatusCode::CREATED, Json(row_dto(&row))))
 }
@@ -742,9 +766,15 @@ async fn update(
     if enabled {
         let cron: String = row.try_get("cron").unwrap_or_default();
         let tz: Option<String> = row.try_get::<Option<String>, _>("timezone").ok().flatten();
-        bull::upsert_cron(&id, &cron, tz.as_deref(), bull::wall_clock).await?;
+        mirror_bull("upsert", &id, bull::upsert_cron(&id, &cron, tz.as_deref(), bull::wall_clock)).await;
+        // The cron may have changed; let the runner recompute from it rather
+        // than fire at a time the old expression chose.
+        let _ = sqlx::query(r#"UPDATE "ScheduledQuery" SET "nextRunAt" = NULL WHERE "id" = $1"#)
+            .bind(&id)
+            .execute(&state.pool)
+            .await;
     } else {
-        bull::remove_cron(&id).await?;
+        mirror_bull("remove", &id, bull::remove_cron(&id)).await;
     }
     Ok(Json(row_dto(&row)))
 }
@@ -759,7 +789,7 @@ async fn remove(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     assert_can_manage(&state, &user.id, &id).await?;
-    bull::remove_cron(&id).await?;
+    mirror_bull("remove", &id, bull::remove_cron(&id)).await;
     sqlx::query(r#"DELETE FROM "ScheduledQuery" WHERE "id" = $1"#)
         .bind(&id)
         .execute(&state.pool)
@@ -774,7 +804,20 @@ async fn run_now(
     Path(id): Path<String>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     assert_can_manage(&state, &user.id, &id).await?;
-    bull::enqueue_exec(&id, bull::wall_clock).await?;
+    mirror_bull("enqueue", &id, bull::enqueue_exec(&id, bull::wall_clock)).await;
+    // What actually makes it run: pull the next firing time to now, so the
+    // runner picks it up on its next pass (within ~20s). Enabled-only, because
+    // the runner ignores disabled schedules and a stale "due" row would then
+    // sit there being re-examined forever.
+    let nudged = sqlx::query(
+        r#"UPDATE "ScheduledQuery" SET "nextRunAt" = now() WHERE "id" = $1 AND "enabled" = true"#,
+    )
+    .bind(&id)
+    .execute(&state.pool)
+    .await?;
+    if nudged.rows_affected() == 0 {
+        return Err(ApiError::bad("This schedule is disabled — enable it before running it."));
+    }
     Ok((StatusCode::CREATED, Json(json!({ "queued": true }))))
 }
 
@@ -812,7 +855,7 @@ async fn run_now(
 /// 3. **`meta` must exist.** bullmq's `Queue` constructor HMSETs it on connect;
 ///    reproduced on first use so a Redis this process reaches before v1 does is
 ///    still a well-formed bullmq queue.
-mod bull {
+pub(crate) mod bull {
     use std::sync::{Mutex, OnceLock};
 
     use redis::aio::ConnectionManager;
@@ -1710,7 +1753,7 @@ cb4279870a94c00000c0c0c0c0c0"
 /// luxon `DateTime`s and the DST edge cases come straight from luxon's
 /// `objToTS` guess-and-correct resolution — including its choice, for a local
 /// time that does not exist, of the *smaller* of the two candidate offsets.
-mod cronparser {
+pub(crate) mod cronparser {
     use chrono::{Datelike, NaiveDate, NaiveDateTime, TimeZone, Timelike};
     use chrono_tz::Tz;
 

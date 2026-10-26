@@ -30,8 +30,8 @@ const FAQS = [
     a: "Yes. Enterprise plans add SSO (SAML / OIDC) and SCIM provisioning, plus row-level and column-level access controls, audit-log retention/export, and a support SLA.",
   },
   {
-    q: "How do federated queries work?",
-    a: "You can JOIN across multiple connections in a single query. The planner pushes filters and projections down to each source database, then merges the results — so you can analyze data spread across services without an ETL pipeline.",
+    q: "Can I schedule a query, or be alerted when one returns something?",
+    a: "Yes. Any query can run on a cron schedule in the timezone you pick, with the result mailed out as an inline table plus a CSV attachment. Add a condition — row count, or a numeric column crossing a threshold — and it only notifies when the condition is met, with a cooldown so a flapping check can't spam you. Slack webhooks work alongside email.",
   },
 ] as const;
 

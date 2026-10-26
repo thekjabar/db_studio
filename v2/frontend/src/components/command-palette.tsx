@@ -25,7 +25,6 @@ import {
   Table2,
   Timer,
   Webhook,
-  Workflow,
 } from "lucide-react";
 
 interface Props {
@@ -121,9 +120,6 @@ export function CommandPalette({ open, onOpenChange, connectionId, schema }: Pro
           </CommandItem>
           <CommandItem onSelect={() => go(`/schedules`)}>
             <Calendar /> Scheduled queries
-          </CommandItem>
-          <CommandItem onSelect={() => go(`/federated`)}>
-            <Workflow /> Multi-DB query
           </CommandItem>
           <CommandItem onSelect={() => go(`/api-keys`)}>
             <Key /> API keys

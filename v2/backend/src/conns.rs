@@ -941,6 +941,12 @@ async fn conn_update(
     );
     bind_all(&sql, binds).execute(&state.pool).await?;
 
+    // Drop the cached pool for this connection. It was built from the OLD
+    // host/credentials, and sqlx hands out live connections from it without
+    // re-reading the row — so without this, fixing a wrong password or
+    // repointing a connection appears to do nothing until the API restarts.
+    crate::evict_target_pool(&id);
+
     audit(&state, &user.id, &id, "CONNECTION_UPDATED", &req_meta(&headers)).await;
     conn_response(&state, &id, crypto).await
 }

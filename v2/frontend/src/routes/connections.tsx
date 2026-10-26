@@ -113,9 +113,6 @@ export default function ConnectionsPage() {
           <Link to="/schedules" className="text-sm text-muted-foreground hover:text-foreground">
             Schedules
           </Link>
-          <Link to="/federated" className="text-sm text-muted-foreground hover:text-foreground">
-            Multi-DB query
-          </Link>
           <Link to="/api-keys" className="text-sm text-muted-foreground hover:text-foreground">
             API keys
           </Link>

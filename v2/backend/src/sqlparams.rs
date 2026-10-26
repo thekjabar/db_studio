@@ -302,9 +302,13 @@ mod tests {
 
     #[test]
     fn a_missing_value_names_itself() {
+        // `Prepared` has no Debug (it carries bind values, which have no place
+        // in a panic message), so unwrap the Result by hand.
         let map: HashMap<String, Value> = HashMap::new();
-        let err = prepare("SELECT :missing", &map).unwrap_err();
-        assert_eq!(err, "missing");
+        match prepare("SELECT :missing", &map) {
+            Ok(p) => panic!("expected a missing-parameter error, got: {}", p.sql),
+            Err(name) => assert_eq!(name, "missing"),
+        }
     }
 
     #[test]

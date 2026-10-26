@@ -26,6 +26,7 @@ const SqlRoute = lazy(() => import("@/routes/connection/sql"));
 const QueryBuilderRoute = lazy(() => import("@/routes/connection/query-builder"));
 const DiffRoute = lazy(() => import("@/routes/connection/diff"));
 const SchemaDiffRoute = lazy(() => import("@/routes/connection/schema-diff"));
+const ApiDocsRoute = lazy(() => import("@/routes/api-docs"));
 const DictionaryRoute = lazy(() => import("@/routes/connection/dictionary"));
 const SensitiveScanRoute = lazy(() => import("@/routes/connection/sensitive"));
 const ErRoute = lazy(() => import("@/routes/connection/er"));
@@ -101,6 +102,7 @@ const TITLES: Array<[RegExp, string]> = [
   [/^\/status$/, "Service status · Query Schema"],
   [/^\/forgot-password$/, "Reset your password · Query Schema"],
   [/^\/connections$/, "Connections · Query Schema"],
+  [/^\/api-docs$/, "API & CLI · Query Schema"],
   [/^\/schedules$/, "Scheduled queries · Query Schema"],
   [/^\/notebooks/, "Notebooks · Query Schema"],
   [/^\/dashboards/, "Dashboards · Query Schema"],
@@ -211,6 +213,16 @@ export default function App() {
         element={
           <Protected>
             <ApiKeysRoute />
+          </Protected>
+        }
+      />
+      {/* Behind the login with the keys themselves: these endpoints are only
+          useful with one, so the documentation lives where they are made. */}
+      <Route
+        path="/api-docs"
+        element={
+          <Protected>
+            <ApiDocsRoute />
           </Protected>
         }
       />

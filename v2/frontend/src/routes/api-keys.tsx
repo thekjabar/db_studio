@@ -71,7 +71,11 @@ export default function ApiKeysRoute() {
             <p className="text-sm text-muted-foreground mt-1">
               Use these tokens to script against Query Schema. Send them as{" "}
               <code className="bg-muted px-1 rounded text-xs">Authorization: Bearer dbs_live_…</code>
-              {" "}against <code className="bg-muted px-1 rounded text-xs">/api/v1/*</code>.
+              {" "}against <code className="bg-muted px-1 rounded text-xs">/api/v1/*</code> —{" "}
+              <Link to="/api-docs" className="text-primary hover:underline">
+                endpoints, examples and the CLI
+              </Link>
+              .
             </p>
           </div>
           <Button onClick={() => setOpen(true)}>

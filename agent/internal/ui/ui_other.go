@@ -1,10 +1,13 @@
-//go:build !windows && !darwin
+//go:build !cgo || (!windows && !darwin)
 
-// Package ui's non-Windows stub. The Fyne GUI window is only built on Windows
-// in this repo (Fyne needs a per-platform C toolchain). On other platforms this
-// stub provides the same exported API so main compiles everywhere, but Run
-// returns an error so main falls back to the console reconnect loop (and, where
-// available, the pure-Go system tray).
+// Package ui's no-window stub. The window is drawn by webview_go, which binds
+// WebView2 on Windows and WebKit on macOS — both through cgo. So it exists only
+// where a C toolchain was present at build time: Linux has no backend here at
+// all, and a macOS binary CROSS-COMPILED from another OS is necessarily
+// cgo-less (Apple's SDK isn't there to link against). This stub keeps the same
+// exported API so main compiles everywhere, and Run returns an error so main
+// falls back to the console reconnect loop — which tunnels exactly as well,
+// just without a window.
 package ui
 
 import "errors"

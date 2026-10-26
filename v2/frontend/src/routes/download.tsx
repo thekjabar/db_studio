@@ -21,8 +21,8 @@ interface Platform {
   icon: LucideIcon;
   /** Family used for OS detection + grouping the "needs chmod / gatekeeper" hint. */
   family: "windows" | "mac" | "linux";
-  /** macOS builds aren't shipped yet (the tray backend needs a Mac to compile),
-   *  so they render as a disabled "coming soon" row rather than a dead link. */
+  /** Kept for platforms we don't ship: they render as a disabled "coming soon"
+   *  row rather than a dead link. All four ship today. */
   available: boolean;
 }
 
@@ -41,7 +41,7 @@ const PLATFORMS: Record<PlatformKey, Platform> = {
     href: AGENT_DOWNLOADS.macArm,
     icon: Apple,
     family: "mac",
-    available: false,
+    available: true,
   },
   macIntel: {
     key: "macIntel",
@@ -49,7 +49,7 @@ const PLATFORMS: Record<PlatformKey, Platform> = {
     href: AGENT_DOWNLOADS.macIntel,
     icon: Apple,
     family: "mac",
-    available: false,
+    available: true,
   },
   linux: {
     key: "linux",
@@ -250,17 +250,29 @@ export default function DownloadPage() {
                 <Apple className="h-4 w-4 shrink-0 text-muted-foreground mt-0.5" />
                 <div>
                   <div className="font-medium text-foreground">macOS</div>
-                  macOS may say the app{" "}
-                  <span className="italic">
-                    "cannot be opened because it is from an unidentified developer."
-                  </span>{" "}
-                  Right-click (or Control-click) the file →{" "}
-                  <span className="font-medium text-foreground">Open</span> →{" "}
-                  <span className="font-medium text-foreground">Open</span>. Or run{" "}
-                  <code className="rounded bg-background border border-border px-1 py-0.5 font-mono">
+                  The macOS build runs in Terminal — there is no window, and it tunnels only
+                  while it is running. Open Terminal and paste:
+                  <code className="mt-1.5 block rounded bg-background border border-border px-2 py-1.5 font-mono leading-relaxed">
+                    cd ~/Downloads
+                    <br />
                     chmod +x agent-macos-*
-                  </code>{" "}
-                  first in Terminal.
+                    <br />
+                    xattr -d com.apple.quarantine agent-macos-*
+                    <br />
+                    ./agent-macos-arm64
+                  </code>
+                  <span className="mt-1.5 block">
+                    The{" "}
+                    <span className="font-medium text-foreground">xattr</span> line is what gets
+                    past{" "}
+                    <span className="italic">"cannot be opened because it is from an
+                    unidentified developer"</span>{" "}
+                    — the build isn't code-signed yet. On an Intel Mac, run{" "}
+                    <code className="rounded bg-background border border-border px-1 py-0.5 font-mono">
+                      ./agent-macos-amd64
+                    </code>{" "}
+                    instead.
+                  </span>
                 </div>
               </div>
               <div className="flex gap-2.5">

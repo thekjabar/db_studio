@@ -1,4 +1,4 @@
-//go:build windows || darwin
+//go:build (windows || darwin) && cgo
 
 // Package ui runs the Query Schema agent as a real desktop window using WebView2
 // (the Edge engine built into every Windows 10/11). Unlike the Fyne/OpenGL

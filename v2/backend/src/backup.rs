@@ -576,6 +576,9 @@ async fn download(
 
 /// First bytes of a pg_dump custom archive. Plain SQL dumps start with `--`.
 const PGDMP_MAGIC: &[u8] = b"PGDMP";
+/// gzip's magic. Scheduled backups upload `.sql.gz`, so a restore that could
+/// not read gzip would be unable to replay this product's own backups.
+const GZIP_MAGIC: &[u8] = &[0x1f, 0x8b];
 
 async fn restore(
     State(state): State<AppState>,
@@ -639,6 +642,19 @@ async fn restore(
         Some(Ok(b)) => b,
         Some(Err(e)) => return Err(ApiError::bad(format!("Upload failed: {e}"))),
         None => return Err(ApiError::bad("Empty upload — attach a dump file")),
+    };
+    // A gzipped upload is decompressed on the way through, so the tool on the
+    // other end sees what it expects. The format question is then asked of the
+    // DECOMPRESSED bytes: a gzipped custom archive is still a custom archive.
+    let gzipped = first.starts_with(GZIP_MAGIC);
+    let mut gunzip = gzipped.then(|| flate2::write::GzDecoder::new(Vec::new()));
+    let first: bytes::Bytes = if let Some(gz) = gunzip.as_mut() {
+        use std::io::Write as _;
+        gz.write_all(&first)
+            .map_err(|e| ApiError::bad(format!("Not a valid gzip file: {e}")))?;
+        std::mem::take(gz.get_mut()).into()
+    } else {
+        first
     };
     let custom = first.starts_with(PGDMP_MAGIC);
 
@@ -734,10 +750,31 @@ async fn restore(
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| ApiError::bad(format!("Upload failed: {e}")))?;
         bytes += chunk.len() as u64;
-        if let Err(e) = stdin.write_all(&chunk).await {
+        let out: bytes::Bytes = if let Some(gz) = gunzip.as_mut() {
+            use std::io::Write as _;
+            gz.write_all(&chunk)
+                .map_err(|e| ApiError::bad(format!("Corrupt gzip upload: {e}")))?;
+            std::mem::take(gz.get_mut()).into()
+        } else {
+            chunk
+        };
+        if out.is_empty() {
+            continue; // gzip buffered this chunk without emitting yet
+        }
+        if let Err(e) = stdin.write_all(&out).await {
             // A broken pipe means the tool exited early; report its own words.
             tracing::warn!("restore stdin closed after {bytes} bytes: {e}");
             break;
+        }
+    }
+    // Flush whatever the decompressor still holds before signalling EOF.
+    if let Some(gz) = gunzip.take() {
+        match gz.finish() {
+            Ok(rest) if !rest.is_empty() => {
+                let _ = stdin.write_all(&rest).await;
+            }
+            Ok(_) => {}
+            Err(e) => return Err(ApiError::bad(format!("Truncated gzip upload: {e}"))),
         }
     }
     drop(stdin); // EOF — the tool finishes and exits

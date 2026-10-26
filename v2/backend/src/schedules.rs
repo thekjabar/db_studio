@@ -2624,7 +2624,14 @@ pub(crate) mod cronparser {
 
         #[test]
         fn first_of_month() {
-            assert_eq!(n("0 0 1 * *", None, 1_754_236_800_000), 1_756_674_000_000);
+            // No `tz` means the PROCESS zone, which is UTC in both the v1 and
+            // v2 containers (TZ unset, host Etc/UTC — verified again
+            // 2026-10-26). So from 2025-08-03T16:00:00Z the next firing is
+            // 2025-09-01T00:00:00Z. The expectation here used to be 3 hours
+            // earlier — midnight in Asia/Baghdad — which only held on a
+            // developer machine whose own TZ was set; it never matched what
+            // the deployed scheduler would do.
+            assert_eq!(n("0 0 1 * *", None, 1_754_236_800_000), 1_756_684_800_000);
         }
 
         #[test]

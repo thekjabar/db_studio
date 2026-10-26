@@ -68,7 +68,10 @@ export function TabBar() {
   }
 
   return (
-    <div className="relative border-b border-border bg-muted/30">
+    // The strip is tinted and the active tab is not: that contrast is the only
+    // thing telling you which tab is in front, so it must not be so faint that
+    // it disappears on a white page.
+    <div className="relative border-b border-border bg-muted">
       <div
         ref={stripRef}
         className="flex items-stretch gap-px overflow-x-auto scroll-no-bar"

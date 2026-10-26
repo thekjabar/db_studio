@@ -11,24 +11,28 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  /* Soft slate-ish light theme — not pure white. The page sits 2 steps darker
-     than cards so panels read as distinct surfaces on a quiet background. */
-  --background: 220 16% 95%;
-  --foreground: 222 25% 14%;
-  --muted: 220 14% 90%;
-  --muted-foreground: 222 12% 35%;
-  --border: 220 13% 80%;
-  --input: 220 13% 78%;
-  --card: 220 20% 98%;
-  --card-foreground: 222 25% 14%;
-  --popover: 220 20% 98%;
-  --popover-foreground: 222 25% 14%;
+  /* White light theme. The page, the panels and the grid are all plain white;
+     separation comes from hairline borders, not from tinting whole surfaces.
+     The earlier palette washed every chrome surface in 90-95% grey, which made
+     the app look dusty next to its own white data area. Grey is now reserved
+     for small fills that must read as inactive — table headers, hovers, the
+     tab strip behind the active tab. */
+  --background: 0 0% 100%;
+  --foreground: 222 24% 12%;
+  --muted: 220 20% 96.5%;
+  --muted-foreground: 220 9% 42%;
+  --border: 220 14% 90%;
+  --input: 220 14% 85%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 24% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 24% 12%;
   --primary: 152 61% 42%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 220 14% 90%;
-  --secondary-foreground: 222 25% 14%;
-  --accent: 220 14% 88%;
-  --accent-foreground: 222 25% 14%;
+  --secondary: 220 20% 96.5%;
+  --secondary-foreground: 222 24% 12%;
+  --accent: 220 20% 94%;
+  --accent-foreground: 222 24% 12%;
   --destructive: 0 72% 48%;
   --destructive-foreground: 0 0% 100%;
   --ring: 152 61% 42%;

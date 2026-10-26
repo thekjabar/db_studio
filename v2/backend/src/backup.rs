@@ -648,6 +648,10 @@ async fn restore(
     // DECOMPRESSED bytes: a gzipped custom archive is still a custom archive.
     let gzipped = first.starts_with(GZIP_MAGIC);
     let mut gunzip = gzipped.then(|| flate2::write::GzDecoder::new(Vec::new()));
+    // Count what was UPLOADED, not what came out of the decompressor: the
+    // number is reported back as the size of the file the user sent, and for a
+    // .sql.gz those differ by an order of magnitude.
+    let uploaded_first = first.len() as u64;
     let first: bytes::Bytes = if let Some(gz) = gunzip.as_mut() {
         use std::io::Write as _;
         gz.write_all(&first)
@@ -742,8 +746,7 @@ async fn restore(
         .ok_or_else(|| ApiError::internal("restore stderr unavailable"))?;
     let stderr_tail = spawn_stderr_drain(stderr);
 
-    let mut bytes: u64 = 0;
-    bytes += first.len() as u64;
+    let mut bytes: u64 = uploaded_first;
     if let Err(e) = stdin.write_all(&first).await {
         return Err(ApiError::internal(format!("restore write failed: {e}")));
     }
